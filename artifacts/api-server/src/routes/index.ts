@@ -1,0 +1,34 @@
+import { Router, type IRouter } from "express";
+import healthRouter from "./health";
+import openaiChatRouter from "./openai-chat";
+import stripeRouter from "./stripe";
+import extractDocumentRouter from "./extract-document";
+import scanStatementRouter from "./scan-statement";
+import extractTextRouter from "./extract-text";
+import cleanPlTransactionsRouter from "./clean-pl-transactions";
+import documentProxyRouter from "./document-proxy";
+import documentUploadRouter from "./document-upload";
+import documentDownloadRouter from "./document-download";
+import documentDeleteRouter from "./document-delete";
+import chatUploadRouter from "./chat-upload";
+import planLimitsRouter from "./plan-limits";
+import adminRouter from "./admin";
+
+const router: IRouter = Router();
+
+router.use(healthRouter);
+router.use(openaiChatRouter);
+router.use(stripeRouter);
+router.use(extractDocumentRouter);
+router.use(scanStatementRouter);
+router.use(extractTextRouter);
+router.use(cleanPlTransactionsRouter);
+router.use(documentProxyRouter);
+router.use(documentUploadRouter);
+router.use(documentDownloadRouter);
+router.use(documentDeleteRouter);
+router.use(chatUploadRouter);
+router.use(planLimitsRouter);
+router.use(adminRouter);
+
+export default router;

@@ -1,0 +1,1 @@
+export default function ForgotReset() { return <div>ForgotReset</div> }

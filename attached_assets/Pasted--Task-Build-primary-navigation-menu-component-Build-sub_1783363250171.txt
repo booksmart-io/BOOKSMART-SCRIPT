@@ -1,0 +1,92 @@
+
+
+
+
+
+Task
+Build primary navigation menu component
+Build sub-menu / dropdown components for all categories
+Wire routing for all primary menu items to correct pages
+Wire routing for all sub-menu items to correct pages
+Build wall dashboard UI layout
+Connect Supabase data feeds to dashboard widgets
+Finalize calculations for the Business health Score
+Wire dashboard widget links to relevant sub-pages
+Build AI Insights UI page
+Connect AI insight generation logic to UI
+Wire AI Insights page navigation from menu
+Build AI Deductions UI page
+Connect deduction calculation logic to UI
+Wire AI Deductions page navigation from menu
+Finalize and coinfirm federal and state tax deduction rules is being pulled in correctly
+Incorporate Business Plan feature into the financial dashboard leveraging in AI.
+Build financial reports dashboard UI
+Connect Supabase data to reports dashboard
+Wire navigation to Transactions, P&L, Balance Sheet, Cash Flow
+Confirm the export of the balance sheet,PnL statement and cashflow are formatted correctly, exported in pdf csv and excel versions.
+Build transactions list/table UI
+Connect Supabase transaction data
+Implement filter, search, and sort on transactions
+Build P&L statement UI layout
+Connect Supabase P&L data and calculations
+Wire P&L drill-down links
+Build balance sheet UI layout
+Connect Supabase balance sheet data
+Wire balance sheet drill-down links
+Build cash flow UI layout
+Connect Supabase cash flow data
+Wire cash flow drill-down links
+Build tax filings repository UI
+Change Filing Menu name into Document Repository
+Connect Supabase document storage for uploaded reports
+Wire upload and download functionality
+Wire tax filings navigation from main menu
+Make sure the reports are categorize with subv categories to organize the uploads of documents
+Build CPA repository/directory UI
+Connect Supabase CPA profile data
+Wire search and filter for CPA listings
+Build order placement UI
+Wire client-to-CPA chat-to-bid workflow
+Wire bid execution and order confirmation flow
+Connect Supabase order records
+Build CPA chat UI
+Add attachment feature in chat PDF,JPGE, Excel
+Connect chat history data per client
+Wire CPA chat navigation from CPA Network menu
+Build CPA Portal base on the ui scrrenshot provided
+Connect supabase profile data and everything should be wired correctly
+Update Order page to pull in all transaction appropriately.
+Putting guradrails on AI chat feature.
+Build AI chat UI
+Connect AI chat backend/API
+Wire AI chat navigation from main menu
+Build token wallet and ledger UI (balance, transaction history)
+Configure token-to-dollar conversion in Supabase (1 token = $1)
+Build token deduction engine tied to feature usage rules
+Configure per-feature token cost rules table (see Token Rules tab)
+Wire token balance checks and low-balance guardrails across AI features
+Build subscription tier selection UI
+Connect Supabase subscription/billing data
+Wire subscription-based token allotment and guardrails per tier
+Wire upgrade/downgrade subscription flow
+Make sure everything is connected stripe
+Test wall dashboard UI screen
+Test AI Insights and AI Deductions UI screens
+Test Financial Reports UI screens (Dashboard, Transactions, P&L, Balance Sheet, Cash Flow)
+Test Tax Filings UI screen
+Test CPA Network UI screens (Repository, Orders, CPA Chat)
+Test AI Chat UI screen
+Test Tokens and Subscriptions UI screens
+Test bank/financial data ingestion accuracy
+Test P&L, Balance Sheet, Cash Flow calculations against source data
+Test transaction categorization accuracy
+Test OCR receipt scanning accuracy
+Test OCR data mapping into transactions and reports
+Cross-device and cross-browser QA pass
+Bug fix pass on defect tracker items
+Founder review and sign-off
+Final end-to-end regression test across all menus and sub-menus
+Final deployment to production
+Open app for market testing
+
+

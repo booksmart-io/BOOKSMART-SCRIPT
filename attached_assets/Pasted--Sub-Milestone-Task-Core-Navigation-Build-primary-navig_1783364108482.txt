@@ -1,0 +1,93 @@
+	
+	
+	
+	
+	
+Sub-Milestone	Task
+Core Navigation	Build primary navigation menu component
+Core Navigation	Build sub-menu / dropdown components for all categories
+Core Navigation	Wire routing for all primary menu items to correct pages
+Core Navigation	Wire routing for all sub-menu items to correct pages
+Home Dashboard	Build wall dashboard UI layout
+Home Dashboard	Connect Supabase data feeds to dashboard widgets
+Home Dashboard	Finalize calculations for the Business health Score
+Home Dashboard	Wire dashboard widget links to relevant sub-pages
+AI Insights	Build AI Insights UI page
+AI Insights	Connect AI insight generation logic to UI
+AI Insights	Wire AI Insights page navigation from menu
+AI Deductions	Build AI Deductions UI page
+AI Deductions	Connect deduction calculation logic to UI
+AI Deductions	Wire AI Deductions page navigation from menu
+AI Deductions	Finalize and coinfirm federal and state tax deduction rules is being pulled in correctly
+AI Insights	Incorporate Business Plan feature into the financial dashboard leveraging in AI.
+Reports Dashboard	Build financial reports dashboard UI
+Reports Dashboard	Connect Supabase data to reports dashboard
+Reports Dashboard	Wire navigation to Transactions, P&L, Balance Sheet, Cash Flow
+Reports Dashboard	Confirm the export of the balance sheet,PnL statement and cashflow are formatted correctly, exported in pdf csv and excel versions.
+Transactions	Build transactions list/table UI
+Transactions	Connect Supabase transaction data
+Transactions	Implement filter, search, and sort on transactions
+P&L Statement	Build P&L statement UI layout
+P&L Statement	Connect Supabase P&L data and calculations
+P&L Statement	Wire P&L drill-down links
+Balance Sheet	Build balance sheet UI layout
+Balance Sheet	Connect Supabase balance sheet data
+Balance Sheet	Wire balance sheet drill-down links
+Cash Flow	Build cash flow UI layout
+Cash Flow	Connect Supabase cash flow data
+Cash Flow	Wire cash flow drill-down links
+Tax Filing Repository	Build tax filings repository UI
+Tax Filing Repository	Change Filing Menu name into Document Repository
+Tax Filing Repository	Connect Supabase document storage for uploaded reports
+Tax Filing Repository	Wire upload and download functionality
+Tax Filing Repository	Wire tax filings navigation from main menu
+Tax Filing Repository	Make sure the reports are categorize with subv categories to organize the uploads of documents
+CPA Repository	Build CPA repository/directory UI
+CPA Repository	Connect Supabase CPA profile data
+CPA Repository	Wire search and filter for CPA listings
+Orders	Build order placement UI
+Orders	Wire client-to-CPA chat-to-bid workflow
+Orders	Wire bid execution and order confirmation flow
+Orders	Connect Supabase order records
+CPA Chat	Build CPA chat UI
+CPA Chat	Add attachment feature in chat PDF,JPGE, Excel
+CPA Chat	Connect chat history data per client
+CPA Chat	Wire CPA chat navigation from CPA Network menu
+CPA Portal	Build CPA Portal base on the ui scrrenshot provided
+CPA Portal	Connect supabase profile data and everything should be wired correctly
+CPA Portal	Update Order page to pull in all transaction appropriately.
+AI Chat	Putting guradrails on AI chat feature.
+AI Chat	Build AI chat UI
+AI Chat	Connect AI chat backend/API
+AI Chat	Wire AI chat navigation from main menu
+Tokens	Build token wallet and ledger UI (balance, transaction history)
+Tokens	Configure token-to-dollar conversion in Supabase (1 token = $1)
+Tokens	Build token deduction engine tied to feature usage rules
+Tokens	Configure per-feature token cost rules table (see Token Rules tab)
+Tokens	Wire token balance checks and low-balance guardrails across AI features
+Subscriptions	Build subscription tier selection UI
+Subscriptions	Connect Supabase subscription/billing data
+Subscriptions	Wire subscription-based token allotment and guardrails per tier
+Subscriptions	Wire upgrade/downgrade subscription flow
+Subscriptions	Make sure everything is connected stripe
+UI Screens	Test wall dashboard UI screen
+UI Screens	Test AI Insights and AI Deductions UI screens
+UI Screens	Test Financial Reports UI screens (Dashboard, Transactions, P&L, Balance Sheet, Cash Flow)
+UI Screens	Test Tax Filings UI screen
+UI Screens	Test CPA Network UI screens (Repository, Orders, CPA Chat)
+UI Screens	Test AI Chat UI screen
+UI Screens	Test Tokens and Subscriptions UI screens
+Financial Data Pull	Test bank/financial data ingestion accuracy
+Financial Data Pull	Test P&L, Balance Sheet, Cash Flow calculations against source data
+Financial Data Pull	Test transaction categorization accuracy
+OCR	Test OCR receipt scanning accuracy
+OCR	Test OCR data mapping into transactions and reports
+Go-Live Prep	Cross-device and cross-browser QA pass
+Go-Live Prep	Bug fix pass on defect tracker items
+Go-Live Prep	Founder review and sign-off
+Launch	Final end-to-end regression test across all menus and sub-menus
+Launch	Final deployment to production
+Launch	Open app for market testing
+	
+	
+	

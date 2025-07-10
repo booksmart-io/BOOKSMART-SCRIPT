@@ -1,0 +1,103 @@
+uploads = []
+
+[[generated]]
+id = "26SHp8XDJVmwPoUvzHKvY"
+uri = "file://artifacts/booksmart/src/assets/survey-icons/house.png"
+type = "image"
+title = "generated_image"
+
+[[generated]]
+id = "BwFcJ7oGFgOLJ422AjVgD"
+uri = "file://artifacts/booksmart/src/assets/survey-icons/building.png"
+type = "image"
+title = "generated_image"
+
+[[generated]]
+id = "P_seZbzCBLZwD8TuMB2Cy"
+uri = "file://artifacts/booksmart/src/assets/survey-icons/car.png"
+type = "image"
+title = "generated_image"
+
+[[generated]]
+id = "MB2fun1JJ-p3xE207ttXT"
+uri = "file://artifacts/booksmart/src/assets/survey-icons/phone.png"
+type = "image"
+title = "generated_image"
+
+[[generated]]
+id = "N5ZTpr7hd3ux1d238OrQr"
+uri = "file://artifacts/booksmart/src/assets/survey-icons/wifi.png"
+type = "image"
+title = "generated_image"
+
+[[generated]]
+id = "EEFebNxieGN_ZeF_z-5gl"
+uri = "file://artifacts/booksmart/src/assets/survey-icons/lightbulb.png"
+type = "image"
+title = "generated_image"
+
+[[generated]]
+id = "8WFr09EBoA0S3b_7pkGsc"
+uri = "file://artifacts/booksmart/src/assets/survey-icons/equipment.png"
+type = "image"
+title = "generated_image"
+
+[[generated]]
+id = "mpCCVeJ5FaBhtraSO9Dvg"
+uri = "file://artifacts/booksmart/src/assets/survey-icons/invoice.png"
+type = "image"
+title = "generated_image"
+
+[[generated]]
+id = "OQxJGnzYReuUmdl48OcAL"
+uri = "file://artifacts/booksmart/src/assets/survey-icons/package.png"
+type = "image"
+title = "generated_image"
+
+[[generated]]
+id = "q3yexIa__bwxmQLSp64aK"
+uri = "file://artifacts/booksmart/src/assets/survey-icons/creditcards.png"
+type = "image"
+title = "generated_image"
+
+[[generated]]
+id = "0I_x60coshRdCRQqNf17c"
+uri = "file://artifacts/booksmart/src/assets/survey-icons/wallet.png"
+type = "image"
+title = "generated_image"
+
+[[generated]]
+id = "rEkXiIAmMHQUR8wD0b4WL"
+uri = "file://artifacts/booksmart/src/assets/survey-icons/trophy.png"
+type = "image"
+title = "generated_image"
+
+[[outputs]]
+id = "z6Zm0mcogQcKIPk-tuS7K"
+uri = "file://booksmart-progress-june29-2026.md"
+type = "text"
+title = "BookSmart Progress — June 29, 2026"
+
+[[outputs]]
+id = "ioDiC_3GatRQYp6N-W_pt"
+uri = "file://PROGRESS.md"
+type = "text"
+title = "BookSmart — Development Progress Log"
+
+[[outputs]]
+id = "VwUq5UCbcfzBQXCuwf_aO"
+uri = "file://DAILY_REPORT.md"
+type = "text"
+title = "BookSmart — Full Daily Report (June 29, 2026)"
+
+[[outputs]]
+id = "pkYEoN5lZXS2LXyI6udBp"
+uri = "file://eod-report-2026-06-30.md"
+type = "text"
+title = "EOD Report — June 30, 2026"
+
+[[outputs]]
+id = "MiKYDP-7A0dWvX8Du8MPA"
+uri = "file://system-report-2026-06-30.md"
+type = "text"
+title = "System Update Report — June 30, 2026"

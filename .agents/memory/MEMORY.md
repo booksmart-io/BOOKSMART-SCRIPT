@@ -1,0 +1,13 @@
+- [Dashboard data chain](dashboard-data-chain.md) — numericId (users.auth_id) → orgId (organizations.owner_id) → transactions (org_id). Org query must throw on error or orgId silently stays null.
+- [BPS formula](bps-formula.md) — Business Power Score calculated from txCount, docCount, hasOrg, profileComplete, netPositive, hasPendingReview. Level/rank system 1-10.
+- [AI Insight token gate](ai-insight-token-gate.md) — Unlock costs 150 tokens; calls /api/openai-chat with tx summary; deducts from users.token_balance; refreshes via queryKey ["token_balance", numericId].
+- [pdf-parse version lock](pdf-parse-version.md) — Must use v1.1.1 (v2.x exports class not function). Load via createRequire in route files; add to externals in build.mjs.
+- [Gemini model on OpenRouter](gemini-openrouter.md) — Confirmed working: google/gemini-2.5-flash. google/gemini-2.0-flash-001 and google/gemini-flash-1.5 both 404.
+- [Storage bucket is public](storage-bucket-public.md) — documents bucket is public=true; files are directly fetchable via file_url; no signed URL needed. Uploads must go through backend /api/document-upload (service role) because anon client INSERT fails silently.
+- [Financial statements normalizer](financial-statements-normalizer.md) — shared lib/financial-statements.ts parses both AI (snake_case) and manual (camelCase/periods[]) parsed_data shapes; reused by Dashboard KPIs and Reports' segregated tab.
+- [User routes have no /dashboard suffix](user-route-paths.md) — dashboard route is exactly "/user", not "/user/dashboard"; the latter 404s. Reports is "/user/reports".
+- [Sonner toasts need their own mount](sonner-toaster-mount.md) — shadcn's `<Toaster/>` and sonner's `toast()` are separate systems; sonner's own `<Toaster/>` must also be mounted or its toasts render nothing.
+- [Deduction rule engine](deduction-rule-engine.md) — shared lib/deduction-engine.ts applies admin-configured deduction_rules/deduction_rule_groups to transactions; used by ai-strategy.tsx and reports.tsx instead of raw amount.
+- [AI tax strategies persistence](ai-tax-strategies-persistence.md) — check live Supabase schema via PostgREST root before assuming new DDL is needed; no exec_sql RPC exists in this project.
+- [Stripe subscriptions & tokens](stripe-subscriptions-tokens.md) — no webhook; frontend calls /api/stripe/confirm-checkout after redirect, server verifies session with Stripe before crediting.
+- [Plan limits enforcement](plan-limits-enforcement.md) — per-tier usage limits/gates counted from existing tables (token_transactions, ai_tax_strategies, user_documents), no new DB tables.

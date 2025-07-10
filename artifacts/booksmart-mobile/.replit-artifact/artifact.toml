@@ -1,0 +1,26 @@
+kind = "mobile"
+previewPath = "/mobile"
+title = "BookSmart Mobile"
+version = "1.0.0"
+id = "artifacts/booksmart-mobile"
+
+[[integratedSkills]]
+name = "expo"
+version = "1.0.0"
+
+[[services]]
+name = "expo"
+paths = [ "/mobile" ]
+localPort = 19000
+
+[services.development]
+run = "pnpm --filter @workspace/booksmart-mobile run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/booksmart-mobile", "run", "build" ]
+publicDir = "artifacts/booksmart-mobile/static-build"
+serve = "static"
+
+[services.env]
+PORT = "19000"
+BASE_PATH = "/mobile"
