@@ -134,10 +134,9 @@ export type DeductionSummary = {
 
 /**
  * Aggregates federal and state deductible amounts across a set of transactions.
- * Falls back to treating a transaction as 100% deductible when no federal rule
- * is configured for its sub-category (preserves the app's original behavior),
- * and mirrors the federal amount when no state-specific rule exists (assumes
- * state conformity unless an admin has configured an override).
+ * Only counts deductible amounts when an admin-configured rule matches the
+ * transaction's sub-category. Unconfigured transactions stay visible in the UI,
+ * but do not inflate the actual deduction total.
  * Fixed, non-per-transaction rules (e.g. a one-time safe-harbor amount) are
  * only counted once per rule, no matter how many transactions match.
  */
@@ -161,9 +160,6 @@ export function summarizeDeductions(
       continue;
     }
     const base = Math.abs(tx.amount);
-    // Transactions without a sub-category can't be matched to any rule, so
-    // (like an unconfigured sub-category) they fall back to the full raw
-    // amount rather than silently dropping to $0.
     const federalRule = tx.sub_category_id == null
       ? null
       : getApplicableRule("federal", tx.sub_category_id, orgStateId, groups, rules, asOf);
@@ -173,7 +169,7 @@ export function summarizeDeductions(
 
     let federalAmt: number;
     if (!federalRule) {
-      federalAmt = base;
+      federalAmt = 0;
     } else if (!federalRule.is_per_transaction && federalRule.calculation_type === "fixed") {
       federalAmt = appliedOnceFederal.has(federalRule.id) ? 0 : ruleAmountForTx(federalRule, base, org);
       appliedOnceFederal.add(federalRule.id);

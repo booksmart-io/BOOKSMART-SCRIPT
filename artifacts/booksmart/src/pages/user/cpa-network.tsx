@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { useAuth } from "@/hooks/use-auth";
 import { supabase } from "@/lib/supabase";
+import { spendTokensForUnlock } from "@/lib/token-unlocks";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -151,7 +152,10 @@ function HireDialog({ cpa, userNumericId, onClose }: { cpa: CpaUser; userNumeric
       if (planRes.ok) {
         const plan = await planRes.json() as { limits?: { contactCpa?: boolean }; tier?: string };
         if (plan.limits?.contactCpa === false) {
-          throw new Error(`Contacting a CPA isn't available on your ${plan.tier ?? "current"} plan. Upgrade to unlock it.`);
+          const ok = window.confirm(`CPA consultation requests are not included on your ${plan.tier ?? "current"} plan. Use 2 tokens for this consultation request?`);
+          if (!ok) throw new Error("CPA request cancelled.");
+          const unlock = await spendTokensForUnlock("cpa_consultation_request", `cpa:${cpa.id}:${Date.now()}`);
+          if (unlock.upgradeMessage) toast.info(unlock.upgradeMessage);
         }
       }
 

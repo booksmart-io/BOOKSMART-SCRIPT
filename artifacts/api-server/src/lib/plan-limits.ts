@@ -17,8 +17,9 @@ export interface PlanLimits {
 }
 
 const UNLIMITED = Number.POSITIVE_INFINITY;
+const PRO_TRANSACTION_FAIR_USE = 25_000;
 
-// Source of truth: pricing table screenshot (Free / Plus / Pro cards) shared by the user.
+// Source of truth: Subscription and Tokens.docx comparison table.
 export const PLAN_LIMITS: Record<PlanTier, PlanLimits> = {
   free: {
     aiQuestionsPerMonth: 10,
@@ -34,8 +35,8 @@ export const PLAN_LIMITS: Record<PlanTier, PlanLimits> = {
     directCpaMessaging: false,
   },
   plus: {
-    aiQuestionsPerMonth: 100,
-    aiStrategiesPerMonth: 20,
+    aiQuestionsPerMonth: 50,
+    aiStrategiesPerMonth: 8,
     receiptUploadsPerMonth: 50,
     statementUploadsPerMonth: 10,
     connectedAccountsLimit: 5,
@@ -52,7 +53,7 @@ export const PLAN_LIMITS: Record<PlanTier, PlanLimits> = {
     receiptUploadsPerMonth: UNLIMITED,
     statementUploadsPerMonth: UNLIMITED,
     connectedAccountsLimit: UNLIMITED,
-    transactionsPerMonth: UNLIMITED,
+    transactionsPerMonth: PRO_TRANSACTION_FAIR_USE,
     businessesLimit: 5,
     pdfExport: true,
     excelExport: true,
@@ -73,13 +74,19 @@ function startOfMonthIso(): string {
 export async function getUserTier(admin: SupabaseAdmin, authUserId: string): Promise<PlanTier> {
   const { data: subRow } = await admin
     .from("subscriptions")
-    .select("status, stripe_price_id")
+    .select("status, stripe_price_id, current_period_end")
     .eq("user_id", authUserId)
     .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle();
 
   if (!subRow || subRow.status !== "active") return "free";
+  const periodEnd = typeof subRow.current_period_end === "string"
+    ? new Date(subRow.current_period_end)
+    : null;
+  if (periodEnd && Number.isFinite(periodEnd.getTime()) && periodEnd.getTime() < Date.now()) {
+    return "free";
+  }
 
   // Lazily imported to avoid a circular import with stripe-catalog at module load time.
   const { SUBSCRIPTION_PLANS } = await import("./stripe-catalog");
@@ -174,6 +181,55 @@ export async function countOrganizations(admin: SupabaseAdmin, numericUserId: nu
     .select("id", { count: "exact", head: true })
     .eq("owner_id", numericUserId);
   return count ?? 0;
+}
+
+export async function enforceConnectedAccountLimit(admin: SupabaseAdmin, authUserId: string): Promise<{
+  tier: PlanTier;
+  limit: number;
+  kept: number;
+  deactivated: number;
+}> {
+  const tier = await getUserTier(admin, authUserId);
+  const limit = PLAN_LIMITS[tier].connectedAccountsLimit;
+  if (!Number.isFinite(limit)) {
+    return { tier, limit, kept: 0, deactivated: 0 };
+  }
+
+  const { data: userRow, error: userError } = await admin
+    .from("users")
+    .select("id")
+    .eq("auth_id", authUserId)
+    .maybeSingle();
+  if (userError) throw userError;
+  const numericUserId = (userRow as { id?: number } | null)?.id;
+  if (!numericUserId) return { tier, limit, kept: 0, deactivated: 0 };
+
+  const { data: activeItems, error: itemsError } = await admin
+    .from("plaid_items")
+    .select("id,created_at")
+    .eq("user_id", numericUserId)
+    .eq("status", "active")
+    .order("created_at", { ascending: true })
+    .order("id", { ascending: true });
+  if (itemsError) throw itemsError;
+
+  const items = (activeItems as Array<{ id: number }> | null) ?? [];
+  const allowed = Math.max(0, limit);
+  const extraIds = items.slice(allowed).map((item) => item.id);
+  if (extraIds.length > 0) {
+    const { error: updateError } = await admin
+      .from("plaid_items")
+      .update({ status: "inactive", updated_at: new Date().toISOString() })
+      .in("id", extraIds);
+    if (updateError) throw updateError;
+  }
+
+  return {
+    tier,
+    limit,
+    kept: Math.min(items.length, allowed),
+    deactivated: extraIds.length,
+  };
 }
 
 /** Transactions created this calendar month, across all of the user's organizations. */

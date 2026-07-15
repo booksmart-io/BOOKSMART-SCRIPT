@@ -48,7 +48,6 @@ const tierColor: Record<string, string> = {
 
 export default function AdminUsers() {
   const [search, setSearch] = useState("");
-  const [roleFilter, setRoleFilter] = useState("all");
   const [editingAccount, setEditingAccount] = useState<Account | null>(null);
   const [editTokens, setEditTokens] = useState("");
   const [editTier, setEditTier] = useState<"free" | "plus" | "pro">("free");
@@ -114,23 +113,17 @@ export default function AdminUsers() {
   }
 
   const filtered = accounts.filter((u) => {
+    if (u.role !== "user") return false;
     const matchesSearch =
       !search ||
       `${u.firstName ?? ""} ${u.lastName ?? ""} ${u.email}`.toLowerCase().includes(search.toLowerCase());
-    const matchesRole = roleFilter === "all" || u.role === roleFilter;
-    return matchesSearch && matchesRole;
+    return matchesSearch;
   });
 
   const roleColor: Record<string, string> = {
     user: "text-blue-400 border-blue-400/30",
     cpa: "text-purple-400 border-purple-400/30",
     admin: "text-primary border-primary/30",
-  };
-
-  const statusColor: Record<string, string> = {
-    approved: "bg-emerald-500/10 text-emerald-500 border-emerald-500/20",
-    pending: "bg-yellow-500/10 text-yellow-500 border-yellow-500/20",
-    rejected: "bg-destructive/10 text-destructive border-destructive/20",
   };
 
   return (
@@ -155,17 +148,6 @@ export default function AdminUsers() {
                 onChange={(e) => setSearch(e.target.value)}
               />
             </div>
-            <Select value={roleFilter} onValueChange={setRoleFilter}>
-              <SelectTrigger className="w-36 h-9">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Roles</SelectItem>
-                <SelectItem value="user">Users</SelectItem>
-                <SelectItem value="cpa">CPAs</SelectItem>
-                <SelectItem value="admin">Admins</SelectItem>
-              </SelectContent>
-            </Select>
           </div>
 
           <div className="border rounded-md border-border/50">
@@ -177,20 +159,19 @@ export default function AdminUsers() {
                   <TableHead>Joined</TableHead>
                   <TableHead>Plan</TableHead>
                   <TableHead>Tokens</TableHead>
-                  <TableHead>Status</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {isLoading ? (
                   <TableRow>
-                    <TableCell colSpan={7} className="text-center py-10">
+                    <TableCell colSpan={6} className="text-center py-10">
                       <Loader2 className="h-6 w-6 animate-spin mx-auto text-muted-foreground" />
                     </TableCell>
                   </TableRow>
                 ) : filtered.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={7} className="text-center py-10">
+                    <TableCell colSpan={6} className="text-center py-10">
                       <div className="flex flex-col items-center gap-2">
                         <UserCircle2 className="h-8 w-8 text-muted-foreground/30" />
                         <p className="text-sm text-muted-foreground">No users match your search.</p>
@@ -219,11 +200,6 @@ export default function AdminUsers() {
                       </Badge>
                     </TableCell>
                     <TableCell className="font-medium text-primary">{u.tokenBalance ?? 0}</TableCell>
-                    <TableCell>
-                      <Badge variant="outline" className={statusColor[u.verificationStatus] ?? ""}>
-                        {u.verificationStatus ?? "—"}
-                      </Badge>
-                    </TableCell>
                     <TableCell className="text-right">
                       <Button size="sm" variant="outline" className="gap-1.5" onClick={() => openEdit(u)}>
                         <Settings2 className="h-3.5 w-3.5" /> Manage

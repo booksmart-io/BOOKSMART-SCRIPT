@@ -14,12 +14,14 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import { Building2, Plus, Loader2, ClipboardList, Pencil, Trash2 } from "lucide-react";
+import { Building2, Plus, Loader2, ClipboardList, Pencil, Trash2, CheckCircle2 } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@/hooks/use-auth";
 import { supabase } from "@/lib/supabase";
 import { checkAddBusiness } from "@/lib/plan-limits";
 import BusinessSurveyDialog from "@/components/business-survey-dialog";
+import BusinessSetupDialog from "@/components/business-setup-dialog";
+import { useActiveOrganizationId, clearStoredActiveOrganizationId } from "@/lib/active-organization";
 
 type StateRow = { id: number; name: string; code: string };
 
@@ -66,8 +68,10 @@ export default function Organizations() {
   const { profile } = useAuth();
   const numericId = profile?.numericId ?? null;
   const qc = useQueryClient();
+  const [activeOrgId, setActiveOrgId] = useActiveOrganizationId(numericId);
 
   const [formOpen, setFormOpen] = useState(false);
+  const [setupOpen, setSetupOpen] = useState(false);
   const [editingOrg, setEditingOrg] = useState<OrgRow | null>(null);
   const [form, setForm] = useState(EMPTY_FORM);
 
@@ -102,8 +106,7 @@ export default function Organizations() {
 
   function openCreateDialog() {
     setEditingOrg(null);
-    setForm(EMPTY_FORM);
-    setFormOpen(true);
+    setSetupOpen(true);
   }
 
   function openEditDialog(org: OrgRow) {
@@ -127,6 +130,12 @@ export default function Organizations() {
   function openSurvey(orgId: number) {
     setSurveyOrgId(orgId);
     setSurveyOpen(true);
+  }
+
+  function switchOrganization(org: OrgRow) {
+    setActiveOrgId(org.id);
+    qc.invalidateQueries();
+    toast.success(`Switched to ${org.name}.`);
   }
 
   const saveMutation = useMutation({
@@ -171,9 +180,6 @@ export default function Organizations() {
       qc.invalidateQueries({ queryKey: ["organizations_list", numericId] });
       qc.invalidateQueries({ queryKey: ["dashboard_org", numericId] });
       setFormOpen(false);
-      if (newId != null) {
-        openSurvey(newId);
-      }
     },
     onError: (error: Error) => {
       toast.error(error.message || "Failed to save business");
@@ -187,6 +193,9 @@ export default function Organizations() {
     },
     onSuccess: () => {
       toast.success("Organization deleted.");
+      if (deleteTarget?.id === activeOrgId) {
+        clearStoredActiveOrganizationId(numericId);
+      }
       qc.invalidateQueries({ queryKey: ["organizations_list", numericId] });
       qc.invalidateQueries({ queryKey: ["dashboard_org", numericId] });
       setDeleteTarget(null);
@@ -237,6 +246,16 @@ export default function Organizations() {
                 <p className="text-xs text-muted-foreground truncate">{org.ein_tin || "No EIN/TIN"}</p>
               </div>
               <div className="flex items-center gap-1 shrink-0">
+                <Button
+                  variant={activeOrgId === org.id ? "secondary" : "outline"}
+                  size="sm"
+                  className="h-8 gap-1"
+                  onClick={() => switchOrganization(org)}
+                  disabled={activeOrgId === org.id}
+                >
+                  {activeOrgId === org.id ? <CheckCircle2 className="h-3.5 w-3.5" /> : null}
+                  {activeOrgId === org.id ? "Current" : "Switch"}
+                </Button>
                 <Button
                   variant="ghost"
                   size="icon"
@@ -386,6 +405,23 @@ export default function Organizations() {
         orgId={surveyOrgId}
         open={surveyOpen}
         onOpenChange={setSurveyOpen}
+      />
+
+      <BusinessSetupDialog
+        open={setupOpen}
+        onOpenChange={setSetupOpen}
+        ownerId={numericId}
+        states={states}
+        defaultEmail={profile?.email ?? ""}
+        onSaved={(newId) => {
+          toast.success("Business added. Now complete the business survey.");
+          qc.invalidateQueries({ queryKey: ["organizations_list", numericId] });
+          qc.invalidateQueries({ queryKey: ["dashboard_org", numericId] });
+          setSetupOpen(false);
+          setActiveOrgId(newId);
+          openSurvey(newId);
+        }}
+        onError={(message) => toast.error(message)}
       />
     </div>
   );

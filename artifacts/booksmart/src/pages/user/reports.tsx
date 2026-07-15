@@ -1,11 +1,15 @@
 import { useState, useMemo, useRef, useEffect } from "react";
-import { useSearch } from "wouter";
+import { useLocation, useSearch } from "wouter";
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import { useAuth } from "@/hooks/use-auth";
 import { supabase } from "@/lib/supabase";
 import { checkAddTransaction } from "@/lib/plan-limits";
+import { categorizeUncategorizedTransactions } from "@/lib/ai-categorization";
+import { openPlaidLink } from "@/lib/plaid-link";
+import { spendTokensForUnlock, type TokenUnlockKey } from "@/lib/token-unlocks";
+import { pickActiveOrganization, useActiveOrganizationId } from "@/lib/active-organization";
 import { useToast } from "@/hooks/use-toast";
-import { normalizeStatementDoc, statementPeriodLabel, computeFinancialSnapshot, periodOverlaps, type StatementPeriod } from "@/lib/financial-statements";
+import { categoryToDocType, normalizeStatementDoc, statementPeriodLabel, computeFinancialSnapshot, periodOverlaps, type StatementPeriod } from "@/lib/financial-statements";
 import { useDeductionRuleSet, summarizeDeductions, type OrgRow } from "@/lib/deduction-engine";
 import { PnLCard, BSCard, CFCard, sortByPeriodDesc } from "@/components/reports/financial-statements-tab";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -54,6 +58,28 @@ function fmtShort(v: number) {
   if (Math.abs(v) >= 1_000) return `$${(v / 1_000).toFixed(0)}K`;
   return fmt(v);
 }
+function fmtTrendTick(v: number) {
+  if (v === 0) return "$0";
+  if (Math.abs(v) >= 1_000_000) return `$${(v / 1_000_000).toFixed(1)}M`;
+  if (Math.abs(v) >= 1_000) return `$${Math.round(v / 1_000)}K`;
+  return `$${v}`;
+}
+const trendChartPanelStyle = {
+  background: "#061f49",
+  border: "1px solid rgba(43,127,255,0.38)",
+  borderRadius: 12,
+};
+const trendChartGrid = "rgba(120,160,220,0.2)";
+const trendChartTicks = [0, 500000, 1000000, 1500000];
+const trendChartDomain: [number, number] = [0, 1500000];
+const trendAxisTick = { fontSize: 9, fill: "rgba(172,190,226,0.72)" };
+const trendTooltipStyle = {
+  background: "#082754",
+  border: "1px solid rgba(66,133,220,0.45)",
+  borderRadius: 8,
+  color: "#EAF2FF",
+  fontSize: 11,
+};
 function pctLabel(v: number) {
   return `${v > 0 ? "+" : ""}${v.toFixed(1)}%`;
 }
@@ -66,6 +92,113 @@ function changeBadge(curr: number, prev: number) {
   const label = Math.abs(p) >= 999 ? (p > 0 ? "+999+%" : "-999+%") : pctLabel(p);
   const pos = p >= 0;
   return { label, pos };
+}
+
+type TransactionBalanceSheetEstimate = {
+  currentAssets: number;
+  nonCurrentAssets: number;
+  totalAssets: number;
+  currentLiabilities: number;
+  longTermLiabilities: number;
+  totalLiabilities: number;
+  equity: number;
+};
+
+type CashFlowEstimate = {
+  operating: number;
+  investing: number;
+  financing: number;
+  netChange: number;
+};
+
+const hasAnyTerm = (text: string, terms: string[]) => terms.some((term) => text.includes(term));
+
+function transactionClassText(tx: Transaction, categories: Category[], subCategories: SubCategory[]) {
+  const category = categories.find((c) => c.id === tx.category_id)?.name ?? "";
+  const subCategory = subCategories.find((s) => s.id === tx.sub_category_id)?.name ?? "";
+  return `${tx.title ?? ""} ${tx.description ?? ""} ${tx.type ?? ""} ${category} ${subCategory}`
+    .replace(/\s+/g, " ")
+    .toLowerCase();
+}
+
+function estimateBalanceSheetFromTransactions(
+  txs: Transaction[],
+  categories: Category[],
+  subCategories: SubCategory[],
+): TransactionBalanceSheetEstimate {
+  const cashTerms = ["[asset:current]", "cash", "bank", "checking", "savings"];
+  const receivableTerms = ["receivable", "accounts receivable", "customer owes", "client balance"];
+  const inventoryTerms = ["inventory", "stock", "product for sale", "goods for sale"];
+  const fixedAssetTerms = ["[asset:non-current]", "fixed asset", "equipment", "property", "vehicle", "furniture", "machinery", "computer", "tools"];
+  const otherAssetTerms = ["[asset", " asset", "prepaid", "security deposit", "goodwill", "investment"];
+  const currentLiabilityTerms = ["[liab:current]", "accounts payable", "payable", "credit card", "taxes owed", "tax owed", "payroll liabilities", "sales tax"];
+  const longTermLiabilityTerms = ["[liab:long-term]", "long-term liabilities", "long term liabilities", "loan", "mortgage", "debt:long", "note payable"];
+  const equityTerms = ["[equity]", "equity", "capital", "owner contribution", "owner investment", "retained earnings"];
+  const equityReductionTerms = ["owner draw", "owner draws", "distribution", "withdrawal"];
+
+  let cash = 0;
+  let receivables = 0;
+  let inventory = 0;
+  let fixedAssets = 0;
+  let otherAssets = 0;
+  let currentLiabilities = 0;
+  let longTermLiabilities = 0;
+  let equityItems = 0;
+
+  for (const tx of txs) {
+    const amount = Math.abs(Number(tx.amount) || 0);
+    if (amount === 0) continue;
+
+    const text = transactionClassText(tx, categories, subCategories);
+    const isCash = hasAnyTerm(text, cashTerms);
+    const isReceivable = hasAnyTerm(text, receivableTerms);
+    const isInventory = hasAnyTerm(text, inventoryTerms);
+    const isFixedAsset = hasAnyTerm(text, fixedAssetTerms);
+    const isOtherAsset = hasAnyTerm(text, otherAssetTerms);
+    const isCurrentLiability = hasAnyTerm(text, currentLiabilityTerms);
+    const isLongTermLiability = hasAnyTerm(text, longTermLiabilityTerms);
+    const isEquity = hasAnyTerm(text, equityTerms) || hasAnyTerm(text, equityReductionTerms);
+
+    if (isCash) cash += amount;
+    if (isReceivable) receivables += amount;
+    if (isInventory) inventory += amount;
+    if (isFixedAsset) fixedAssets += hasAnyTerm(text, ["depreciation", "amortization"]) ? -amount : amount;
+    if (isOtherAsset && !isCash && !isReceivable && !isInventory && !isFixedAsset) otherAssets += amount;
+    if (isCurrentLiability) currentLiabilities += amount;
+    if (isLongTermLiability) longTermLiabilities += amount;
+    if (isEquity) equityItems += hasAnyTerm(text, equityReductionTerms) ? -amount : amount;
+  }
+
+  fixedAssets = Math.max(0, fixedAssets);
+  equityItems = Math.max(0, equityItems);
+
+  const currentAssets = cash + receivables + inventory;
+  const nonCurrentAssets = fixedAssets + otherAssets;
+  const totalAssets = currentAssets + nonCurrentAssets;
+  const totalLiabilities = currentLiabilities + longTermLiabilities;
+
+  if (totalAssets <= 0 && totalLiabilities <= 0 && equityItems <= 0) {
+    const netAssets = Math.max(0, txs.reduce((sum, tx) => sum + (Number(tx.amount) || 0), 0));
+    return {
+      currentAssets: netAssets,
+      nonCurrentAssets: 0,
+      totalAssets: netAssets,
+      currentLiabilities: 0,
+      longTermLiabilities: 0,
+      totalLiabilities: 0,
+      equity: netAssets,
+    };
+  }
+
+  return {
+    currentAssets,
+    nonCurrentAssets,
+    totalAssets,
+    currentLiabilities,
+    longTermLiabilities,
+    totalLiabilities,
+    equity: equityItems > 0 ? equityItems : Math.max(0, totalAssets - totalLiabilities),
+  };
 }
 
 function getPeriodRange(period: Period): { start: Date; end: Date } {
@@ -94,36 +227,61 @@ function getPrevRange(period: Period): { start: Date; end: Date } {
 /** Group transactions into time buckets for the chart */
 function buildTrendData(txs: Transaction[], period: Period) {
   const buckets: Map<string, { revenue: number; expenses: number }> = new Map();
+  const order: string[] = [];
 
   const addBucket = (key: string) => {
-    if (!buckets.has(key)) buckets.set(key, { revenue: 0, expenses: 0 });
+    if (!buckets.has(key)) {
+      buckets.set(key, { revenue: 0, expenses: 0 });
+      order.push(key);
+    }
   };
+
+  const monthKey = (d: Date) => d.toLocaleDateString("en-US", { month: "short", year: "2-digit" });
+  const dayKey = (d: Date) => d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  const { start, end } = getPeriodRange(period);
+
+  if (period === "7d" || period === "30d") {
+    const cursor = new Date(start);
+    cursor.setHours(0, 0, 0, 0);
+    const last = new Date(end);
+    last.setHours(0, 0, 0, 0);
+    while (cursor <= last) {
+      addBucket(dayKey(cursor));
+      cursor.setDate(cursor.getDate() + 1);
+    }
+  } else {
+    const monthCount = period === "3m" ? 4 : 13;
+    const cursor = new Date(end.getFullYear(), end.getMonth() - (monthCount - 1), 1);
+    for (let i = 0; i < monthCount; i += 1) {
+      addBucket(monthKey(cursor));
+      cursor.setMonth(cursor.getMonth() + 1);
+    }
+  }
 
   for (const tx of txs) {
     const d = new Date(tx.date_time);
     let key: string;
     if (period === "7d" || period === "30d") {
-      key = d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+      key = dayKey(d);
     } else {
-      key = d.toLocaleDateString("en-US", { month: "short", year: "2-digit" });
+      key = monthKey(d);
     }
-    addBucket(key);
+    if (!buckets.has(key)) continue;
     const b = buckets.get(key)!;
     if (tx.amount > 0) b.revenue += tx.amount;
     else b.expenses += Math.abs(tx.amount);
   }
 
-  return Array.from(buckets.entries())
-    .map(([label, v]) => ({
+  return order
+    .map((label) => {
+      const v = buckets.get(label) ?? { revenue: 0, expenses: 0 };
+      return {
       label,
       revenue: Math.round(v.revenue),
       expenses: Math.round(v.expenses),
       netCash: Math.round(v.revenue - v.expenses),
       profit: Math.round(v.revenue - v.expenses),
-    }))
-    .sort((a, b) => {
-      // Keep original insertion order (already time-ordered from Supabase)
-      return 0;
+      };
     });
 }
 
@@ -138,20 +296,41 @@ function extractStoragePath(fileUrl: string): string | null {
     // url.pathname keeps percent-encoding intact
     const parts = url.pathname.split("/documents/");
     // Do NOT decodeURIComponent — keep %20 etc. so createSignedUrl works
-    return parts[1] ? parts[1] : null;
+    return parts[1] ? decodeURIComponent(parts[1]) : null;
   } catch {
     return null;
   }
 }
 
 /** Returns the file URL for fetching — bucket is public so the stored URL works directly */
-function getSignedUrl(fileUrl: string): Promise<string> {
-  return Promise.resolve(fileUrl);
+async function getSignedUrl(fileUrl: string): Promise<string> {
+  const path = extractStoragePath(fileUrl);
+  if (!path) return fileUrl;
+
+  const { data: sessionData } = await supabase.auth.getSession();
+  const token = sessionData.session?.access_token;
+  const res = await fetch("/api/document-signed-url", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify({ path }),
+  });
+
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({})) as { message?: string; error?: string };
+    throw new Error(res.status === 404 ? "not_found" : body.message ?? body.error ?? `sign_failed_${res.status}`);
+  }
+
+  const body = await res.json() as { signedUrl?: string };
+  return body.signedUrl ?? fileUrl;
 }
 
 /** Trigger a browser download through the backend proxy (reliable inside iframes) */
 async function proxyDownload(fileUrl: string, filename: string) {
-  const params = new URLSearchParams({ url: fileUrl, filename });
+  const signedUrl = await getSignedUrl(fileUrl);
+  const params = new URLSearchParams({ url: signedUrl, filename });
   const proxyUrl = `/api/document-download?${params.toString()}`;
   const res = await fetch(proxyUrl);
   if (!res.ok) throw new Error(`Download failed: file not found (${res.status})`);
@@ -603,6 +782,53 @@ function buildCFRows(
 
 // ─── Balance Sheet row builder ────────────────────────────────────────────────
 
+function buildCFRowsFromEstimate(
+  cf: CashFlowEstimate,
+  labels: string[],
+): { body: string[][]; kinds: RowKind[] } {
+  const dash = "$-";
+  const values = (v: number) => labels.map(() => v);
+  const fmtCol = (v: number) => v === 0 ? dash
+    : v < 0 ? `($${Math.abs(v).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })})`
+    : `$${v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+  const body: string[][] = [];
+  const kinds: RowKind[] = [];
+  const hdr = (label: string) => { body.push([label, ...labels.map(() => "")]); kinds.push("header"); };
+  const sub = (label: string) => { body.push([`  ${label}`, ...labels.map(() => "")]); kinds.push("subheader"); };
+  const itm = (label: string, vals: number[]) => { body.push([`    ${label}`, ...vals.map(fmtCol)]); kinds.push("item"); };
+  const tot = (label: string, vals: number[]) => { body.push([label, ...vals.map(fmtCol)]); kinds.push("total"); };
+  const grand = (label: string, vals: number[]) => { body.push([label, ...vals.map(fmtCol)]); kinds.push("grandtotal"); };
+
+  hdr("Operating Activities");
+  itm("Net income", values(cf.operating));
+  sub("Adjustments for Non-Cash Items:");
+  itm("Depreciation", values(0));
+  itm("Amortization", values(0));
+  sub("Changes in Working Capital:");
+  itm("Accounts Receivable", values(0));
+  itm("Inventory", values(0));
+  itm("Accounts Payable", values(0));
+  tot("Net Cash from Operating Activities", values(cf.operating));
+
+  hdr("Investing Activities");
+  itm("Purchases of property, plant and equipment", values(0));
+  itm("Other", values(cf.investing));
+  tot("Net Cash from Investing Activities", values(cf.investing));
+
+  hdr("Financing Activities");
+  itm("Loan activities", values(0));
+  itm("Owner contributions / distributions", values(0));
+  itm("Other", values(cf.financing));
+  tot("Net Cash from Financing Activities", values(cf.financing));
+
+  grand("Beginning Cash Balance", values(0));
+  itm("Change in Cash & Cash Equivalents", values(cf.netChange));
+  grand("Ending Cash Balance", values(cf.netChange));
+
+  return { body, kinds };
+}
+
 function buildBSRows(
   txs: TxRow[],
   labels: string[],
@@ -732,6 +958,101 @@ function buildBSRows(
   return { body, kinds };
 }
 
+function buildBSRowsFromEstimate(
+  bs: TransactionBalanceSheetEstimate,
+  labels: string[],
+): { body: string[][]; kinds: RowKind[] } {
+  const dash = "$-";
+  const values = (v: number) => labels.map(() => v);
+  const fmtN = (v: number) => v === 0 ? dash : `$${Math.abs(v).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const fmtRatio = (v: number) => v === 0 ? "-" : v.toFixed(2);
+  const fmtWC = (v: number) => v === 0 ? dash : (v < 0 ? `($${Math.abs(v).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })})` : `$${v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`);
+
+  const totalAssets = bs.totalAssets;
+  const totalLiabilities = bs.totalLiabilities;
+  const totalEquity = bs.equity;
+  const totalLiabEquity = totalLiabilities + totalEquity;
+  const debtRatio = totalAssets > 0 ? totalLiabilities / totalAssets : 0;
+  const currRatio = bs.currentLiabilities > 0 ? bs.currentAssets / bs.currentLiabilities : 0;
+  const workingCap = bs.currentAssets - bs.currentLiabilities;
+  const a2e = totalEquity > 0 ? totalAssets / totalEquity : 0;
+  const d2e = totalEquity > 0 ? totalLiabilities / totalEquity : 0;
+
+  const body: string[][] = [];
+  const kinds: RowKind[] = [];
+  const hdr  = (l: string) => { body.push([l, ...labels.map(() => "")]); kinds.push("header"); };
+  const sub  = (l: string) => { body.push([l, ...labels.map(() => "")]); kinds.push("subheader"); };
+  const itm  = (l: string, vals: number[], fn = fmtN) => { body.push([`  ${l}`, ...vals.map(fn)]); kinds.push("item"); };
+  const tot  = (l: string, vals: number[], fn = fmtN) => { body.push([l, ...vals.map(fn)]); kinds.push("total"); };
+  const grand = (l: string, vals: number[], fn = fmtN) => { body.push([l, ...vals.map(fn)]); kinds.push("grandtotal"); };
+  const sep  = () => { body.push(["", ...labels.map(() => "")]); kinds.push("separator"); };
+  const ratio = (l: string, vals: number[], fn: (v: number) => string) => { body.push([`  ${l}`, ...vals.map(fn)]); kinds.push("ratio"); };
+
+  hdr("ASSETS");
+  sub("CURRENT ASSETS");
+  itm("Cash", values(bs.currentAssets));
+  itm("Accounts Receivable", values(0));
+  itm("Inventory", values(0));
+  itm("Prepaid Expenses", values(0));
+  itm("Short-Term Investments", values(0));
+  tot("TOTAL CURRENT ASSETS", values(bs.currentAssets));
+  sep();
+
+  sub("FIXED (LONG-TERM) ASSETS");
+  itm("Long-Term Investments", values(0));
+  itm("Property, Plant and Equipment", values(bs.nonCurrentAssets));
+  itm("Intangible Assets", values(0));
+  itm("Accumulated Depreciation *(enter as negative)", values(0));
+  tot("TOTAL FIXED (LONG-TERM) ASSETS", values(bs.nonCurrentAssets));
+  sep();
+
+  sub("OTHER ASSETS");
+  itm("Deferred Income Tax", values(0));
+  itm("Other", values(0));
+  tot("TOTAL OTHER ASSETS", values(0));
+  sep();
+
+  grand("TOTAL ASSETS", values(totalAssets));
+  sep();
+
+  hdr("LIABILITIES AND OWNER'S EQUITY");
+  sub("CURRENT LIABILITIES");
+  itm("Accounts Payable", values(bs.currentLiabilities));
+  itm("Short-Term Loans", values(0));
+  itm("Income Taxes Payable", values(0));
+  itm("Accrued Salaries and Wages", values(0));
+  itm("Unearned Revenue", values(0));
+  itm("Current Portion of Long-Term Debt", values(0));
+  tot("TOTAL CURRENT LIABILITIES", values(bs.currentLiabilities));
+  sep();
+
+  sub("LONG-TERM LIABILITIES");
+  itm("Long-term debt", values(bs.longTermLiabilities));
+  itm("Deferred income tax", values(0));
+  itm("Other", values(0));
+  tot("TOTAL LONG-TERM LIABILITIES", values(bs.longTermLiabilities));
+  sep();
+
+  sub("OWNER'S EQUITY");
+  itm("Owner's Investment", values(0));
+  itm("Retained Earnings", values(totalEquity));
+  itm("Other", values(0));
+  tot("TOTAL OWNER'S EQUITY", values(totalEquity));
+  sep();
+
+  grand("TOTAL LIABILITIES AND OWNER'S EQUITY", values(totalLiabEquity));
+  sep();
+
+  hdr("FINANCIAL RATIOS");
+  ratio("Debt Ratio", values(debtRatio), fmtRatio);
+  ratio("Current Ratio", values(currRatio), fmtRatio);
+  ratio("Working Capital", values(workingCap), fmtWC);
+  ratio("Assets-to-Equity Ratio", values(a2e), fmtRatio);
+  ratio("Debt-to-Equity Ratio", values(d2e), fmtRatio);
+
+  return { body, kinds };
+}
+
 function zeros(n: number): number[] { return Array.from({ length: n }, () => 0); }
 
 // ─── PDF export ───────────────────────────────────────────────────────────────
@@ -746,6 +1067,8 @@ async function exportToPDF(
   companyName: string,
   cats: CatRow[],
   orgInfo: OrgInfo = {},
+  bsOverride: TransactionBalanceSheetEstimate | null = null,
+  cfOverride: CashFlowEstimate | null = null,
 ) {
   const jspdfModule = await import("jspdf");
   const jsPDF = jspdfModule.jsPDF;
@@ -802,11 +1125,13 @@ async function exportToPDF(
     body = pnl.body;
     rowKinds = pnl.kinds;
   } else if (exportType === "cf") {
-    const r = buildCFRows(txs, labels, exportFreq);
+    const r = cfOverride ? buildCFRowsFromEstimate(cfOverride, labels) : buildCFRows(txs, labels, exportFreq);
     body = r.body;
     rowKinds = r.kinds;
   } else {
-    const r = buildBSRows(txs, labels, exportFreq, endDate, exportPeriodCount);
+    const r = bsOverride
+      ? buildBSRowsFromEstimate(bsOverride, labels)
+      : buildBSRows(txs, labels, exportFreq, endDate, exportPeriodCount);
     body = r.body;
     rowKinds = r.kinds;
   }
@@ -864,6 +1189,8 @@ async function exportToExcel(
   companyName: string,
   cats: CatRow[],
   orgInfo: OrgInfo = {},
+  bsOverride: TransactionBalanceSheetEstimate | null = null,
+  cfOverride: CashFlowEstimate | null = null,
 ) {
   const ExcelJS = (await import("exceljs")).default ?? (await import("exceljs"));
   const wb = new (ExcelJS as { Workbook: new () => import("exceljs").Workbook }).Workbook();
@@ -999,9 +1326,11 @@ async function exportToExcel(
   if (exportType === "pl") {
     data = buildPnLRows(txs, labels, exportFreq, cats) as unknown as DataSection;
   } else if (exportType === "cf") {
-    data = buildCFRows(txs, labels, exportFreq);
+    data = cfOverride ? buildCFRowsFromEstimate(cfOverride, labels) : buildCFRows(txs, labels, exportFreq);
   } else {
-    data = buildBSRows(txs, labels, exportFreq, endDate, exportPeriodCount);
+    data = bsOverride
+      ? buildBSRowsFromEstimate(bsOverride, labels)
+      : buildBSRows(txs, labels, exportFreq, endDate, exportPeriodCount);
   }
 
   for (let i = 0; i < data.body.length; i++) {
@@ -1035,6 +1364,8 @@ export default function Reports() {
   const numericId = profile?.numericId ?? null;
   const queryClient = useQueryClient();
   const { toast } = useToast();
+  const [, navigate] = useLocation();
+  const [activeOrgId] = useActiveOrganizationId(numericId);
 
   const [scanningImportId, setScanningImportId] = useState<number | null>(null);
   const [period, setPeriod] = useState<Period>("all");
@@ -1082,6 +1413,8 @@ export default function Reports() {
   const [smartCleanOpen, setSmartCleanOpen] = useState(false);
   const [smartCleanPreview, setSmartCleanPreview] = useState<Array<{ id: number; title: string; amount: number }> | null>(null);
   const [smartCleanRunning, setSmartCleanRunning] = useState(false);
+  const [plaidConnecting, setPlaidConnecting] = useState(false);
+  const [plaidSyncing, setPlaidSyncing] = useState(false);
 
   // Transactions tab: search + add-transaction form
   const [txSearch, setTxSearch] = useState("");
@@ -1175,11 +1508,10 @@ export default function Reports() {
     setViewDocError(null);
     (async () => {
       try {
-        const headRes = await fetch(viewingDoc.fileUrl!, { method: "HEAD" });
-        if (headRes.status === 404 || headRes.status === 400) throw new Error("not_found");
-        if (!headRes.ok) throw new Error(`head error ${headRes.status}`);
+        const signedUrl = await getSignedUrl(viewingDoc.fileUrl!);
+        
         // File exists — use the URL directly (public bucket, no blob needed)
-        if (!cancelled) setViewDocBlobUrl(viewingDoc.fileUrl!);
+        if (!cancelled) setViewDocBlobUrl(signedUrl);
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         if (!cancelled) setViewDocError(msg === "not_found" ? "not_found" : "load_error");
@@ -1209,14 +1541,15 @@ export default function Reports() {
 
   // ── Org lookup ──────────────────────────────────────────────────────────────
   const { data: orgId } = useQuery<number | null>({
-    queryKey: ["user_org_reports", numericId],
+    queryKey: ["user_org_reports", numericId, activeOrgId],
     enabled: numericId !== null,
     staleTime: 5 * 60 * 1000,
     queryFn: async () => {
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from("organizations")
-        .select("id").eq("owner_id", numericId!).limit(1).maybeSingle();
-      return (data as { id: number } | null)?.id ?? null;
+        .select("id").eq("owner_id", numericId!).order("id", { ascending: true });
+      if (error) throw error;
+      return pickActiveOrganization(data as { id: number }[] | null, activeOrgId)?.id ?? null;
     },
   });
 
@@ -1232,6 +1565,19 @@ export default function Reports() {
   });
   const orgStateId = (orgDetails?.state as number | undefined) ?? null;
   const { groups: ruleGroups, rules: deductionRules } = useDeductionRuleSet();
+
+  function invalidateTransactionReports() {
+    const keys = [
+      ["tx_period", orgId, period],
+      ["tx_prev_period", orgId, period],
+      ["tx_all_balance", orgId],
+      ["tx_all_full", orgId],
+      ["tx_month", orgId],
+      ["tx_recent", orgId],
+      ["tx_count", orgId],
+    ];
+    keys.forEach(k => queryClient.invalidateQueries({ queryKey: k }));
+  }
 
   // ── Real-time transaction updates ───────────────────────────────────────────
   // Without this, tx_all_balance/tx_all_full (and the shared overview snapshot
@@ -1259,13 +1605,14 @@ export default function Reports() {
     setSmartCleanOpen(true);
     setSmartCleanPreview(null);
     try {
+      if (!orgId) throw new Error("No active organization found");
       const { data: sessionData } = await supabase.auth.getSession();
       const jwt = sessionData.session?.access_token;
       if (!jwt) throw new Error("Not authenticated");
       const res = await fetch("/api/clean-pl-transactions", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${jwt}` },
-        body: JSON.stringify({ dryRun: true }),
+        body: JSON.stringify({ dryRun: true, org_id: orgId }),
       });
       const json = await res.json() as { found?: Array<{ id: number; title: string; amount: number }>; error?: string };
       if (!res.ok) throw new Error(json.error ?? "Request failed");
@@ -1281,13 +1628,14 @@ export default function Reports() {
   async function handleSmartCleanConfirm() {
     setSmartCleanRunning(true);
     try {
+      if (!orgId) throw new Error("No active organization found");
       const { data: sessionData } = await supabase.auth.getSession();
       const jwt = sessionData.session?.access_token;
       if (!jwt) throw new Error("Not authenticated");
       const res = await fetch("/api/clean-pl-transactions", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${jwt}` },
-        body: JSON.stringify({ dryRun: false }),
+        body: JSON.stringify({ dryRun: false, org_id: orgId }),
       });
       const json = await res.json() as { deleted?: number; error?: string };
       if (!res.ok) throw new Error(json.error ?? "Delete failed");
@@ -1527,9 +1875,72 @@ Respond with ONLY valid JSON, no explanation:
     setEditNotes(tx.description || "");
     setEditCategoryId(tx.category_id ?? null);
     setEditSubCategoryId(tx.sub_category_id ?? null);
+    setAiCatLoading(false);
     setAiCatSuggested(false);
-    if (!tx.category_id) {
-      autoCategorize(tx);
+  }
+
+  async function handleConnectBank() {
+    setPlaidConnecting(true);
+    try {
+      if (!orgId) throw new Error("No active organization found");
+      const { data: sessionData } = await supabase.auth.getSession();
+      const jwt = sessionData.session?.access_token;
+      if (!jwt) throw new Error("Not authenticated");
+
+      const tokenRes = await fetch("/api/plaid/link-token", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${jwt}` },
+        body: JSON.stringify({ org_id: orgId }),
+      });
+      const tokenJson = await tokenRes.json() as { link_token?: string; message?: string; error?: string };
+      if (!tokenRes.ok || !tokenJson.link_token) {
+        throw new Error(tokenJson.message ?? tokenJson.error ?? "Could not start Plaid Link");
+      }
+
+      await openPlaidLink({
+        token: tokenJson.link_token,
+        onSuccess: async (publicToken, metadata) => {
+          setPlaidSyncing(true);
+          try {
+            const exchangeRes = await fetch("/api/plaid/exchange-public-token", {
+              method: "POST",
+              headers: { "Content-Type": "application/json", Authorization: `Bearer ${jwt}` },
+              body: JSON.stringify({ public_token: publicToken, metadata, org_id: orgId }),
+            });
+            const exchangeJson = await exchangeRes.json() as { item_id?: number; message?: string; error?: string };
+            if (!exchangeRes.ok) throw new Error(exchangeJson.message ?? exchangeJson.error ?? "Could not connect bank");
+
+            const syncRes = await fetch("/api/plaid/sync", {
+              method: "POST",
+              headers: { "Content-Type": "application/json", Authorization: `Bearer ${jwt}` },
+              body: JSON.stringify({ item_id: exchangeJson.item_id, org_id: orgId }),
+            });
+            const syncJson = await syncRes.json() as { added?: number; modified?: number; removed?: number; message?: string; error?: string };
+            if (!syncRes.ok) throw new Error(syncJson.message ?? syncJson.error ?? "Could not sync bank transactions");
+
+            const changed = (syncJson.added ?? 0) + (syncJson.modified ?? 0);
+            if (changed > 0) await categorizeUncategorizedTransactions(Math.min(Math.max(changed, 10), 50));
+            invalidateTransactionReports();
+            toast({
+              title: "Bank connected",
+              description: `Synced ${syncJson.added ?? 0} new transaction${(syncJson.added ?? 0) === 1 ? "" : "s"}.`,
+            });
+          } catch (err) {
+            toast({ title: "Bank sync failed", description: String(err), variant: "destructive" });
+          } finally {
+            setPlaidSyncing(false);
+          }
+        },
+        onExit: (error) => {
+          if (error?.error_message) {
+            toast({ title: "Plaid Link closed", description: error.error_message, variant: "destructive" });
+          }
+        },
+      });
+    } catch (err) {
+      toast({ title: "Could not connect bank", description: String(err), variant: "destructive" });
+    } finally {
+      setPlaidConnecting(false);
     }
   }
 
@@ -1542,7 +1953,7 @@ Respond with ONLY valid JSON, no explanation:
     queryFn: async () => {
       const { data, error } = await supabase
         .from("transactions")
-        .select("id, title, amount, type, date_time, description, deductible, sub_category_id")
+        .select("id, title, amount, type, date_time, description, deductible, category_id, sub_category_id")
         .eq("org_id", orgId!)
         .gte("date_time", start.toISOString())
         .lte("date_time", end.toISOString())
@@ -1660,6 +2071,13 @@ Respond with ONLY valid JSON, no explanation:
   const cfMoneyIn  = txs.filter(t => !_isInternalTransfer(t.title) && t.amount > 0).reduce((s, t) => s + t.amount, 0);
   const cfMoneyOut = txs.filter(t => !_isInternalTransfer(t.title) && t.amount < 0).reduce((s, t) => s + Math.abs(t.amount), 0);
   const cfNetCash  = cfMoneyIn - cfMoneyOut;
+  const cfDisplayOut = cfShowPaid ? 0 : cfMoneyOut;
+  const transactionCf: CashFlowEstimate = {
+    operating: cfMoneyIn - cfDisplayOut,
+    investing: 0,
+    financing: 0,
+    netChange: cfMoneyIn - cfDisplayOut,
+  };
   const prevCfIn   = prevTxs.filter(t => !_isInternalTransfer(t.title) && t.amount > 0).reduce((s, t) => s + t.amount, 0);
   const prevCfOut  = prevTxs.filter(t => !_isInternalTransfer(t.title) && t.amount < 0).reduce((s, t) => s + Math.abs(t.amount), 0);
   const prevCfNet  = prevCfIn - prevCfOut;
@@ -1668,6 +2086,10 @@ Respond with ONLY valid JSON, no explanation:
   const allTimeCfIn  = allTxsFull.filter(t => !_isInternalTransfer(t.title) && t.amount > 0).reduce((s, t) => s + t.amount, 0);
   const allTimeCfOut = allTxsFull.filter(t => !_isInternalTransfer(t.title) && t.amount < 0).reduce((s, t) => s + Math.abs(t.amount), 0);
   const allTimeCfNet = allTimeCfIn - allTimeCfOut;
+  const allTimeTransactionBs = useMemo(
+    () => estimateBalanceSheetFromTransactions(allTxsFull, categories, subCategories),
+    [allTxsFull, categories, subCategories],
+  );
 
   // ── Overview: single shared snapshot (see lib/financial-statements.ts) ─────
   // Uses ALL-time transactions (`allTxs`, matching the Dashboard's Financial
@@ -1687,9 +2109,9 @@ Respond with ONLY valid JSON, no explanation:
   const overviewNetIncome = snapshot.netProfit;
   const overviewMargin = overviewIncome > 0 ? (overviewNetIncome / overviewIncome) * 100 : 0;
 
-  const totalAssets      = snapshot.totalAssets;
-  const totalLiabilities = snapshot.totalLiabilities;
-  const equity           = snapshot.equity;
+  const totalAssets      = hasBsDocs ? snapshot.totalAssets : allTimeTransactionBs.totalAssets;
+  const totalLiabilities = hasBsDocs ? snapshot.totalLiabilities : allTimeTransactionBs.totalLiabilities;
+  const equity           = hasBsDocs ? snapshot.equity : allTimeTransactionBs.equity;
   const debtToEquity     = equity > 0 ? totalLiabilities / equity : 0;
 
   // Net Cash MUST equal the Dashboard's Cash Flow "Net Change" figure exactly
@@ -1749,13 +2171,31 @@ Respond with ONLY valid JSON, no explanation:
           const plan = await planRes.json() as { limits?: { pdfExport?: boolean; excelExport?: boolean }; tier?: string };
           const allowed = exportFormat === "pdf" ? plan.limits?.pdfExport : plan.limits?.excelExport;
           if (allowed === false) {
-            toast({
-              title: "Upgrade required",
-              description: `${exportFormat === "pdf" ? "PDF" : "Excel"} export isn't available on your ${plan.tier ?? "current"} plan. Upgrade to unlock it.`,
-              variant: "destructive",
-            });
-            setIsExporting(false);
-            return;
+            if (exportFormat === "pdf") {
+              const unlockKey: TokenUnlockKey =
+                exportType === "pl" ? "pl_pdf_export"
+                : exportType === "cf" ? "cash_flow_pdf_export"
+                : "full_financial_pdf_package";
+              const cost = exportType === "bs" ? 3 : 1;
+              const ok = window.confirm(`${exportType === "bs" ? "Balance Sheet PDF" : exportType === "pl" ? "P&L PDF" : "Cash Flow PDF"} export is not included on your ${plan.tier ?? "current"} plan. Use ${cost} token${cost === 1 ? "" : "s"} for this export?`);
+              if (!ok) {
+                setIsExporting(false);
+                return;
+              }
+              const result = await spendTokensForUnlock(unlockKey, `${exportType}:${Date.now()}`);
+              toast({
+                title: "Export unlocked",
+                description: result.upgradeMessage ?? `Spent ${cost} token${cost === 1 ? "" : "s"} for this export.`,
+              });
+            } else {
+              toast({
+                title: "Upgrade required",
+                description: `Excel export is only available on Pro. Upgrade to unlock it.`,
+                variant: "destructive",
+              });
+              setIsExporting(false);
+              return;
+            }
           }
         }
       }
@@ -1786,10 +2226,13 @@ Respond with ONLY valid JSON, no explanation:
                    || (orgRow?.location as string | undefined),
       };
 
+      const bsForExport = exportType === "bs" ? effectiveBs : null;
+      const cfForExport = exportType === "cf" ? effectiveCf : null;
+
       if (exportFormat === "pdf") {
-        await exportToPDF(exportType, exportFreq, exportStart, exportEnd, rows, exportPeriodCount, companyName, cats, orgInfo);
+        await exportToPDF(exportType, exportFreq, exportStart, exportEnd, rows, exportPeriodCount, companyName, cats, orgInfo, bsForExport, cfForExport);
       } else if (exportFormat === "excel") {
-        await exportToExcel(exportType, exportFreq, exportStart, exportEnd, rows, exportPeriodCount, companyName, cats, orgInfo);
+        await exportToExcel(exportType, exportFreq, exportStart, exportEnd, rows, exportPeriodCount, companyName, cats, orgInfo, bsForExport, cfForExport);
       } else {
         // CSV fallback
         const reportName = exportType === "pl" ? "Profit & Loss" : exportType === "bs" ? "Balance Sheet" : "Cash Flow";
@@ -1818,9 +2261,7 @@ Respond with ONLY valid JSON, no explanation:
             ["", "", "Net Income", netIncome.toFixed(2), ""],
           ];
         } else if (exportType === "cf") {
-          const moneyIn = rows.filter(t => t.amount > 0).reduce((s, t) => s + t.amount, 0);
-          const moneyOut = rows.filter(t => t.amount < 0).reduce((s, t) => s + Math.abs(t.amount), 0);
-          const netCash = moneyIn - moneyOut;
+          const cf = cfForExport ?? { operating: 0, investing: 0, financing: 0, netChange: 0 };
           csvRows = [
             ["BookSmart – Cash Flow Statement"],
             [`Period: ${exportStart} to ${exportEnd}`, `Frequency: ${exportFreq}`],
@@ -1833,22 +2274,34 @@ Respond with ONLY valid JSON, no explanation:
               t.amount.toFixed(2),
             ]),
             [],
-            ["", "Operating Activities", "", netCash.toFixed(2)],
-            ["", "Investing Activities", "", "0.00"],
-            ["", "Financing Activities", "", "0.00"],
-            ["", "Net Change in Cash", "", netCash.toFixed(2)],
+            ["", "Operating Activities", "", cf.operating.toFixed(2)],
+            ["", "Investing Activities", "", cf.investing.toFixed(2)],
+            ["", "Financing Activities", "", cf.financing.toFixed(2)],
+            ["", "Net Change in Cash", "", cf.netChange.toFixed(2)],
           ];
         } else {
-          const totalAssetVal = Math.max(0, rows.reduce((s, t) => s + t.amount, 0));
-          const totalLiabVal = rows.filter(t => t.amount < 0).reduce((s, t) => s + Math.abs(t.amount), 0) * 0.4;
+          const bs = bsForExport ?? {
+            currentAssets: 0,
+            nonCurrentAssets: 0,
+            totalAssets: 0,
+            currentLiabilities: 0,
+            longTermLiabilities: 0,
+            totalLiabilities: 0,
+            equity: 0,
+          };
           csvRows = [
             ["BookSmart – Balance Sheet"],
             [`As of: ${exportEnd}`],
             [],
             ["Category", "Amount"],
-            ["Total Assets", totalAssetVal.toFixed(2)],
-            ["Total Liabilities", totalLiabVal.toFixed(2)],
-            ["Owner's Equity", Math.max(0, totalAssetVal - totalLiabVal).toFixed(2)],
+            ["Current Assets", bs.currentAssets.toFixed(2)],
+            ["Fixed / Non-Current Assets", bs.nonCurrentAssets.toFixed(2)],
+            ["Total Assets", bs.totalAssets.toFixed(2)],
+            ["Current Liabilities", bs.currentLiabilities.toFixed(2)],
+            ["Long-Term Liabilities", bs.longTermLiabilities.toFixed(2)],
+            ["Total Liabilities", bs.totalLiabilities.toFixed(2)],
+            ["Owner's Equity", bs.equity.toFixed(2)],
+            ["Total Liabilities and Equity", (bs.totalLiabilities + bs.equity).toFixed(2)],
           ];
         }
         const slug = reportName.toLowerCase().replace(/\s+/g, "_");
@@ -1894,7 +2347,23 @@ Respond with ONLY valid JSON, no explanation:
     }
   }
 
-  const STATEMENT_CATEGORIES = ["Transactions", "Income", "Expenses", "Receipts"];
+  function scheduleUploadCategorization() {
+    const delays = [8000, 20000, 45000];
+    delays.forEach(delay => {
+      window.setTimeout(async () => {
+        const categorization = await categorizeUncategorizedTransactions(30);
+        if (categorization.updated > 0) {
+          queryClient.invalidateQueries({ queryKey: ["tx_month", orgId] });
+          queryClient.invalidateQueries({ queryKey: ["tx_recent", orgId] });
+          queryClient.invalidateQueries({ queryKey: ["tx_count", orgId] });
+          queryClient.invalidateQueries({ queryKey: ["tx_period", orgId, period] });
+          queryClient.invalidateQueries({ queryKey: ["tx_prev_period", orgId, period] });
+          queryClient.invalidateQueries({ queryKey: ["tx_all_full", orgId] });
+          queryClient.invalidateQueries({ queryKey: ["tx_all_balance", orgId] });
+        }
+      }, delay);
+    });
+  }
 
   async function handleUploadSave() {
     if (!uploadPickedFile) { setUploadError("Please select a file first."); return; }
@@ -1932,7 +2401,7 @@ Respond with ONLY valid JSON, no explanation:
         const errBody = await uploadRes.json().catch(() => ({})) as { message?: string };
         throw new Error(`Storage upload failed: ${errBody.message ?? uploadRes.status}`);
       }
-      const { publicUrl } = await uploadRes.json() as { publicUrl: string };
+      const { publicUrl, storagePath } = await uploadRes.json() as { publicUrl: string; storagePath: string };
 
       // 3. Build parsed_data (period metadata)
       const parsedData = isBalanceSheetUpload
@@ -1959,15 +2428,138 @@ Respond with ONLY valid JSON, no explanation:
         .single();
       if (dbError) throw new Error(`Database insert failed: ${dbError.message}`);
 
+      const docType = categoryToDocType(uploadCategory);
+      if (docType) {
+        const fileData = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => {
+            const result = reader.result as string;
+            resolve(result.includes(",") ? result.split(",")[1] : result);
+          };
+          reader.onerror = () => reject(new Error("Failed to read file"));
+          reader.readAsDataURL(uploadPickedFile);
+        });
+
+        try {
+          const extractRes = await fetch("/api/extract-document", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify({ fileData, mimeType, docType }),
+          });
+          if (!extractRes.ok) {
+            const errBody = await extractRes.json().catch(() => ({})) as { message?: string; error?: string };
+            throw new Error(errBody.message ?? errBody.error ?? `Extraction failed: ${extractRes.status}`);
+          }
+          const extractJson = await extractRes.json() as { extracted?: any };
+          const extracted = extractJson.extracted ?? {};
+          const flat: Record<string, unknown> = {};
+          if (docType === "pnl") {
+            Object.assign(flat, extracted);
+          } else if (docType === "bs") {
+            flat.assets_current = extracted.assets?.current ?? 0;
+            flat.assets_non_current = extracted.assets?.non_current ?? 0;
+            flat.liabilities_current = extracted.liabilities?.current ?? 0;
+            flat.liabilities_long_term = extracted.liabilities?.long_term ?? 0;
+            flat.equity = extracted.equity ?? 0;
+          } else {
+            Object.assign(flat, extracted);
+          }
+          flat.ai_extracted = true;
+          flat.ai_extracted_at = new Date().toISOString();
+
+          const { error: updateError } = await supabase
+            .from("user_documents")
+            .update({ parsed_data: { ...parsedData, ...flat }, updated_at: new Date().toISOString() })
+            .eq("id", docData.id);
+          if (updateError) throw updateError;
+        } catch (err) {
+          console.warn("[upload] financial statement extraction failed:", err);
+          toast({
+            title: "Document saved, extraction failed",
+            description: "The file was uploaded, but no extracted figures were saved. Try uploading a clearer statement.",
+            variant: "destructive",
+          });
+        }
+      }
+
       // 5. Refresh document list
       queryClient.invalidateQueries({ queryKey: ["user_documents", numericId] });
+      queryClient.invalidateQueries({ queryKey: ["statement_docs", numericId] });
       setShowUpload(false);
       resetUploadForm();
 
       // 6. If this is a bank statement / transaction document → trigger AI scan
-      const isStatementDoc = STATEMENT_CATEGORIES.includes(uploadCategory);
+      const isStatementDoc = uploadCategory === "Transactions";
       if (isStatementDoc && docData?.id) {
+        if (!orgId) throw new Error("No organization found for your account. Please contact support.");
+
         setScanningImportId(-1);
+        toast({
+          title: "Document uploaded!",
+          description: "Your transaction document was queued for n8n processing.",
+        });
+
+        let extractedText: string | null = null;
+        let isScanned = mimeType.startsWith("image/");
+
+        if (mimeType === "application/pdf") {
+          const fileData = await new Promise<string>((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => {
+              const result = reader.result as string;
+              resolve(result.includes(",") ? result.split(",")[1] : result);
+            };
+            reader.onerror = () => reject(new Error("Failed to read file"));
+            reader.readAsDataURL(uploadPickedFile);
+          });
+
+          try {
+            const textRes = await fetch("/api/extract-text", {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${token}`,
+              },
+              body: JSON.stringify({ fileData }),
+            });
+            if (textRes.ok) {
+              const payload = await textRes.json() as { text?: string; isScanned?: boolean };
+              extractedText = payload.text || null;
+              isScanned = payload.isScanned ?? false;
+            }
+          } catch (err) {
+            console.warn("[upload] extract-text failed, continuing with n8n OCR path:", err);
+          }
+        }
+
+        const { data: importData, error: importError } = await supabase
+          .from("statement_imports")
+          .insert({
+            user_id: numericId,
+            org_id: orgId,
+            document_id: docData.id,
+            document_path: storagePath,
+            mime_type: mimeType,
+            is_scanned: isScanned,
+            extracted_text: extractedText,
+            status: "processing",
+          })
+          .select("id")
+          .single();
+
+        if (importError) throw new Error(importError.message);
+
+        setScanningImportId((importData as { id: number }).id);
+        toast({
+          title: "Transaction import started",
+          description: "n8n will extract transactions from this file.",
+        });
+        scheduleUploadCategorization();
+        return;
+        /*
 
         toast({
           title: "Document uploaded!",
@@ -1997,16 +2589,19 @@ Respond with ONLY valid JSON, no explanation:
             "Content-Type": "application/json",
             Authorization: `Bearer ${jwt}`,
           },
-          body: JSON.stringify({ fileData, mimeType, documentId: docData.id }),
+          body: JSON.stringify({ fileData, mimeType, documentId: docData.id, org_id: orgId }),
         })
           .then((r) => r.json())
-          .then((result: unknown) => {
+          .then(async (result: unknown) => {
             setScanningImportId(null);
             const count = (result as { count?: number })?.count ?? 0;
             if (count > 0) {
+              const categorization = await categorizeUncategorizedTransactions(count);
               toast({
                 title: `${count} transactions added!`,
-                description: "Your income & expense totals have been updated on the dashboard.",
+                description: categorization.updated > 0
+                  ? `${categorization.updated} transaction${categorization.updated === 1 ? "" : "s"} categorized automatically.`
+                  : "Your income & expense totals have been updated on the dashboard.",
               });
               queryClient.invalidateQueries({ queryKey: ["tx_month", orgId] });
               queryClient.invalidateQueries({ queryKey: ["tx_recent", orgId] });
@@ -2029,6 +2624,7 @@ Respond with ONLY valid JSON, no explanation:
               variant: "destructive",
             });
           });
+        */
       } else {
         toast({ title: "Document uploaded successfully!" });
       }
@@ -2071,21 +2667,33 @@ Respond with ONLY valid JSON, no explanation:
     .sort(sortByPeriodDesc);
 
   // ── Overall computation across ALL uploaded documents of each type ──────────
+  const hasPnlPeriodDocs = pnlPeriods.length > 0;
   const pnlSummary = useMemo(() => {
+    if (!hasPnlPeriodDocs) {
+      return { totalRevenue: income, totalExpenses: expenses, netIncome, count: txs.length };
+    }
     const totalRevenue = pnlPeriods.reduce((s, p) => s + (p.pnl?.revenue ?? 0), 0);
     const totalCogs = pnlPeriods.reduce((s, p) => s + (p.pnl?.cogs ?? 0), 0);
     const totalOpex = pnlPeriods.reduce((s, p) => s + (p.pnl?.opex ?? 0), 0);
-    const netIncome = pnlPeriods.reduce((s, p) => s + (p.pnl?.netIncome ?? 0), 0);
-    return { totalRevenue, totalExpenses: totalCogs + totalOpex, netIncome, count: pnlPeriods.length };
-  }, [pnlPeriods]);
-  const pnlChartData = useMemo(() => (
-    [...pnlPeriods].reverse().map((p) => ({
+    const docNetIncome = pnlPeriods.reduce((s, p) => s + (p.pnl?.netIncome ?? 0), 0);
+    return { totalRevenue, totalExpenses: totalCogs + totalOpex, netIncome: docNetIncome, count: pnlPeriods.length };
+  }, [hasPnlPeriodDocs, income, expenses, netIncome, pnlPeriods, txs.length]);
+  const pnlChartData = useMemo(() => {
+    if (!hasPnlPeriodDocs) {
+      return trendData.map((d) => ({
+        label: d.label,
+        Revenue: d.revenue,
+        Expenses: d.expenses,
+        "Net Income": d.profit,
+      }));
+    }
+    return [...pnlPeriods].reverse().map((p) => ({
       label: statementPeriodLabel(p),
       Revenue: p.pnl?.revenue ?? 0,
       Expenses: (p.pnl?.cogs ?? 0) + (p.pnl?.opex ?? 0),
       "Net Income": p.pnl?.netIncome ?? 0,
-    }))
-  ), [pnlPeriods]);
+    }));
+  }, [hasPnlPeriodDocs, pnlPeriods, trendData]);
 
   // Period-over-period growth % for Revenue, Expenses (COGS+Opex), and COGS
   // alone — computed strictly from the same uploaded/manual P&L statements
@@ -2096,6 +2704,17 @@ Respond with ONLY valid JSON, no explanation:
       if (prev === 0) return curr === 0 ? 0 : 100;
       return ((curr - prev) / Math.abs(prev)) * 100;
     };
+    if (!hasPnlPeriodDocs) {
+      return trendData.map((d, i) => {
+        const prev = i > 0 ? trendData[i - 1] : null;
+        return {
+          label: d.label,
+          "Revenue Growth": prev ? Math.round(growthPct(d.revenue, prev.revenue) * 10) / 10 : 0,
+          "Expense Growth": prev ? Math.round(growthPct(d.expenses, prev.expenses) * 10) / 10 : 0,
+          "COGS Growth": 0,
+        };
+      });
+    }
     return chrono.map((p, i) => {
       const prev = i > 0 ? chrono[i - 1] : null;
       const revenue = p.pnl?.revenue ?? 0;
@@ -2111,23 +2730,48 @@ Respond with ONLY valid JSON, no explanation:
         "COGS Growth": prev ? Math.round(growthPct(cogs, prevCogs) * 10) / 10 : 0,
       };
     });
-  }, [pnlPeriods]);
+  }, [hasPnlPeriodDocs, pnlPeriods, trendData]);
 
   const bsLatest = bsPeriods[0] ?? null;
+  const hasBsPeriodDocs = bsPeriods.length > 0;
+  const transactionBs = useMemo(
+    () => estimateBalanceSheetFromTransactions(txs, categories, subCategories),
+    [txs, categories, subCategories],
+  );
+  const transactionAssetEstimate = transactionBs.totalAssets;
+  const transactionLiabilityEstimate = transactionBs.totalLiabilities;
+  const transactionEquityEstimate = transactionBs.equity;
   const bsSummary = useMemo(() => {
+    if (!hasBsPeriodDocs) {
+      return {
+        totalAssets: transactionAssetEstimate,
+        totalLiabilities: transactionLiabilityEstimate,
+        totalEquity: transactionEquityEstimate,
+        count: allTxs.length,
+      };
+    }
     const totalAssets = bsPeriods.reduce((s, p) => s + (p.bs?.totalAssets ?? 0), 0);
     const totalLiabilities = bsPeriods.reduce((s, p) => s + (p.bs?.totalLiabilities ?? 0), 0);
     const totalEquity = bsPeriods.reduce((s, p) => s + (p.bs?.equity ?? 0), 0);
     return { totalAssets, totalLiabilities, totalEquity, count: bsPeriods.length };
-  }, [bsPeriods]);
-  const bsChartData = useMemo(() => (
-    [...bsPeriods].reverse().map((p) => ({
+  }, [allTxs.length, bsPeriods, hasBsPeriodDocs, transactionAssetEstimate, transactionEquityEstimate, transactionLiabilityEstimate]);
+  const bsChartData = useMemo(() => {
+    if (!hasBsPeriodDocs) {
+      return [{
+        label: end.toLocaleDateString("en-US", { month: "short", day: "numeric" }),
+        Assets: transactionAssetEstimate,
+        Liabilities: transactionLiabilityEstimate,
+        Equity: transactionEquityEstimate,
+      }];
+    }
+    return [...bsPeriods].reverse().map((p) => ({
       label: statementPeriodLabel(p),
       Assets: p.bs?.totalAssets ?? 0,
       Liabilities: p.bs?.totalLiabilities ?? 0,
       Equity: p.bs?.equity ?? 0,
-    }))
-  ), [bsPeriods]);
+    }));
+  }, [bsPeriods, end, hasBsPeriodDocs, transactionAssetEstimate, transactionEquityEstimate, transactionLiabilityEstimate]);
+  const effectiveBs = bsLatest?.bs ?? (!hasBsPeriodDocs ? transactionBs : null);
 
   const cfSummary = useMemo(() => {
     const totalOperating = cfPeriods.reduce((s, p) => s + (p.cf?.operating ?? 0), 0);
@@ -2136,6 +2780,14 @@ Respond with ONLY valid JSON, no explanation:
     const netChange = cfPeriods.reduce((s, p) => s + (p.cf?.netChange ?? 0), 0);
     return { totalOperating, totalInvesting, totalFinancing, netChange, count: cfPeriods.length };
   }, [cfPeriods]);
+  const effectiveCf: CashFlowEstimate = cfPeriods.length > 0
+    ? {
+        operating: cfSummary.totalOperating,
+        investing: cfSummary.totalInvesting,
+        financing: cfSummary.totalFinancing,
+        netChange: cfSummary.netChange,
+      }
+    : transactionCf;
   const cfChartData = useMemo(() => (
     [...cfPeriods].reverse().map((p) => ({
       label: statementPeriodLabel(p),
@@ -2336,7 +2988,7 @@ Respond with ONLY valid JSON, no explanation:
                         <div key={r.label} className="flex items-center justify-between text-xs">
                           <span className="text-muted-foreground">{r.label}</span>
                           <div className="flex items-center gap-1.5">
-                            <span className="font-semibold">{fmtShort(r.val)}</span>
+                            <span className="font-semibold">{fmt(r.val)}</span>
                             <ChangeBadge curr={r.val} prev={r.prev} />
                           </div>
                         </div>
@@ -2365,7 +3017,7 @@ Respond with ONLY valid JSON, no explanation:
                       ].map(r => (
                         <div key={r.label} className="flex items-center justify-between text-xs">
                           <span className="text-muted-foreground">{r.label}</span>
-                          <span className="font-semibold">{fmtShort(r.val)}</span>
+                          <span className="font-semibold">{fmt(r.val)}</span>
                         </div>
                       ))}
                       <div className="flex items-center justify-between text-xs pt-1 border-t border-border/50">
@@ -2393,7 +3045,7 @@ Respond with ONLY valid JSON, no explanation:
                         <div key={r.label} className="flex items-center justify-between text-xs">
                           <span className="text-muted-foreground">{r.label}</span>
                           <div className="flex items-center gap-1.5">
-                            <span className="font-semibold">{fmtShort(r.val)}</span>
+                            <span className="font-semibold">{fmt(r.val)}</span>
                             <ChangeBadge curr={r.val} prev={r.prev} />
                           </div>
                         </div>
@@ -2428,7 +3080,7 @@ Respond with ONLY valid JSON, no explanation:
                           </div>
                           <div>
                             <p className="text-[10px] text-muted-foreground uppercase tracking-wide">Potential Tax Savings</p>
-                            <p className="text-sm font-bold text-emerald-400">${taxSavings.toLocaleString()}</p>
+                            <p className="text-sm font-bold text-emerald-400">{fmt(taxSavings)}</p>
                           </div>
                         </div>
                       </div>
@@ -2449,58 +3101,57 @@ Respond with ONLY valid JSON, no explanation:
               {/* ── Financial Trend + Key Insights ── */}
               <div className="grid gap-4 lg:grid-cols-3">
                 {/* Chart — 2/3 width */}
-                <Card className="lg:col-span-2">
-                  <CardHeader className="pb-2">
-                    <div className="flex items-center justify-between">
-                      <CardTitle className="text-sm font-semibold">Financial Trend</CardTitle>
-                      <span className="text-[10px] text-muted-foreground">$1 M</span>
-                    </div>
+                <Card className="lg:col-span-2 shadow-none" style={trendChartPanelStyle}>
+                  <CardHeader className="pb-0 pt-4 px-4">
+                    <CardTitle className="text-sm font-semibold text-[#DCE8FF]">Financial Trend</CardTitle>
+                    <p className="text-[10px] text-[#8EA5D2]">$1.5M</p>
                   </CardHeader>
-                  <CardContent className="pb-3">
+                  <CardContent className="pb-3 px-4 pt-0">
                     {trendData.length === 0 ? (
-                      <div className="flex items-center justify-center h-[200px]">
+                      <div className="flex items-center justify-center h-[220px]">
                         <p className="text-sm text-muted-foreground">No data for this period</p>
                       </div>
                     ) : (
                       <>
-                        <ResponsiveContainer width="100%" height={200}>
-                          <ComposedChart data={trendData} margin={{ top: 8, right: 10, left: 10, bottom: 0 }}>
+                        <ResponsiveContainer width="100%" height={220}>
+                          <ComposedChart data={trendData} margin={{ top: 34, right: 0, left: -16, bottom: 0 }}>
                             <defs>
                               <linearGradient id="dashRevBar" x1="0" y1="0" x2="0" y2="1">
-                                <stop offset="0%" stopColor="#19C37D" stopOpacity={1} />
-                                <stop offset="100%" stopColor="#19C37D" stopOpacity={0.4} />
+                                <stop offset="0%" stopColor="#20C987" stopOpacity={1} />
+                                <stop offset="100%" stopColor="#159F70" stopOpacity={1} />
                               </linearGradient>
                               <linearGradient id="dashExpBar" x1="0" y1="0" x2="0" y2="1">
-                                <stop offset="0%" stopColor="#2B7FFF" stopOpacity={1} />
-                                <stop offset="100%" stopColor="#2B7FFF" stopOpacity={0.4} />
+                                <stop offset="0%" stopColor="#3B8CFF" stopOpacity={1} />
+                                <stop offset="100%" stopColor="#2163C9" stopOpacity={1} />
                               </linearGradient>
                             </defs>
-                            <CartesianGrid vertical={false} stroke="rgba(255,255,255,0.05)" />
-                            <XAxis dataKey="label" tick={{ fontSize: 9, fill: "hsl(var(--muted-foreground))" }} tickLine={false} axisLine={false} interval="preserveStartEnd" />
-                            <YAxis tick={{ fontSize: 9, fill: "hsl(var(--muted-foreground))" }} tickLine={false} axisLine={false} tickFormatter={fmtShort} width={48} />
+                            <CartesianGrid vertical={false} stroke={trendChartGrid} />
+                            <XAxis dataKey="label" tick={trendAxisTick} tickLine={false} axisLine={false} interval="preserveStartEnd" />
+                            <YAxis tick={trendAxisTick} tickLine={false} axisLine={false} tickFormatter={fmtTrendTick} ticks={trendChartTicks} domain={trendChartDomain} width={58} />
                             <Tooltip
-                              contentStyle={{ background: "hsl(var(--muted))", border: "1px solid hsl(var(--border))", borderRadius: 8, fontSize: 11 }}
-                              itemStyle={{ color: "hsl(var(--foreground))" }}
+                              contentStyle={trendTooltipStyle}
+                              labelStyle={{ color: "#EAF2FF" }}
+                              itemStyle={{ color: "#EAF2FF" }}
                               formatter={(v: number) => fmt(v)}
                             />
-                            <Bar dataKey="revenue" name="Revenue" fill="url(#dashRevBar)" radius={[2, 2, 0, 0]} barSize={10} />
-                            <Bar dataKey="expenses" name="Expenses" fill="url(#dashExpBar)" radius={[2, 2, 0, 0]} barSize={10} />
-                            <Line type="monotone" dataKey="netCash" name="Net Cash" stroke="#FFC72B" strokeWidth={1.5} dot={false} />
-                            <Line type="monotone" dataKey="profit" name="Profit" stroke="hsl(var(--foreground))" strokeWidth={2} dot={{ r: 3, fill: "hsl(var(--foreground))", stroke: "hsl(var(--foreground))", strokeWidth: 0 }} activeDot={{ r: 5, fill: "hsl(var(--foreground))" }} />
+                            <Bar dataKey="revenue" name="Revenue" fill="url(#dashRevBar)" radius={[4, 4, 0, 0]} barSize={18} />
+                            <Bar dataKey="expenses" name="Expenses" fill="url(#dashExpBar)" radius={[4, 4, 0, 0]} barSize={18} />
+                            <Line type="monotone" dataKey="netCash" name="Net Cash" stroke="#FFC72B" strokeWidth={2} dot={{ r: 3, fill: "#FFC72B", stroke: "#061f49", strokeWidth: 1 }} activeDot={{ r: 4, fill: "#FFC72B" }} />
+                            <Line type="monotone" dataKey="profit" name="Profit" stroke="#F3F7FF" strokeWidth={2.5} dot={{ r: 3, fill: "#F3F7FF", stroke: "#061f49", strokeWidth: 1 }} activeDot={{ r: 5, fill: "#F3F7FF" }} />
                           </ComposedChart>
                         </ResponsiveContainer>
-                        <div className="flex items-center gap-4 justify-center mt-1 pb-1">
-                          <span className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
-                            <span className="h-2.5 w-2.5 rounded-full inline-block" style={{ background: "#19C37D" }} />Revenue
+                        <div className="flex items-center gap-4 justify-center mt-0 pb-1">
+                          <span className="flex items-center gap-1.5 text-[10px] text-[#8EA5D2]">
+                            <span className="h-2.5 w-2.5 rounded-full inline-block" style={{ background: "#20C987" }} />Revenue
                           </span>
-                          <span className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
+                          <span className="flex items-center gap-1.5 text-[10px] text-[#8EA5D2]">
                             <span className="h-2.5 w-2.5 rounded-full inline-block" style={{ background: "#2B7FFF" }} />Expenses
                           </span>
-                          <span className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
+                          <span className="flex items-center gap-1.5 text-[10px] text-[#8EA5D2]">
                             <span className="inline-block w-5 border-t-2 mb-0.5" style={{ borderColor: "#FFC72B" }} />Net Cash
                           </span>
-                          <span className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
-                            <span className="inline-block w-5 border-t-2 mb-0.5" style={{ borderColor: "hsl(var(--foreground))" }} />Profit
+                          <span className="flex items-center gap-1.5 text-[10px] text-[#8EA5D2]">
+                            <span className="inline-block w-5 border-t-2 mb-0.5" style={{ borderColor: "#F3F7FF" }} />Profit
                           </span>
                         </div>
                       </>
@@ -2547,20 +3198,23 @@ Respond with ONLY valid JSON, no explanation:
               </div>
 
               {/* ── Bottom shortcut row ── */}
-              <div className="grid grid-cols-4 gap-0 rounded-xl overflow-hidden border border-border" style={{ background: "hsl(var(--muted))" }}>
+              <div className="grid grid-cols-2 gap-0 rounded-xl overflow-hidden border border-border md:grid-cols-4" style={{ background: "hsl(var(--muted))" }}>
                 {[
                   { label: "Transactions", action: () => setTab("transactions") },
-                  { label: "Dun & Bradstreet", action: () => {} },
-                  { label: "Reports", action: () => setTab("pl") },
-                  { label: "Accounts", action: () => {} },
+                  { label: "Dun & Bradstreet", action: () => navigate("/user") },
+                  { label: "Reports", action: () => navigate("/user/tax") },
+                  { label: "Accounts", action: handleConnectBank, disabled: plaidConnecting || plaidSyncing },
                 ].map((item, i) => (
                   <button
                     key={item.label}
                     onClick={item.action}
+                    disabled={item.disabled}
                     className="py-4 text-xs font-semibold text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
                     style={{ borderLeft: i > 0 ? "1px solid rgba(18,52,105,0.6)" : undefined }}
                   >
-                    {item.label}
+                    {item.label === "Accounts" && (plaidConnecting || plaidSyncing)
+                      ? plaidSyncing ? "Syncing..." : "Connecting..."
+                      : item.label}
                   </button>
                 ))}
               </div>
@@ -2651,7 +3305,7 @@ Respond with ONLY valid JSON, no explanation:
                   { label: "% Margin", value: `${margin.toFixed(1)}%`, color: margin >= 0 ? "#22c55e" : "#ef4444", badge: "Max", up: margin >= 0, sub: "vs previous 6 months" },
                 ];
                 return (
-                  <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
                     {kpis.map(k => (
                       <div
                         key={k.label}
@@ -2676,25 +3330,25 @@ Respond with ONLY valid JSON, no explanation:
               })()}
 
               {/* ── P & L Trends (area chart) ── */}
-              <Card style={{ background: "linear-gradient(160deg, hsl(var(--muted)), hsl(var(--card)))", border: "1px solid rgba(18,52,105,0.5)" }}>
-                <CardHeader className="pb-1">
+              <Card className="shadow-none" style={trendChartPanelStyle}>
+                <CardHeader className="pb-0 pt-4 px-4">
                   <div className="flex items-center justify-between">
                     <div>
-                      <CardTitle className="text-sm font-semibold">P &amp; L Trends</CardTitle>
-                      <p className="text-[10px] text-muted-foreground mt-0.5">{periodLabel}</p>
+                      <CardTitle className="text-sm font-semibold text-[#DCE8FF]">P &amp; L Trends</CardTitle>
+                      <p className="text-[10px] text-[#8EA5D2] mt-0.5">$1.5M</p>
                     </div>
                     <div className="flex items-center gap-2">
-                      <button className="text-[10px] font-medium text-muted-foreground border border-border rounded px-2 py-1 hover:text-foreground transition-colors">
+                      <button className="text-[10px] font-medium text-[#8EA5D2] border border-[#2B7FFF]/35 rounded px-2 py-1 hover:text-[#EAF2FF] transition-colors">
                         Filter +
                       </button>
-                      <label className="flex items-center gap-1 text-[10px] text-muted-foreground cursor-pointer">
+                      <label className="flex items-center gap-1 text-[10px] text-[#8EA5D2] cursor-pointer">
                         <input type="checkbox" className="h-3 w-3 accent-primary" />
                         at prior month
                       </label>
                     </div>
                   </div>
                 </CardHeader>
-                <CardContent className="h-[220px] pt-2">
+                <CardContent className="h-[260px] pt-0 px-4 pb-3">
                   {pnlChartData.length === 0 ? (
                     <div className="flex flex-col items-center justify-center h-full gap-3">
                       <FileText className="h-8 w-8 text-muted-foreground" />
@@ -2705,40 +3359,41 @@ Respond with ONLY valid JSON, no explanation:
                     </div>
                   ) : (
                     <>
-                      <ResponsiveContainer width="100%" height={180}>
-                        <ComposedChart data={pnlChartData} margin={{ top: 8, right: 5, left: 10, bottom: 0 }}>
+                      <ResponsiveContainer width="100%" height={220}>
+                        <ComposedChart data={pnlChartData} margin={{ top: 34, right: 0, left: -16, bottom: 0 }}>
                           <defs>
                             <linearGradient id="plRevBar" x1="0" y1="0" x2="0" y2="1">
-                              <stop offset="0%" stopColor="#19C37D" stopOpacity={1} />
-                              <stop offset="100%" stopColor="#19C37D" stopOpacity={0.4} />
+                              <stop offset="0%" stopColor="#20C987" stopOpacity={1} />
+                              <stop offset="100%" stopColor="#159F70" stopOpacity={1} />
                             </linearGradient>
                             <linearGradient id="plExpBar" x1="0" y1="0" x2="0" y2="1">
-                              <stop offset="0%" stopColor="#2B7FFF" stopOpacity={1} />
-                              <stop offset="100%" stopColor="#2B7FFF" stopOpacity={0.4} />
+                              <stop offset="0%" stopColor="#3B8CFF" stopOpacity={1} />
+                              <stop offset="100%" stopColor="#2163C9" stopOpacity={1} />
                             </linearGradient>
                           </defs>
-                          <CartesianGrid vertical={false} stroke="rgba(255,255,255,0.05)" />
-                          <XAxis dataKey="label" tick={{ fontSize: 9, fill: "hsl(var(--muted-foreground))" }} axisLine={false} tickLine={false} interval="preserveStartEnd" />
-                          <YAxis tick={{ fontSize: 9, fill: "hsl(var(--muted-foreground))" }} axisLine={false} tickLine={false} tickFormatter={fmtShort} width={48} />
+                          <CartesianGrid vertical={false} stroke={trendChartGrid} />
+                          <XAxis dataKey="label" tick={trendAxisTick} axisLine={false} tickLine={false} interval="preserveStartEnd" />
+                          <YAxis tick={trendAxisTick} axisLine={false} tickLine={false} tickFormatter={fmtTrendTick} ticks={trendChartTicks} domain={trendChartDomain} width={58} />
                           <Tooltip
-                            contentStyle={{ background: "hsl(var(--muted))", border: "1px solid hsl(var(--border))", borderRadius: 8, fontSize: 11 }}
-                            itemStyle={{ color: "hsl(var(--foreground))" }}
+                            contentStyle={trendTooltipStyle}
+                            labelStyle={{ color: "#EAF2FF" }}
+                            itemStyle={{ color: "#EAF2FF" }}
                             formatter={(v: number) => fmt(v)}
                           />
-                          <Bar dataKey="Revenue" name="Revenue" fill="url(#plRevBar)" radius={[2, 2, 0, 0]} barSize={10} />
-                          <Bar dataKey="Expenses" name="Expenses" fill="url(#plExpBar)" radius={[2, 2, 0, 0]} barSize={10} />
-                          <Line type="monotone" dataKey="Net Income" name="Net Income" stroke="hsl(var(--foreground))" strokeWidth={2} dot={{ r: 3, fill: "hsl(var(--foreground))", stroke: "hsl(var(--foreground))", strokeWidth: 0 }} activeDot={{ r: 5, fill: "hsl(var(--foreground))" }} />
+                          <Bar dataKey="Revenue" name="Revenue" fill="url(#plRevBar)" radius={[4, 4, 0, 0]} barSize={18} />
+                          <Bar dataKey="Expenses" name="Expenses" fill="url(#plExpBar)" radius={[4, 4, 0, 0]} barSize={18} />
+                          <Line type="monotone" dataKey="Net Income" name="Net Income" stroke="#F3F7FF" strokeWidth={2.5} dot={{ r: 3, fill: "#F3F7FF", stroke: "#061f49", strokeWidth: 1 }} activeDot={{ r: 5, fill: "#F3F7FF" }} />
                         </ComposedChart>
                       </ResponsiveContainer>
-                      <div className="flex items-center gap-4 justify-center mt-2">
-                        <span className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
-                          <span className="h-2.5 w-2.5 rounded-full inline-block" style={{ background: "#19C37D" }} />Revenue
+                      <div className="flex items-center gap-4 justify-center mt-0">
+                        <span className="flex items-center gap-1.5 text-[10px] text-[#8EA5D2]">
+                          <span className="h-2.5 w-2.5 rounded-full inline-block" style={{ background: "#20C987" }} />Revenue
                         </span>
-                        <span className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
+                        <span className="flex items-center gap-1.5 text-[10px] text-[#8EA5D2]">
                           <span className="h-2.5 w-2.5 rounded-full inline-block" style={{ background: "#2B7FFF" }} />Expenses
                         </span>
-                        <span className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
-                          <span className="inline-block w-5 border-t-2 mb-0.5" style={{ borderColor: "hsl(var(--foreground))" }} />Net Income
+                        <span className="flex items-center gap-1.5 text-[10px] text-[#8EA5D2]">
+                          <span className="inline-block w-5 border-t-2 mb-0.5" style={{ borderColor: "#F3F7FF" }} />Net Income
                         </span>
                       </div>
                     </>
@@ -2886,6 +3541,11 @@ Respond with ONLY valid JSON, no explanation:
             <div>
               <h1 className="text-2xl font-bold">Balance Sheet</h1>
               <p className="text-xs text-muted-foreground">Snapshot as of {end.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}</p>
+              {!hasBsPeriodDocs && (
+                <p className="text-xs text-[#FFC72B] mt-1">
+                  Estimated from transactions. Upload a Balance Sheet for full assets, liabilities, equity, and ratios.
+                </p>
+              )}
             </div>
             <div className="flex items-center gap-2 flex-shrink-0">
               <span className="text-xs text-muted-foreground mr-1">As Of Date: <strong className="text-foreground">{end.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}</strong> 📅</span>
@@ -2923,7 +3583,7 @@ Respond with ONLY valid JSON, no explanation:
                   },
                 ];
                 return (
-                  <div className="grid grid-cols-3 gap-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                     {kpis.map(k => (
                       <div
                         key={k.label}
@@ -2955,15 +3615,15 @@ Respond with ONLY valid JSON, no explanation:
               })()}
 
               {/* ── Secondary 4-card metrics row with ⓘ hover tooltips ── */}
-              {bsLatest?.bs && (() => {
-                const bs = bsLatest.bs;
-                const currentRatio = bs.currentLiabilities > 0 ? bs.currentAssets / bs.currentLiabilities : 0;
+              {effectiveBs && (() => {
+                const bs = effectiveBs;
+                const currentRatio = bs.currentLiabilities > 0 ? bs.currentAssets / bs.currentLiabilities : null;
                 const debtEquity = bs.equity !== 0 ? bs.totalLiabilities / bs.equity : 0;
-                const roe = bs.totalAssets > 0 ? (bs.equity / bs.totalAssets) * 100 : 0;
+                const roe = bs.equity > 0 ? (netIncome / bs.equity) * 100 : 0;
                 const metrics = [
                   {
                     label: "Current Ratio",
-                    value: currentRatio > 0 ? currentRatio.toFixed(2) : "—",
+                    value: currentRatio !== null ? currentRatio.toFixed(2) : "N/A",
                     tip: "Current Ratio\nMeasures ability to pay short-term obligations.\n• Good: Above 2\n• Acceptable: 1–2\n• Watch out: Below 1",
                   },
                   {
@@ -2983,7 +3643,7 @@ Respond with ONLY valid JSON, no explanation:
                   },
                 ];
                 return (
-                  <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
                     {metrics.map(m => (
                       <div
                         key={m.label}
@@ -3015,8 +3675,8 @@ Respond with ONLY valid JSON, no explanation:
               })()}
 
               {/* ── Two donut chart cards ── */}
-              {bsLatest?.bs && (() => {
-                const bs = bsLatest.bs;
+              {effectiveBs && (() => {
+                const bs = effectiveBs;
                 const asOf = end.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
                 const totalAssets = bs.totalAssets || 1;
                 const totalLiaEq = (bs.totalLiabilities + bs.equity) || 1;
@@ -3240,7 +3900,7 @@ Respond with ONLY valid JSON, no explanation:
           </div>
 
           {/* ── 3 KPI cards: Money In / Money Out / Net Cash ── */}
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             {(() => {
               const displayOut = cfShowPaid ? 0 : cfMoneyOut;
               const displayNet = cfMoneyIn - displayOut;
@@ -3280,58 +3940,61 @@ Respond with ONLY valid JSON, no explanation:
           </div>
 
           {/* ── Cash Flow Trend chart ── */}
-          <div className="rounded-xl border border-border p-5" style={{ background: "linear-gradient(160deg, hsl(var(--muted)), hsl(var(--card)))" }}>
+          <div className="p-4" style={trendChartPanelStyle}>
             <div className="flex items-start justify-between mb-1">
               <div>
-                <p className="text-sm font-semibold text-foreground">Cash Flow Trend</p>
-                <p className="text-[10px] text-muted-foreground mt-0.5">
+                <p className="text-sm font-semibold text-[#DCE8FF]">Cash Flow Trend</p>
+                <p className="text-[10px] text-[#8EA5D2] mt-0.5">$1.5M</p>
+                {/* Reference chart keeps this header compact. */}
+                {false && <p className="hidden">
                   {cfShowPaid
                     ? "Yellow = net cash (paid only). Circles mark each period — not a separate unrealized line."
                     : "Yellow = net cash including unpaid/projected. Circles mark each period — still one net line, not two."}
-                </p>
-                <p className="text-[10px] text-muted-foreground">
+                </p>}
+                {false && <p className="text-[10px] text-muted-foreground">
                   {trendData[0]?.label && trendData[trendData.length - 1]?.label
                     ? `${trendData[0].label} – ${trendData[trendData.length - 1].label}`
                     : periodLabel
                   } | Monthly
-                </p>
+                </p>}
               </div>
               <div className="flex items-center gap-2 flex-shrink-0">
-                <button className="flex items-center gap-1 text-[10px] text-muted-foreground border border-border rounded px-2 py-1 hover:text-foreground transition-colors">
+                <button className="flex items-center gap-1 text-[10px] text-[#8EA5D2] border border-[#2B7FFF]/35 rounded px-2 py-1 hover:text-[#EAF2FF] transition-colors">
                   Filter +
                 </button>
-                <label className="flex items-center gap-1 text-[10px] text-muted-foreground cursor-pointer select-none">
+                <label className="flex items-center gap-1 text-[10px] text-[#8EA5D2] cursor-pointer select-none">
                   <input type="checkbox" className="h-3 w-3 rounded accent-[#FFC72B]" readOnly />
                   vs prior months
                 </label>
               </div>
             </div>
-            <div className="h-[260px] mt-3">
+            <div className="h-[220px] mt-0">
               {trendData.length > 0 ? (
                 <ResponsiveContainer width="100%" height="100%">
-                  <ComposedChart data={trendData} margin={{ top: 8, right: 10, left: 10, bottom: 0 }}>
+                  <ComposedChart data={trendData} margin={{ top: 34, right: 0, left: -16, bottom: 0 }}>
                     <defs>
                       <linearGradient id="cfRevBar" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="0%" stopColor="#19C37D" stopOpacity={1} />
-                        <stop offset="100%" stopColor="#19C37D" stopOpacity={0.4} />
+                        <stop offset="0%" stopColor="#20C987" stopOpacity={1} />
+                        <stop offset="100%" stopColor="#159F70" stopOpacity={1} />
                       </linearGradient>
                       <linearGradient id="cfExpBar" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="0%" stopColor="#2B7FFF" stopOpacity={1} />
-                        <stop offset="100%" stopColor="#2B7FFF" stopOpacity={0.4} />
+                        <stop offset="0%" stopColor="#3B8CFF" stopOpacity={1} />
+                        <stop offset="100%" stopColor="#2163C9" stopOpacity={1} />
                       </linearGradient>
                     </defs>
-                    <CartesianGrid vertical={false} stroke="rgba(255,255,255,0.05)" />
-                    <XAxis dataKey="label" tick={{ fontSize: 9, fill: "hsl(var(--muted-foreground))" }} axisLine={false} tickLine={false} interval="preserveStartEnd" />
-                    <YAxis tick={{ fontSize: 9, fill: "hsl(var(--muted-foreground))" }} tickFormatter={fmtShort} axisLine={false} tickLine={false} width={48} />
+                    <CartesianGrid vertical={false} stroke={trendChartGrid} />
+                    <XAxis dataKey="label" tick={trendAxisTick} axisLine={false} tickLine={false} interval="preserveStartEnd" />
+                    <YAxis tick={trendAxisTick} tickFormatter={fmtTrendTick} ticks={trendChartTicks} domain={trendChartDomain} axisLine={false} tickLine={false} width={58} />
                     <Tooltip
                       formatter={(v: number) => fmt(v)}
-                      contentStyle={{ background: "hsl(var(--muted))", border: "1px solid hsl(var(--border))", borderRadius: 8, fontSize: 11 }}
-                      labelStyle={{ color: "hsl(var(--foreground))" }}
+                      contentStyle={trendTooltipStyle}
+                      labelStyle={{ color: "#EAF2FF" }}
+                      itemStyle={{ color: "#EAF2FF" }}
                     />
-                    <Bar dataKey="revenue" name="Money In" fill="url(#cfRevBar)" radius={[2, 2, 0, 0]} barSize={10} />
-                    {!cfShowPaid && <Bar dataKey="expenses" name="Money Out" fill="url(#cfExpBar)" radius={[2, 2, 0, 0]} barSize={10} />}
-                    <Line type="monotone" dataKey="netCash" name="Net Cash" stroke="#FFC72B" strokeWidth={1.5} dot={false} />
-                    <Line type="monotone" dataKey={cfShowPaid ? "revenue" : "profit"} name="Profit" stroke="hsl(var(--foreground))" strokeWidth={2} dot={{ r: 3, fill: "hsl(var(--foreground))", stroke: "hsl(var(--foreground))", strokeWidth: 0 }} activeDot={{ r: 5, fill: "hsl(var(--foreground))" }} />
+                    <Bar dataKey="revenue" name="Money In" fill="url(#cfRevBar)" radius={[4, 4, 0, 0]} barSize={18} />
+                    {!cfShowPaid && <Bar dataKey="expenses" name="Money Out" fill="url(#cfExpBar)" radius={[4, 4, 0, 0]} barSize={18} />}
+                    <Line type="monotone" dataKey="netCash" name="Net Cash" stroke="#FFC72B" strokeWidth={2} dot={{ r: 3, fill: "#FFC72B", stroke: "#061f49", strokeWidth: 1 }} activeDot={{ r: 4, fill: "#FFC72B" }} />
+                    <Line type="monotone" dataKey={cfShowPaid ? "revenue" : "profit"} name="Profit" stroke="#F3F7FF" strokeWidth={2.5} dot={{ r: 3, fill: "#F3F7FF", stroke: "#061f49", strokeWidth: 1 }} activeDot={{ r: 5, fill: "#F3F7FF" }} />
                   </ComposedChart>
                 </ResponsiveContainer>
               ) : (
@@ -3341,27 +4004,28 @@ Respond with ONLY valid JSON, no explanation:
               )}
             </div>
             {/* Legend */}
-            <div className="flex items-center gap-5 mt-3 pl-1">
-              <span className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
-                <span className="h-2 w-2 rounded-full" style={{ background: "#19C37D" }} /> Money In
+            <div className="flex items-center justify-center gap-5 mt-0 pl-1">
+              <span className="flex items-center gap-1.5 text-[10px] text-[#8EA5D2]">
+                <span className="h-2.5 w-2.5 rounded-full" style={{ background: "#20C987" }} /> Money In
               </span>
-              <span className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
-                <span className="h-2 w-2 rounded-full" style={{ background: "#2B7FFF" }} /> Money Out
+              <span className="flex items-center gap-1.5 text-[10px] text-[#8EA5D2]">
+                <span className="h-2.5 w-2.5 rounded-full" style={{ background: "#2B7FFF" }} /> Money Out
               </span>
-              <span className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
+              <span className="flex items-center gap-1.5 text-[10px] text-[#8EA5D2]">
                 <span className="h-4 border-t-2 border-[#FFC72B] w-5 inline-block mb-0.5" /> Net Cash
               </span>
-              <span className="text-[9px] text-muted-foreground ml-1">Real transactions only</span>
+              <span className="flex items-center gap-1.5 text-[10px] text-[#8EA5D2]">
+                <span className="h-4 border-t-2 border-[#F3F7FF] w-5 inline-block mb-0.5" /> Profit
+              </span>
             </div>
           </div>
 
           {/* ── Cash Flow Statement ── */}
           {(() => {
-            const displayOut = cfShowPaid ? 0 : cfMoneyOut;
-            const opCF  = cfPeriods.length > 0 ? cfSummary.totalOperating  : cfMoneyIn - displayOut;
-            const invCF = cfPeriods.length > 0 ? cfSummary.totalInvesting  : 0;
-            const finCF = cfPeriods.length > 0 ? cfSummary.totalFinancing  : 0;
-            const netCF = cfMoneyIn - displayOut;
+            const opCF = effectiveCf.operating;
+            const invCF = effectiveCf.investing;
+            const finCF = effectiveCf.financing;
+            const netCF = effectiveCf.netChange;
             const sections = [
               { title: "Operating Activities", label: "Operating Cash Flow", value: opCF, border: "#22c55e" },
               { title: "Investing Activities", label: "Investing Cash Flow", value: invCF, border: "#38bdf8" },
@@ -3370,7 +4034,7 @@ Respond with ONLY valid JSON, no explanation:
             return (
               <div className="rounded-xl border border-border p-5" style={{ background: "linear-gradient(160deg, hsl(var(--muted)), hsl(var(--card)))" }}>
                 <p className="text-sm font-semibold text-foreground mb-4">Cash Flow Statement</p>
-                <div className="grid grid-cols-3 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                   {sections.map(s => (
                     <div
                       key={s.title}
@@ -3664,7 +4328,7 @@ Respond with ONLY valid JSON, no explanation:
             </div>
 
             {/* Category + Year row */}
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
                 <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Category *</label>
                 <select value={uploadCategory} onChange={e => setUploadCategory(e.target.value)}
@@ -3696,7 +4360,7 @@ Respond with ONLY valid JSON, no explanation:
                   <input type="date" value={uploadAsOf} onChange={e => setUploadAsOf(e.target.value)}
                     className="mt-1.5 w-full rounded-lg border border-border/60 bg-background px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary/60" />
                 ) : (
-                  <div className="grid grid-cols-2 gap-2 mt-1.5">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-1.5">
                     <input type="date" value={uploadPeriodStart} onChange={e => setUploadPeriodStart(e.target.value)}
                       placeholder="Start date"
                       className="rounded-lg border border-border/60 bg-background px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary/60" />
@@ -3951,6 +4615,18 @@ Respond with ONLY valid JSON, no explanation:
       {tab === "transactions" && (
         <div className="space-y-3">
           {/* Search bar — matches Flutter TransactionListScreen */}
+          <div className="flex justify-end">
+            <Button
+              size="sm"
+              onClick={handleConnectBank}
+              disabled={plaidConnecting || plaidSyncing}
+              className="gap-2 bg-primary text-primary-foreground hover:bg-primary/90"
+            >
+              {plaidConnecting || plaidSyncing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Wallet className="h-4 w-4" />}
+              {plaidSyncing ? "Syncing..." : plaidConnecting ? "Connecting..." : "Connect Bank"}
+            </Button>
+          </div>
+
           <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
             <input
@@ -4117,7 +4793,7 @@ Respond with ONLY valid JSON, no explanation:
           })()}
 
           {/* Flutter bottom action bar */}
-          <div className="fixed bottom-0 right-0 flex z-30 overflow-hidden" style={{ left: "var(--sidebar-width)", height: 56 }}>
+          <div className="fixed bottom-0 left-0 right-0 flex z-30 overflow-hidden md:left-[var(--sidebar-width)]" style={{ height: 56 }}>
             <button
               className="flex-1 flex items-center justify-center gap-2 font-bold text-sm text-black transition-opacity hover:opacity-90"
               style={{ background: "#FFC72B" }}
@@ -4320,16 +4996,30 @@ Respond with ONLY valid JSON, no explanation:
                     <label className="text-sm font-medium">Category</label>
                     <button
                       type="button"
-                      disabled={aiCatLoading}
                       onClick={() => { setCatSearchQuery(""); setExpandedCatIds(new Set()); setCategoryPickerOpen(true); }}
-                      className="w-full flex items-center justify-between rounded-lg border border-border/60 bg-secondary/40 px-3 py-2 text-sm text-left hover:bg-secondary/60 transition-colors focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-70 disabled:cursor-not-allowed">
+                      className="w-full flex items-center justify-between rounded-lg border border-border/60 bg-secondary/40 px-3 py-2 text-sm text-left hover:bg-secondary/60 transition-colors focus:outline-none focus:ring-1 focus:ring-primary">
                       <span className="flex items-center gap-2 min-w-0">
-                        {aiCatLoading ? (
+                        {editCategoryId ? (
+                          <>
+                            <span className="text-foreground truncate">
+                              {(() => {
+                                const cat = categories.find(c => c.id === editCategoryId);
+                                const sub = subCategories.find(s => s.id === editSubCategoryId);
+                                const catName = cat?.name;
+                                const subName = sub?.name;
+                                return catName ? (subName ? `${catName}: ${subName}` : catName) : "Select Category";
+                              })()}
+                            </span>
+                          </>
+                        ) : (
+                          <span className="text-muted-foreground">Select Category</span>
+                        )}
+                        {false ? (
                           <>
                             <Loader2 className="h-3.5 w-3.5 animate-spin text-primary flex-shrink-0" />
                             <span className="text-muted-foreground">AI is categorizing…</span>
                           </>
-                        ) : editCategoryId ? (
+                        ) : false ? (
                           <>
                             {aiCatSuggested && (
                               <span className="inline-flex items-center gap-1 rounded-full bg-primary/15 px-1.5 py-0.5 text-[10px] font-medium text-primary flex-shrink-0">
@@ -4340,13 +5030,13 @@ Respond with ONLY valid JSON, no explanation:
                               {(() => {
                                 const cat = categories.find(c => c.id === editCategoryId);
                                 const sub = subCategories.find(s => s.id === editSubCategoryId);
-                                return cat ? (sub ? `${cat.name}: ${sub.name}` : cat.name) : "Select Category";
+                                const catName = cat?.name;
+                                const subName = sub?.name;
+                                return catName ? (subName ? `${catName}: ${subName}` : catName) : "Select Category";
                               })()}
                             </span>
                           </>
-                        ) : (
-                          <span className="text-muted-foreground">Select Category</span>
-                        )}
+                        ) : null}
                       </span>
                       <ChevronDown className="h-4 w-4 text-muted-foreground flex-shrink-0" />
                     </button>

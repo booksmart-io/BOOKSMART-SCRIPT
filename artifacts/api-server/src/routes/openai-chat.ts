@@ -27,6 +27,114 @@ const MODEL_MAP: Record<string, string> = {
 const MAX_MESSAGES = 50;
 const MAX_TOKENS = 2000;
 const MAX_BODY_BYTES = 64 * 1024; // 64 KB
+const OFF_TOPIC_RESPONSE =
+  "I can only help with BookSmart-related topics like taxes, accounting, transactions, deductions, financial reports, business strategy, subscriptions, tokens, Plaid, Stripe, and CPA workflows. Please ask a question related to your business finances.";
+
+type ChatMessage = {
+  role?: unknown;
+  content?: unknown;
+};
+
+const DOMAIN_TERMS = [
+  "1099", "account", "accounting", "asset", "balance sheet", "bank", "bookkeeping",
+  "booksmart", "business", "cash flow", "category", "cogs", "cpa", "credit",
+  "deduct", "deduction", "debt", "depreciation", "ein", "equity", "expense",
+  "financial", "filing", "income", "invoice", "irs", "liability", "loan",
+  "loss", "money", "payroll", "plaid", "profit", "receipt", "report",
+  "revenue", "saving", "savings", "schedule c", "statement", "stripe",
+  "sub-category", "subscription", "tax", "token", "transaction", "write-off",
+];
+
+const ALLOWED_FOLLOW_UP_PHRASES = [
+  "why",
+  "how",
+  "what",
+  "yes",
+  "no",
+  "more",
+  "details",
+  "continue",
+  "explain",
+  "explain more",
+  "tell me more",
+  "what does that mean",
+  "what about this",
+  "what about that",
+  "how so",
+  "why is that",
+  "give me an example",
+  "show me an example",
+  "example",
+];
+
+function textFromContent(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    return content
+      .map((part) => {
+        if (typeof part === "string") return part;
+        if (part && typeof part === "object" && "text" in part) {
+          const text = (part as { text?: unknown }).text;
+          return typeof text === "string" ? text : "";
+        }
+        return "";
+      })
+      .join(" ");
+  }
+  return "";
+}
+
+function includesDomainTerm(text: string): boolean {
+  const normalized = text.toLowerCase();
+  return DOMAIN_TERMS.some((term) => normalized.includes(term));
+}
+
+function isVagueFollowUp(text: string): boolean {
+  const normalized = text.toLowerCase().replace(/[^a-z0-9'\s]/g, " ").replace(/\s+/g, " ").trim();
+  return ALLOWED_FOLLOW_UP_PHRASES.includes(normalized);
+}
+
+function isCategorizationTask(text: string): boolean {
+  const normalized = text.toLowerCase();
+  return (
+    normalized.includes("category_id") &&
+    normalized.includes("sub_category_id") &&
+    (normalized.includes("transaction") || normalized.includes("transactions"))
+  );
+}
+
+function isAllowedBookSmartRequest(messages: ChatMessage[]): boolean {
+  const lastUserText = [...messages]
+    .reverse()
+    .find((message) => message?.role === "user")
+    ?.content;
+  const userText = textFromContent(lastUserText).trim();
+  if (!userText) return false;
+  if (isCategorizationTask(userText)) return true;
+  if (includesDomainTerm(userText)) return true;
+
+  const contextText = messages
+    .filter((message) => message?.role === "system" || message?.role === "assistant")
+    .map((message) => textFromContent(message.content))
+    .join(" ");
+  return isVagueFollowUp(userText) && includesDomainTerm(contextText);
+}
+
+function offTopicCompletion(model: string) {
+  return {
+    id: "booksmart-topic-guard",
+    object: "chat.completion",
+    created: Math.floor(Date.now() / 1000),
+    model,
+    choices: [
+      {
+        index: 0,
+        finish_reason: "stop",
+        message: { role: "assistant", content: OFF_TOPIC_RESPONSE },
+      },
+    ],
+  };
+}
 
 router.post("/openai-chat", requireAuth, async (req, res) => {
   const apiKey = process.env.OPENAI_API_KEY;
@@ -63,6 +171,14 @@ router.post("/openai-chat", requireAuth, async (req, res) => {
   }
   if (messages.length > MAX_MESSAGES) {
     res.status(400).json({ error: "too_many_messages", max: MAX_MESSAGES });
+    return;
+  }
+  if (!messages.every((message) => message && typeof message === "object")) {
+    res.status(400).json({ error: "invalid_messages" });
+    return;
+  }
+  if (!isAllowedBookSmartRequest(messages as ChatMessage[])) {
+    res.status(200).json(offTopicCompletion(MODEL_MAP[resolvedModel] ?? resolvedModel));
     return;
   }
 

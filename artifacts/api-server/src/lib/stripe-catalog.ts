@@ -22,28 +22,28 @@ export const TOKEN_PACKAGES: Record<TokenPackageKey, { priceId: string; productI
     productId: "prod_Ur15m8NLVFJiF7",
     unitAmount: 1000,
     tokens: 10,
-    name: "Starter",
+    name: "10 Tokens",
   },
   tokens_growth: {
     priceId: "price_1TrJ2vR4UE6mIdzm5QN9BzWJ",
     productId: "prod_Ur15J9k9m8QhTa",
     unitAmount: 2500,
     tokens: 25,
-    name: "Growth",
+    name: "25 Tokens",
   },
   tokens_business: {
     priceId: "price_1TrJ2vR4UE6mIdzmY60U7vYD",
     productId: "prod_Ur15cmvY4M0zu6",
     unitAmount: 5000,
     tokens: 50,
-    name: "Business",
+    name: "50 Tokens",
   },
   tokens_professional: {
     priceId: "price_1TrJ2wR4UE6mIdzmBEgVTPd9",
     productId: "prod_Ur15fATg3c7oVJ",
     unitAmount: 10000,
     tokens: 100,
-    name: "Professional",
+    name: "100 Tokens",
   },
 };
 

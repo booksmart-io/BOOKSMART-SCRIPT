@@ -4,6 +4,7 @@ import { useAuth } from "@/hooks/use-auth";
 import { supabase } from "@/lib/supabase";
 import { useToast } from "@/hooks/use-toast";
 import { useDeductionRuleSet, summarizeDeductions, type OrgRow } from "@/lib/deduction-engine";
+import { pickActiveOrganization, useActiveOrganizationId } from "@/lib/active-organization";
 import {
   Card, CardContent, CardHeader, CardTitle, CardFooter,
 } from "@/components/ui/card";
@@ -45,8 +46,12 @@ type StrategyRow = {
 type Transaction = {
   id: number; title: string; amount: number; type: string;
   date_time: string; description: string; deductible: boolean;
+  category_id?: number | null;
   sub_category_id?: number | null;
 };
+
+type Category = { id: number; name: string };
+type SubCategory = { id: number; name: string; category_id: number };
 
 type DeductionGroup = {
   label: string; totalAmount: number; count: number;
@@ -56,7 +61,12 @@ type DeductionGroup = {
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function fmt(v: number) {
-  return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(v);
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(v);
 }
 
 function startOfMonth() {
@@ -167,9 +177,41 @@ function buildSurveyProfile(org: OrgRow | null | undefined): string {
   const equipmentCost = num(org.equipment_cost);
   if (equipmentCost != null) lines.push(`- Major equipment purchases this year: $${equipmentCost.toFixed(0)}`);
 
-  const debts = org.debts as Record<string, number> | null | undefined;
+  const debts = org.debts as Record<string, unknown> | null | undefined;
   if (debts && typeof debts === "object") {
-    const debtEntries = Object.entries(debts).filter(([, v]) => typeof v === "number" && v > 0);
+    const onboarding = debts.onboarding_profile as Record<string, unknown> | null | undefined;
+    if (onboarding && typeof onboarding === "object") {
+      const addText = (label: string, value: unknown) => {
+        if (typeof value === "string" && value.trim()) lines.push(`- ${label}: ${value.trim()}`);
+      };
+      const addArray = (label: string, value: unknown) => {
+        if (Array.isArray(value) && value.length) lines.push(`- ${label}: ${value.join(", ")}`);
+      };
+      addText("DBA/trade name", onboarding.dba);
+      addText("NAICS code", onboarding.naics_code);
+      addText("Business description", onboarding.business_description);
+      addText("Business status", onboarding.business_status);
+      addText("Year established", onboarding.year_established);
+      const ownership = onboarding.ownership as Record<string, unknown> | undefined;
+      if (ownership?.ownership_percent) lines.push(`- Owner percentage: ${ownership.ownership_percent}%`);
+      const banking = onboarding.banking as Record<string, unknown> | undefined;
+      addText("Primary bank", banking?.primary_bank);
+      addText("Accounting software", banking?.accounting_software);
+      addText("Payroll provider", banking?.payroll_provider);
+      addArray("Payment platforms", banking?.payment_platforms);
+      addArray("Business operations", onboarding.operations);
+      const snapshot = onboarding.financial_snapshot as Record<string, unknown> | undefined;
+      addText("Approximate annual revenue", snapshot?.approximate_annual_revenue);
+      addText("Profitability", snapshot?.profitability);
+      addArray("Deduction profile", onboarding.deduction_profile);
+      addArray("Business goals", onboarding.goals);
+      const funding = onboarding.funding as Record<string, unknown> | undefined;
+      addText("Funding plans", funding?.plans_to_apply);
+      addArray("Funding purposes", funding?.purposes);
+      addArray("AI notification preferences", onboarding.ai_preferences);
+    }
+
+    const debtEntries = Object.entries(debts).filter(([, v]) => typeof v === "number" && v > 0) as Array<[string, number]>;
     if (debtEntries.length) {
       const debtStr = debtEntries.map(([k, v]) => `${k.replace(/_/g, " ")}: $${v.toFixed(0)}`).join(", ");
       lines.push(`- Outstanding business debts: ${debtStr}`);
@@ -201,10 +243,22 @@ const PIE_COLORS = [
   "#60A5FA", "#FB923C", "#E879F9", "#94A3B8", "#FBBF24",
 ];
 
-function groupDeductions(txs: Transaction[], amountFor: (t: Transaction) => number): DeductionGroup[] {
+function categoryLabelFor(t: Transaction, categories: Category[], subCategories: SubCategory[]) {
+  const cat = categories.find(c => c.id === t.category_id);
+  const sub = subCategories.find(s => s.id === t.sub_category_id);
+  if (sub) return sub.name;
+  if (cat) return "Uncategorized";
+  return "Uncategorized";
+}
+
+function groupDeductions(
+  txs: Transaction[],
+  amountFor: (t: Transaction) => number,
+  labelFor: (t: Transaction) => string,
+): DeductionGroup[] {
   const map = new Map<string, { txs: Transaction[]; total: number }>();
   for (const t of txs) {
-    const key = t.description?.trim() || t.type?.trim() || "Other";
+    const key = labelFor(t);
     if (!map.has(key)) map.set(key, { txs: [], total: 0 });
     const g = map.get(key)!;
     g.txs.push(t);
@@ -226,6 +280,7 @@ export default function AiStrategy() {
   const queryClient = useQueryClient();
   const numericId   = profile?.numericId ?? null;
   const authUid     = profile?.id ?? null;
+  const [activeOrgId] = useActiveOrganizationId(numericId);
 
   // ── Tabs ─────────────────────────────────────────────────────────────────
   const [tab, setTab] = useState<TabKey>("strategy");
@@ -280,13 +335,14 @@ export default function AiStrategy() {
 
   // ── Org lookup ────────────────────────────────────────────────────────────
   const { data: org } = useQuery<OrgRow | null>({
-    queryKey: ["user_org_strat", numericId],
+    queryKey: ["user_org_strat", numericId, activeOrgId],
     enabled:  numericId !== null,
     staleTime: 5 * 60 * 1000,
     queryFn:  async () => {
-      const { data } = await supabase.from("organizations").select("*")
-        .eq("owner_id", numericId!).limit(1).maybeSingle();
-      return (data as OrgRow | null) ?? null;
+      const { data, error } = await supabase.from("organizations").select("*")
+        .eq("owner_id", numericId!).order("id", { ascending: true });
+      if (error) throw error;
+      return pickActiveOrganization(data as OrgRow[] | null, activeOrgId);
     },
   });
   const orgId = org?.id ?? null;
@@ -309,6 +365,26 @@ export default function AiStrategy() {
 
   // ── Federal / state deduction rules ─────────────────────────────────────────
   const { groups: ruleGroups, rules: deductionRules } = useDeductionRuleSet();
+
+  const { data: categories = [] } = useQuery<Category[]>({
+    queryKey: ["categories_ai_deductions"],
+    staleTime: 5 * 60 * 1000,
+    queryFn: async () => {
+      const { data, error } = await supabase.from("category").select("id,name").eq("is_deleted", false).order("name");
+      if (error) throw error;
+      return data ?? [];
+    },
+  });
+
+  const { data: subCategories = [] } = useQuery<SubCategory[]>({
+    queryKey: ["sub_categories_ai_deductions"],
+    staleTime: 5 * 60 * 1000,
+    queryFn: async () => {
+      const { data, error } = await supabase.from("sub_category").select("id,name,category_id").eq("is_deleted", false).order("name");
+      if (error) throw error;
+      return data ?? [];
+    },
+  });
 
   // ── Transactions for AI Strategy (month + all-time) ───────────────────────
   const { data: monthTxs = [] } = useQuery<Transaction[]>({
@@ -342,7 +418,7 @@ export default function AiStrategy() {
     staleTime: 60_000,
     queryFn:  async () => {
       const { data } = await supabase.from("transactions")
-        .select("id,title,amount,type,date_time,description,deductible,sub_category_id")
+        .select("id,title,amount,type,date_time,description,deductible,category_id,sub_category_id")
         .eq("org_id", orgId!)
         .gte("date_time", `${dedStart}T00:00:00`)
         .lte("date_time", `${dedEnd}T23:59:59`)
@@ -368,12 +444,20 @@ export default function AiStrategy() {
     for (const p of dedSummary.perTx) m.set(p.tx.id, taxType === "Federal" ? p.federal : p.state);
     return m;
   }, [dedSummary, taxType]);
+  const deductionAmountForTx = useCallback(
+    (t: Transaction) => perTxAmount.get(t.id) ?? 0,
+    [perTxAmount],
+  );
 
   const totalDeductibleAmt = taxType === "Federal" ? dedSummary.totalFederal : dedSummary.totalState;
   const deductionRate      = totalExpenseAmt > 0 ? (totalDeductibleAmt / totalExpenseAmt) * 100 : 0;
+  const labelForDeductionTx = useCallback(
+    (t: Transaction) => categoryLabelFor(t, categories, subCategories),
+    [categories, subCategories],
+  );
   const groups = useMemo(
-    () => groupDeductions(deductibleTxs, (t) => perTxAmount.get(t.id) ?? Math.abs(t.amount)),
-    [deductibleTxs, perTxAmount],
+    () => groupDeductions(deductibleTxs, deductionAmountForTx, labelForDeductionTx),
+    [deductibleTxs, deductionAmountForTx, labelForDeductionTx],
   );
 
   // All transactions (income + expense) grouped by category for the table + donut
@@ -381,12 +465,12 @@ export default function AiStrategy() {
   const tableGroups = useMemo(() => {
     const map = new Map<string, { txs: Transaction[]; totalAmt: number; dedAmt: number }>();
     for (const t of dedTxs) {
-      const key = t.description?.trim() || t.type?.trim() || "Other";
+      const key = labelForDeductionTx(t);
       if (!map.has(key)) map.set(key, { txs: [], totalAmt: 0, dedAmt: 0 });
       const g = map.get(key)!;
       g.txs.push(t);
       g.totalAmt += Math.abs(t.amount);
-      if (t.deductible) g.dedAmt += perTxAmount.get(t.id) ?? Math.abs(t.amount);
+      if (t.deductible) g.dedAmt += deductionAmountForTx(t);
     }
     return Array.from(map.entries())
       .sort((a, b) => b[1].totalAmt - a[1].totalAmt)
@@ -398,7 +482,7 @@ export default function AiStrategy() {
         count: data.txs.length,
         color: PIE_COLORS[i % PIE_COLORS.length],
       }));
-  }, [dedTxs, perTxAmount]);
+  }, [dedTxs, deductionAmountForTx, labelForDeductionTx]);
 
   // ── AI Strategy derived ────────────────────────────────────────────────────
   const income         = monthTxs.filter(t => t.amount > 0).reduce((s, t) => s + t.amount, 0);
@@ -533,10 +617,10 @@ Rules:
     <div className="animate-in fade-in slide-in-from-bottom-4 duration-500" style={{ background: "hsl(var(--background))", minHeight: "100%" }}>
 
       {/* ── Tab bar ── */}
-      <div className="flex border-b border-border">
+      <div className="grid grid-cols-2 border-b border-border bg-[#061b3d]">
         {([["strategy", "AI Strategy"], ["deduction", "AI Deduction"]] as [TabKey, string][]).map(([key, label]) => (
           <button key={key} onClick={() => setTab(key)}
-            className={`px-6 py-3.5 text-sm font-semibold border-b-2 transition-colors ${
+            className={`w-full px-6 py-4 text-sm font-semibold border-b-2 transition-colors ${
               tab === key
                 ? "border-[#FFC72B] text-foreground"
                 : "border-transparent text-muted-foreground hover:text-foreground"
@@ -741,10 +825,10 @@ Rules:
           ) : (
             <>
               {/* ── Main row: big chart card + 2×2 stats ── */}
-              <div className="grid grid-cols-1 lg:grid-cols-[3fr_2fr] gap-4">
+              <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1.55fr)_minmax(360px,1fr)] gap-4">
 
                 {/* Donut chart card — chart left, legend right */}
-                <div className="rounded-xl border border-border p-5" style={{ background: "linear-gradient(160deg, hsl(var(--muted)), hsl(var(--card)))" }}>
+                <div className="rounded-xl border border-border p-5 md:p-6 min-h-[356px]" style={{ background: "linear-gradient(160deg, hsl(var(--muted)), hsl(var(--card)))" }}>
                   <p className="text-sm font-semibold text-foreground mb-4 flex items-center gap-1.5">
                     Deductions by Category
                     <Info className="h-3.5 w-3.5 text-muted-foreground" />
@@ -755,13 +839,13 @@ Rules:
                       <p className="text-sm text-muted-foreground">No transactions in this period.</p>
                     </div>
                   ) : (
-                    <div className="flex items-center gap-4">
+                    <div className="flex flex-col xl:flex-row xl:items-center gap-6 xl:gap-8">
                       {/* Donut — left side */}
-                      <div className="relative flex-shrink-0" style={{ width: 180, height: 180 }}>
-                        <ResponsiveContainer width={180} height={180}>
+                      <div className="relative mx-auto aspect-square w-full max-w-[330px] flex-shrink-0 xl:mx-0">
+                        <ResponsiveContainer width="100%" height="100%">
                           <PieChart>
                             <Pie data={tableGroups} dataKey="totalAmt" nameKey="label"
-                              cx="50%" cy="50%" outerRadius={85} innerRadius={52} paddingAngle={2}>
+                              cx="50%" cy="50%" outerRadius={154} innerRadius={94} paddingAngle={2}>
                               {tableGroups.map((g) => <Cell key={g.label} fill={g.color} />)}
                             </Pie>
                             <Tooltip formatter={(v: number) => [fmt(v), "Amount"]}
@@ -770,20 +854,20 @@ Rules:
                         </ResponsiveContainer>
                         {/* Center label */}
                         <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-                          <p className="text-[9px] text-muted-foreground leading-tight text-center">Total Deductions</p>
-                          <p className="text-sm font-bold text-foreground mt-0.5">{fmt(totalDeductibleAmt)}</p>
+                          <p className="text-[10px] text-muted-foreground leading-tight text-center">Total Deductions</p>
+                          <p className="text-lg font-bold text-foreground mt-1">{fmt(totalDeductibleAmt)}</p>
                         </div>
                       </div>
 
                       {/* Legend — right side */}
-                      <div className="flex-1 min-w-0 space-y-3">
+                      <div className="w-full max-w-[560px] min-w-0 space-y-3 xl:pr-1">
                         {tableGroups.map(g => (
-                          <div key={g.label} className="flex items-center justify-between gap-2">
+                          <div key={g.label} className="grid grid-cols-[minmax(0,1fr)_90px] items-center gap-4">
                             <div className="flex items-center gap-2 min-w-0">
                               <span className="h-2.5 w-2.5 rounded-full flex-shrink-0" style={{ background: g.color }} />
                               <span className="text-xs text-foreground/90 truncate">{g.label}</span>
                             </div>
-                            <span className="text-xs font-semibold text-foreground flex-shrink-0">
+                            <span className="text-xs font-semibold text-foreground text-right">
                               {g.dedAmt > 0 ? fmt(g.dedAmt) : "$"}
                             </span>
                           </div>
@@ -794,7 +878,7 @@ Rules:
                 </div>
 
                 {/* 2×2 stat cards */}
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   {[
                     {
                       label: "Total Amount",
@@ -829,16 +913,16 @@ Rules:
                       subColor: "hsl(var(--muted-foreground))",
                     },
                   ].map(({ label, value, sub, icon, iconBg, subColor }) => (
-                    <div key={label} className="rounded-xl border border-border p-4 flex flex-col gap-2"
+                    <div key={label} className="rounded-xl border border-border p-5 min-h-[170px] flex flex-col items-center justify-center text-center gap-3"
                       style={{ background: "linear-gradient(160deg, hsl(var(--muted)), hsl(var(--card)))" }}>
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center justify-center gap-2">
                         <div className="h-8 w-8 rounded-lg flex items-center justify-center flex-shrink-0" style={{ background: iconBg }}>
                           {icon}
                         </div>
-                        <span className="text-[10px] text-muted-foreground font-medium leading-tight">{label}</span>
+                        <span className="text-xs text-muted-foreground font-semibold leading-tight">{label}</span>
                       </div>
-                      <p className="text-xl font-bold text-foreground">{value}</p>
-                      <p className="text-[10px]" style={{ color: subColor }}>{sub}</p>
+                      <p className="text-2xl font-bold text-foreground">{value}</p>
+                      <p className="text-xs" style={{ color: subColor }}>{sub}</p>
                     </div>
                   ))}
                 </div>
@@ -856,7 +940,8 @@ Rules:
                     No transactions available in this period.
                   </div>
                 ) : (
-                  <div className="rounded-xl border border-border overflow-hidden" style={{ background: "hsl(var(--card))" }}>
+                  <div className="overflow-x-auto rounded-xl border border-border" style={{ background: "hsl(var(--card))" }}>
+                    <div className="min-w-[760px]">
                     {/* Table header */}
                     <div className="grid text-[10px] text-muted-foreground font-semibold uppercase tracking-wider px-4 py-2.5 border-b border-border/60"
                       style={{ gridTemplateColumns: "2fr 1fr 1fr 1fr 1fr auto" }}>
@@ -906,11 +991,11 @@ Rules:
                                   </div>
                                   <span className="text-foreground/90">{fmt(Math.abs(t.amount))}</span>
                                   <span className="text-[#22c55e] font-semibold">
-                                    {t.deductible ? fmt(perTxAmount.get(t.id) ?? Math.abs(t.amount)) : "$"}
+                                    {t.deductible ? fmt(deductionAmountForTx(t)) : "$"}
                                   </span>
                                   <span className="text-muted-foreground">
                                     {t.deductible && Math.abs(t.amount) > 0
-                                      ? `${((perTxAmount.get(t.id) ?? Math.abs(t.amount)) / Math.abs(t.amount) * 100).toFixed(1)}%`
+                                      ? `${((deductionAmountForTx(t)) / Math.abs(t.amount) * 100).toFixed(1)}%`
                                       : "—"}
                                   </span>
                                   <span className="text-foreground/90">1</span>
@@ -922,6 +1007,7 @@ Rules:
                         </div>
                       );
                     })}
+                    </div>
                   </div>
                 )}
               </div>

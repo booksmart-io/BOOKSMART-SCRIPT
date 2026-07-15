@@ -39,7 +39,7 @@ export function DashboardLayout({ children, role }: DashboardLayoutProps) {
         { title: "Dashboard",           url: "/user",               icon: LayoutDashboard },
         { title: "AI Strategy",         url: "/user/ai-strategy",   icon: Gem },
         { title: "Financial Reports",   url: "/user/reports",       icon: Copy },
-        { title: "Tax Filing",          url: "/user/tax",           icon: Scissors },
+        { title: "Document Repository", url: "/user/tax",           icon: Scissors },
         { title: "CPA Network",         url: "/user/cpa-network",   icon: MapPin },
         { title: "Tokens",              url: "/user/token",         icon: Coins },
         { title: "Chat",                url: "/user/chat",          icon: MessageSquare, badge: "unread" },
@@ -99,7 +99,7 @@ export function DashboardLayout({ children, role }: DashboardLayoutProps) {
 
   return (
     <SidebarProvider>
-      <div className="flex h-screen w-full overflow-hidden bg-background text-foreground">
+      <div className="flex h-[100dvh] w-full overflow-hidden bg-background text-foreground">
 
         {/* ── Sidebar ── */}
         <Sidebar className="border-r-0" style={{ background: "hsl(var(--sidebar))" }}>
@@ -268,7 +268,7 @@ export function DashboardLayout({ children, role }: DashboardLayoutProps) {
         </Sidebar>
 
         {/* ── Main content area ── */}
-        <main className="flex-1 flex flex-col overflow-hidden bg-background">
+        <main className="min-w-0 flex-1 flex flex-col overflow-hidden bg-background">
 
           {/* Header */}
           <header className="h-14 border-b border-border/40 flex items-center px-4 bg-card/60 backdrop-blur sticky top-0 z-10 gap-2">
@@ -326,8 +326,8 @@ export function DashboardLayout({ children, role }: DashboardLayoutProps) {
           </header>
 
           {/* Page content */}
-          <div className="flex-1 overflow-auto p-3 md:p-4">
-            <div className="w-full">
+          <div className="flex-1 overflow-auto p-3 pb-20 md:p-4">
+            <div className="w-full min-w-0">
               {children}
             </div>
           </div>

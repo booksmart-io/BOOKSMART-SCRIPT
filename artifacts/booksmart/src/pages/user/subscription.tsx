@@ -20,14 +20,14 @@ const PLAN_FEATURES: Record<"free" | PlanKey, string[]> = {
   plus: [
     "5 connected accounts",
     "1,000 transactions/month",
-    "100 AI questions/month",
-    "20 AI tax strategies/month",
+    "50 AI questions/month",
+    "8 AI tax strategies/month",
     "Full P&L, Cash Flow, Balance Sheet",
     "Tax Deduction Report + unlimited PDF exports",
     "Contact CPAs & request consultations",
   ],
   pro: [
-    "Unlimited accounts & transactions",
+    "Unlimited accounts & transactions (25,000 fair use)",
     "Unlimited AI questions & tax strategies",
     "AI CFO, AI Funding Coach, AI Deduction Optimizer",
     "Unlimited PDF & Excel exports",

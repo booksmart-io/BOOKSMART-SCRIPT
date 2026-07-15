@@ -5,6 +5,10 @@ import { useAuth } from "@/hooks/use-auth";
 import { supabase } from "@/lib/supabase";
 import { useToast } from "@/hooks/use-toast";
 import { normalizeStatementDoc, computeFinancialSnapshot, type StatementPeriod } from "@/lib/financial-statements";
+import { pickActiveOrganization, useActiveOrganizationId } from "@/lib/active-organization";
+import BusinessSurveyDialog from "@/components/business-survey-dialog";
+import BusinessSetupDialog from "@/components/business-setup-dialog";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import {
   Flame, Star, Lock, Coins, FileText, BarChart2, MessageSquare, Lightbulb,
@@ -29,6 +33,8 @@ type DashboardOrder = {
   services: string | null; status: string; created_at: string;
   cpa: { first_name: string | null; last_name: string | null } | null;
 };
+
+type StateRow = { id: number; name: string; code: string };
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -77,79 +83,63 @@ function bpsLevel(score: number) {
 // ─── BPS Gauge ───────────────────────────────────────────────────────────────
 
 function BPSGauge({ score }: { score: number }) {
-  const cx = 90, cy = 95, r = 62;
-  const startAngle = -210;  // bottom-left
-  const sweepAngle = 240;
-  const needleAngle = startAngle + (score / 100) * sweepAngle;
+  const startDeg = 150;
+  const totalDeg = 240;
+  const cx = 110;
+  const cy = 116;
+  const r = 86;
+  const rTick = 74;
 
-  function polar(deg: number, radius: number) {
-    const rad = ((deg - 90) * Math.PI) / 180;
-    return { x: cx + radius * Math.cos(rad), y: cy + radius * Math.sin(rad) };
-  }
+  const toRad = (deg: number) => (deg * Math.PI) / 180;
+  const pt = (deg: number, radius: number) => ({
+    x: cx + radius * Math.cos(toRad(deg)),
+    y: cy + radius * Math.sin(toRad(deg)),
+  });
 
-  function arc(s: number, e: number) {
-    const sp = polar(s, r), ep = polar(e, r);
+  const segArc = (s: number, e: number) => {
+    const sv = pt(s, r);
+    const ev = pt(e, r);
     const large = e - s > 180 ? 1 : 0;
-    return `M ${sp.x} ${sp.y} A ${r} ${r} 0 ${large} 1 ${ep.x} ${ep.y}`;
-  }
+    return `M ${sv.x.toFixed(2)} ${sv.y.toFixed(2)} A ${r} ${r} 0 ${large} 1 ${ev.x.toFixed(2)} ${ev.y.toFixed(2)}`;
+  };
 
-  const majorTicks = [0, 20, 40, 60, 80, 100];
-  const allTicks   = [0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100];
-  const label = score >= 80 ? "Excellent" : score >= 60 ? "Good" : score >= 40 ? "Fair" : "Poor";
-  const needleTip = polar(needleAngle, r - 6);
-  const needleL   = polar(needleAngle + 90, 5);
-  const needleR   = polar(needleAngle - 90, 5);
+  const ticks = [0, 20, 40, 60, 80, 100];
+  const markerDeg = startDeg + (score / 100) * totalDeg;
+  const marker = pt(markerDeg, r);
+  const label = score >= 80 ? "Excellent" : score >= 60 ? "Good" : score >= 40 ? "Fair" : score >= 20 ? "Poor" : "Critical";
 
   return (
-    <div className="flex-shrink-0">
-      <svg width="180" height="145" viewBox="0 0 180 145">
+    <div className="flex flex-col items-center justify-center">
+      <svg className="h-[205px] w-[260px] max-w-full" viewBox="0 0 220 178">
         <defs>
-          <linearGradient id="bpsG" x1="0%" y1="0%" x2="100%" y2="0%">
-            <stop offset="0%"   stopColor="#ef4444" />
-            <stop offset="30%"  stopColor="#f97316" />
-            <stop offset="60%"  stopColor="#eab308" />
-            <stop offset="100%" stopColor="#22c55e" />
+          <linearGradient id="bpsGradient" x1="28" y1="154" x2="196" y2="30" gradientUnits="userSpaceOnUse">
+            <stop offset="0%" stopColor="#ef4444" />
+            <stop offset="22%" stopColor="#f97316" />
+            <stop offset="44%" stopColor="#facc15" />
+            <stop offset="68%" stopColor="#55d17f" />
+            <stop offset="100%" stopColor="#14b8c9" />
           </linearGradient>
         </defs>
-
-        {/* Track */}
-        <path d={arc(-210, 30)} fill="none" stroke="currentColor" strokeOpacity="0.12" strokeWidth="11" strokeLinecap="round" />
-
-        {/* Filled arc */}
-        {score > 0 && (
-          <path d={arc(-210, Math.min(needleAngle, 29.9))} fill="none" stroke="url(#bpsG)" strokeWidth="11" strokeLinecap="round" />
-        )}
-
-        {/* Tick marks */}
-        {allTicks.map(v => {
-          const a = startAngle + (v / 100) * sweepAngle;
-          const isMajor = majorTicks.includes(v);
-          const i = polar(a, r + 6), o = polar(a, isMajor ? r + 16 : r + 11);
-          return <line key={v} x1={i.x} y1={i.y} x2={o.x} y2={o.y}
-            stroke="currentColor" strokeOpacity={isMajor ? 0.5 : 0.2} strokeWidth={isMajor ? 1.5 : 0.8} />;
+        <path d={segArc(startDeg, startDeg + totalDeg)} fill="none" stroke="#071b38" strokeWidth="16" strokeLinecap="round" opacity="0.98" />
+        <path d={segArc(startDeg, markerDeg)} fill="none" stroke="url(#bpsGradient)" strokeWidth="16" strokeLinecap="round" />
+        {ticks.map((pct) => {
+          const deg = startDeg + (pct / 100) * totalDeg;
+          const inner = pt(deg, rTick);
+          const outer = pt(deg, rTick + 5);
+          return <line key={`tick-${pct}`} x1={inner.x} y1={inner.y} x2={outer.x} y2={outer.y} stroke="#8391a8" strokeWidth="1.5" opacity="0.55" />;
         })}
-
-        {/* Labels at major ticks */}
-        {majorTicks.map(v => {
-          const a = startAngle + (v / 100) * sweepAngle;
-          const p = polar(a, r + 27);
+        {ticks.map((pct) => {
+          const deg = startDeg + (pct / 100) * totalDeg;
+          const labelPt = pt(deg, rTick - 17);
           return (
-            <text key={v} x={p.x} y={p.y} textAnchor="middle" dominantBaseline="middle"
-              className="fill-muted-foreground" fontSize="8.5" opacity="0.65">
-              {v}
+            <text key={`label-${pct}`} x={labelPt.x} y={labelPt.y} textAnchor="middle" dominantBaseline="middle" fontSize="11" fontWeight="700" fill="#ffffff">
+              {pct}
             </text>
           );
         })}
-
-        {/* Needle */}
-        <path d={`M ${needleL.x} ${needleL.y} L ${needleTip.x} ${needleTip.y} L ${needleR.x} ${needleR.y} Z`}
-          fill="white" opacity="0.9" />
-        <circle cx={cx} cy={cy} r="5.5" fill="white" opacity="0.9" />
-        <circle cx={cx} cy={cy} r="3" fill="#0a1628" />
-
-        {/* Score text */}
-        <text x={cx} y={cy - 14} textAnchor="middle" className="fill-foreground" fontSize="28" fontWeight="bold">{score}</text>
-        <text x={cx} y={cy + 10} textAnchor="middle" className="fill-muted-foreground" fontSize="11">{label}</text>
+        <circle cx={marker.x} cy={marker.y} r="5" fill="#ffffff" />
+        <text x={cx} y={cy - 4} textAnchor="middle" fontSize="42" fontWeight="800" fill="white">{score}</text>
+        <text x={cx} y={cy + 28} textAnchor="middle" fontSize="16" fontWeight="600" fill="white">{label}</text>
       </svg>
     </div>
   );
@@ -163,26 +153,46 @@ export default function UserDashboard() {
   const numericId = profile?.numericId ?? null;
   const tokenBalance = profile?.token_balance ?? 0;
   const qc = useQueryClient();
+  const [activeOrgId, setActiveOrgId] = useActiveOrganizationId(numericId);
 
   const [insightData, setInsightData] = useState<{ strategies: AiStrategy[]; totalSavings: number } | null>(null);
   const [insightLoading, setInsightLoading] = useState(false);
   const [insightUnlocked, setInsightUnlocked] = useState(false);
+  const [surveyOpen, setSurveyOpen] = useState(false);
+  const [starterOrgId, setStarterOrgId] = useState<number | null>(null);
+  const [businessDialogOpen, setBusinessDialogOpen] = useState(false);
+  const [businessDialogDismissed, setBusinessDialogDismissed] = useState(false);
 
   // ── Org lookup ──────────────────────────────────────────────────────────────
-  const { data: orgData } = useQuery<{ id: number } | null>({
-    queryKey: ["user_org", numericId],
+  const { data: orgData, isLoading: orgLoading } = useQuery<{ id: number } | null>({
+    queryKey: ["user_org", numericId, activeOrgId],
     enabled: numericId !== null,
     staleTime: 5 * 60 * 1000,
     queryFn: async () => {
       const { data, error } = await supabase
-        .from("organizations").select("id").eq("owner_id", numericId!).limit(1).maybeSingle();
+        .from("organizations").select("id").eq("owner_id", numericId!).order("id", { ascending: true });
       if (error) throw error;
-      return (data as { id: number } | null) ?? null;
+      return pickActiveOrganization(data as { id: number }[] | null, activeOrgId);
     },
   });
-  const orgId = orgData?.id ?? null;
+  const orgId = orgData?.id ?? starterOrgId ?? null;
 
   useEffect(() => { console.log("[dashboard] numericId:", numericId, "orgId:", orgId); }, [numericId, orgId]);
+
+  const { data: states = [] } = useQuery<StateRow[]>({
+    queryKey: ["states"],
+    staleTime: Infinity,
+    queryFn: async () => {
+      const { data, error } = await supabase.from("states").select("id, name, code").order("name");
+      if (error) throw error;
+      return (data as StateRow[]) ?? [];
+    },
+  });
+
+  useEffect(() => {
+    if (numericId === null || orgLoading || orgData || starterOrgId || businessDialogDismissed) return;
+    setBusinessDialogOpen(true);
+  }, [numericId, orgLoading, orgData, starterOrgId, businessDialogDismissed]);
 
   // ── Real-time tx updates ────────────────────────────────────────────────────
   useEffect(() => {
@@ -454,67 +464,70 @@ difficulty must be "Easy", "Medium", or "Hard". savings is a USD number.`;
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
     <div className="min-h-0">
+      <div className="relative -top-2 mb-2 flex justify-start sm:-top-9 sm:mb-0 sm:h-0 sm:justify-end items-center gap-5 pr-1 text-[14px] font-semibold">
+        <span className="flex items-center gap-1">
+          <Flame className="h-[15px] w-[15px] text-orange-500" />
+          Streak: {streakDays} day{streakDays !== 1 ? "s" : ""}
+        </span>
+        <span className="flex items-center gap-1 text-primary">
+          <Star className="h-[15px] w-[15px] fill-primary text-primary" />
+          {xpTotal.toLocaleString()} XP
+        </span>
+      </div>
+
       {/* ── 2-column grid: main content + right sidebar ── */}
-      <div className="grid gap-4" style={{ gridTemplateColumns: "1fr 296px" }}>
+      <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_350px]">
 
         {/* ════════════ LEFT / MAIN ════════════ */}
         <div className="space-y-4 min-w-0">
 
           {/* ── BPS Card ── */}
           <Card>
-            <CardContent className="p-5">
+            <CardContent className="px-5 pt-4 pb-5 min-h-[296px] flex flex-col">
               {/* Card title + streak/XP */}
-              <div className="flex items-center justify-between mb-3">
-                <p className="text-[14px] font-bold text-primary">Business Power Score (BPS)</p>
-                <div className="flex items-center gap-4 text-[13px] font-semibold">
-                  <span className="flex items-center gap-1">
-                    <Flame className="h-[15px] w-[15px] text-orange-500" />
-                    Streak: {streakDays} day{streakDays !== 1 ? "s" : ""}
-                  </span>
-                  <span className="flex items-center gap-1 text-primary">
-                    <Star className="h-[15px] w-[15px] fill-primary text-primary" />
-                    {xpTotal.toLocaleString()} XP
-                  </span>
-                </div>
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-[16px] font-bold text-foreground">Business Power Score (BPS)</p>
               </div>
 
               {/* Gauge + right content */}
-              <div className="flex items-center gap-6">
-                <BPSGauge score={bpsScore} />
+              <div className="grid flex-1 items-center gap-5 lg:grid-cols-[300px_minmax(0,1fr)] lg:gap-7">
+                <div className="flex items-center justify-center">
+                  <BPSGauge score={bpsScore} />
+                </div>
 
                 {/* Progress bars + XP chip */}
-                <div className="flex-1 space-y-2 min-w-0">
+                <div className="min-w-0 pt-1">
                   {/* Level title */}
-                  <div className="flex items-center gap-1.5 flex-wrap">
-                    <span className="text-[15px] font-bold">Level {bpsInfo.level}</span>
-                    <span className="text-[15px] font-semibold text-foreground/85">{bpsInfo.title}</span>
+                  <div className="flex items-center gap-1.5 flex-wrap mb-3">
+                    <span className="text-[16px] font-bold">Level {bpsInfo.level}</span>
+                    <span className="text-[16px] font-semibold text-foreground/90">{bpsInfo.title}</span>
                     <Star className="h-[14px] w-[14px] fill-amber-400 text-amber-400" />
                   </div>
 
                   {/* Overall progress bar (thick, gold) */}
-                  <div className="h-[10px] bg-muted/25 rounded-full overflow-hidden">
-                    <div className="h-full bg-primary rounded-full transition-all duration-700" style={{ width: `${bpsScore}%` }} />
+                  <div className="h-[5px] bg-[#29415f] rounded-full overflow-hidden mb-6">
+                    <div className="h-full bg-[#ffa43b] rounded-full transition-all duration-700" style={{ width: `${bpsScore}%` }} />
                   </div>
 
                   {/* Next level label */}
                   {bpsInfo.next && (
                     <>
-                      <p className="text-[14px] font-semibold text-foreground/90">{bpsInfo.next}</p>
+                      <p className="text-[21px] font-bold text-foreground/95 mb-3">{bpsInfo.next}</p>
                       {/* Level-within-tier bar (thinner) */}
-                      <div className="h-[7px] bg-muted/25 rounded-full overflow-hidden">
-                        <div className="h-full bg-primary/70 rounded-full transition-all duration-700" style={{ width: `${levelPct}%` }} />
+                      <div className="h-[5px] bg-[#29415f] rounded-full overflow-hidden">
+                        <div className="h-full bg-[#ffc107] rounded-full transition-all duration-700" style={{ width: `${levelPct}%` }} />
                       </div>
                     </>
                   )}
 
                   {/* Next rank + streak info */}
-                  <div className="flex justify-between text-[12px] text-muted-foreground">
+                  <div className="flex justify-between text-[12px] text-muted-foreground mt-3 mb-5">
                     <span>Next rank: {bpsInfo.next ?? "MAX"}</span>
-                    <span>Streak: {xpTotal.toLocaleString()}</span>
+                    <span>Streak: {(xpTotal / 1000).toFixed(3)}</span>
                   </div>
 
                   {/* XP potential chip — matches Flutter "Todays XP Potential:" chip */}
-                  <div className="flex items-center gap-2 bg-muted/20 border border-border/30 rounded-full px-4 py-1.5 w-fit">
+                  <div className="ml-auto flex items-center justify-between gap-2 bg-[#29415f] border border-white/10 rounded-full px-5 py-2 w-[445px] max-w-full">
                     <span className="text-[12px] text-muted-foreground">Todays XP Potential:</span>
                     <span className="text-[13px] font-bold text-primary">+{xpPotential - missions.filter(m => m.done).reduce((sum, _, i) => sum + [550, 120, 75, 90][i], 0)} XP</span>
                   </div>
@@ -524,11 +537,11 @@ difficulty must be "Easy", "Medium", or "Hard". savings is a USD number.`;
           </Card>
 
           {/* ── Missions + AI Insight row ── */}
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
 
             {/* Today's Missions */}
             <Card>
-              <CardContent className="p-0">
+              <CardContent className="p-0 min-h-[316px]">
                 <div className="px-5 pt-4 pb-3">
                   <p className="text-[14px] font-bold">Today's Missions</p>
                 </div>
@@ -560,7 +573,7 @@ difficulty must be "Easy", "Medium", or "Hard". savings is a USD number.`;
 
             {/* AI Insight — dark gradient matching Flutter _FinancialDashboard custom palette */}
             <Card style={{ background: "linear-gradient(135deg, #020e2c 0%, #071f4a 50%, #061a3d 100%)", borderColor: "rgba(255,255,255,0.08)" }}>
-              <CardContent className="p-5 flex flex-col items-center text-center gap-1.5">
+              <CardContent className="p-5 min-h-[316px] flex flex-col items-center justify-center text-center gap-1.5">
                 <p className="text-[15px] font-bold text-white">AI Insight</p>
                 <p className="text-[12px] text-white/60">Maximize Your Business Savings Potential!</p>
 
@@ -626,7 +639,7 @@ difficulty must be "Easy", "Medium", or "Hard". savings is a USD number.`;
           </div>
 
           {/* ── Achievements + Business Challenges row ── */}
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
 
             {/* Achievements Unlocked */}
             <Card>
@@ -711,7 +724,7 @@ difficulty must be "Easy", "Medium", or "Hard". savings is a USD number.`;
 
           {/* ── Dun & Bradstreet Card ── */}
           <Card>
-            <CardContent className="p-4 space-y-3">
+            <CardContent className="p-6 min-h-[296px] flex flex-col justify-between">
               {/* Header */}
               <div className="flex items-center justify-between">
                 <p className="text-[13px] font-bold">Dun &amp; Bradstreet</p>
@@ -724,21 +737,21 @@ difficulty must be "Easy", "Medium", or "Hard". savings is a USD number.`;
               {/* Score circle + label + shield */}
               <div className="flex items-center gap-3">
                 {/* Circular progress score */}
-                <div className="relative w-14 h-14 flex-shrink-0">
-                  <svg viewBox="0 0 56 56" className="w-14 h-14 -rotate-90">
+                <div className="relative w-16 h-16 flex-shrink-0">
+                  <svg viewBox="0 0 56 56" className="w-16 h-16 -rotate-90">
                     <circle cx="28" cy="28" r="22" fill="none" stroke="currentColor" strokeOpacity="0.12" strokeWidth="5" />
                     <circle cx="28" cy="28" r="22" fill="none" stroke="#F5C542" strokeWidth="5"
                       strokeDasharray={`${(dbScore / 100) * 138.2} 138.2`} strokeLinecap="round" />
                   </svg>
                   <div className="absolute inset-0 flex items-center justify-center">
-                    <span className="text-[15px] font-bold">{dbScore}</span>
+                    <span className="text-[20px] font-bold">{dbScore}</span>
                   </div>
                 </div>
                 <div className="flex-1">
-                  <p className="text-[14px] font-semibold text-emerald-400">{dbLabel}</p>
+                  <p className="text-[18px] font-semibold text-emerald-400">{dbLabel}</p>
                   <p className="text-[11px] text-muted-foreground">↓ {dbLabel}</p>
                 </div>
-                <ShieldCheck className="h-8 w-8 text-amber-400 flex-shrink-0" />
+                <ShieldCheck className="h-9 w-9 text-amber-400 flex-shrink-0" />
               </div>
 
               {/* Business age + threshold */}
@@ -754,16 +767,16 @@ difficulty must be "Easy", "Medium", or "Hard". savings is a USD number.`;
 
               {/* Funding section */}
               <div className="flex items-center gap-2 pt-1">
-                <div className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0"
+                <div className="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0"
                   style={{ background: "rgba(34,197,94,0.15)" }}>
-                  <Wallet className="h-4 w-4 text-emerald-400" />
+                  <Wallet className="h-5 w-5 text-emerald-400" />
                 </div>
                 <div className="flex-1 min-w-0">
-                  <p className="text-[12px] font-semibold">Funding</p>
+                  <p className="text-[15px] font-semibold">Funding</p>
                   <p className="text-[11px] text-muted-foreground">{bpsScore >= 70 ? "Loan Ready" : "Needs Improvement"}</p>
                 </div>
                 <div className="text-right flex-shrink-0">
-                  <p className="text-[17px] font-bold">{fundingPoints}</p>
+                  <p className="text-[20px] font-bold">{fundingPoints}</p>
                   <p className="text-[9px] text-muted-foreground uppercase tracking-wider">POINTS</p>
                 </div>
               </div>
@@ -864,6 +877,31 @@ difficulty must be "Easy", "Medium", or "Hard". savings is a USD number.`;
 
       {/* ── Hidden username usage to silence linter ── */}
       <span className="hidden">{firstName}</span>
+      <BusinessSetupDialog
+        open={businessDialogOpen}
+        onOpenChange={(open) => {
+          if (!open) setBusinessDialogDismissed(true);
+          setBusinessDialogOpen(open);
+        }}
+        ownerId={numericId}
+        states={states}
+        defaultEmail={user?.email ?? profile?.email ?? ""}
+        onSaved={(newOrgId) => {
+          setStarterOrgId(newOrgId);
+          setActiveOrgId(newOrgId);
+          setBusinessDialogOpen(false);
+          setSurveyOpen(true);
+          qc.invalidateQueries({ queryKey: ["user_org", numericId] });
+          qc.invalidateQueries({ queryKey: ["organizations_list", numericId] });
+          toast({ title: "Business added", description: "Now complete the business survey." });
+        }}
+        onError={(message) => toast({ title: "Could not add business", description: message, variant: "destructive" })}
+      />
+      <BusinessSurveyDialog
+        orgId={orgId}
+        open={surveyOpen}
+        onOpenChange={setSurveyOpen}
+      />
     </div>
   );
 }

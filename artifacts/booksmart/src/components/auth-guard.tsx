@@ -9,7 +9,7 @@ interface AuthGuardProps {
 
 export function AuthGuard({ children, requiredRole }: AuthGuardProps) {
   const { session, profile, isLoading } = useAuth();
-  const [, setLocation] = useLocation();
+  const [location, setLocation] = useLocation();
 
   useEffect(() => {
     if (isLoading) return;
@@ -17,12 +17,25 @@ export function AuthGuard({ children, requiredRole }: AuthGuardProps) {
       setLocation("/login");
       return;
     }
+    if (!session.user.email_confirmed_at) {
+      setLocation("/verify-email");
+      return;
+    }
     if (requiredRole && profile && profile.role !== requiredRole) {
       if (profile.role === "cpa") setLocation("/cpa");
       else if (profile.role === "admin") setLocation("/admin");
       else setLocation("/user");
+      return;
     }
-  }, [isLoading, session, profile, requiredRole, setLocation]);
+    if (requiredRole === "cpa" && profile?.role === "cpa") {
+      const status = (profile.verification_status ?? "pending").toLowerCase();
+      const allowedWhileReviewing = location === "/cpa/profile" || location === "/cpa/under-review";
+      if (status !== "approved" && !allowedWhileReviewing) {
+        setLocation("/cpa/under-review");
+        return;
+      }
+    }
+  }, [isLoading, session, profile, requiredRole, location, setLocation]);
 
   if (isLoading) {
     return (
@@ -33,6 +46,7 @@ export function AuthGuard({ children, requiredRole }: AuthGuardProps) {
   }
 
   if (!session) return null;
+  if (!session.user.email_confirmed_at) return null;
 
   return <>{children}</>;
 }

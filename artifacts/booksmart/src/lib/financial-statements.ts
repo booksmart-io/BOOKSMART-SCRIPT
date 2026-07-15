@@ -58,7 +58,13 @@ export type StatementPeriod = {
 };
 
 function num(v: unknown): number {
-  return typeof v === "number" && Number.isFinite(v) ? v : 0;
+  if (typeof v === "number" && Number.isFinite(v)) return v;
+  if (typeof v === "string") {
+    const cleaned = v.replace(/[$,\s]/g, "").replace(/^\((.*)\)$/, "-$1");
+    const parsed = Number(cleaned);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+  return 0;
 }
 
 function parseDateSafe(v: unknown): Date | null {
@@ -85,10 +91,12 @@ function pnlFromRecord(r: Record<string, unknown>, manual: boolean): PnLFigures 
 }
 
 function bsFromRecord(r: Record<string, unknown>, manual: boolean): BSFigures {
-  const currentAssets = manual ? num(r.currentAssets) : num(r.assets_current);
-  const nonCurrentAssets = manual ? num(r.nonCurrentAssets) : num(r.assets_non_current);
-  const currentLiabilities = manual ? num(r.currentLiabilities) : num(r.liabilities_current);
-  const longTermLiabilities = manual ? num(r.longTermLiabilities) : num(r.liabilities_long_term);
+  const assets = typeof r.assets === "object" && r.assets !== null ? r.assets as Record<string, unknown> : {};
+  const liabilities = typeof r.liabilities === "object" && r.liabilities !== null ? r.liabilities as Record<string, unknown> : {};
+  const currentAssets = manual ? num(r.currentAssets) : num(r.assets_current ?? assets.current);
+  const nonCurrentAssets = manual ? num(r.nonCurrentAssets) : num(r.assets_non_current ?? assets.non_current);
+  const currentLiabilities = manual ? num(r.currentLiabilities) : num(r.liabilities_current ?? liabilities.current);
+  const longTermLiabilities = manual ? num(r.longTermLiabilities) : num(r.liabilities_long_term ?? liabilities.long_term);
   const equity = num(r.equity);
   return {
     currentAssets,
@@ -106,6 +114,20 @@ function cfFromRecord(r: Record<string, unknown>, manual: boolean): CFFigures {
   const investing = manual ? num(r.investingActivities) : num(r.investing_activities);
   const financing = manual ? num(r.financingActivities) : num(r.financing_activities);
   return { operating, investing, financing, netChange: operating + investing + financing };
+}
+
+function hasStatementFigures(r: Record<string, unknown>, docType: DocType, manual: boolean): boolean {
+  if (manual) return true;
+  if (r.ai_extracted === true) return true;
+  if (docType === "pnl") {
+    return ["revenue", "cost_of_goods_sold", "gross_profit", "operating_expenses", "net_income"]
+      .some((key) => key in r);
+  }
+  if (docType === "bs") {
+    return ["assets_current", "assets_non_current", "liabilities_current", "liabilities_long_term", "equity", "assets", "liabilities"]
+      .some((key) => key in r);
+  }
+  return ["operating_activities", "investing_activities", "financing_activities"].some((key) => key in r);
 }
 
 type UserDocumentRow = {
@@ -126,6 +148,7 @@ export function normalizeStatementDoc(row: UserDocumentRow): StatementPeriod[] {
 
   const isManual = pd.manual_entry === true;
   const rawPeriods = Array.isArray(pd.periods) ? (pd.periods as Record<string, unknown>[]) : null;
+  if (!isManual && !hasStatementFigures(pd, docType, false)) return [];
 
   const buildFor = (r: Record<string, unknown>): StatementPeriod => {
     const year = typeof r.year === "number" ? r.year : row.tax_year ? Number(row.tax_year) || null : null;
@@ -213,14 +236,16 @@ export function computeFinancialSnapshot(
   const income = txIncome + pnlTotals.revenue;
   const expenses = txExpenses + pnlTotals.expenses;
 
-  const bsTotals = bsDocs.reduce(
-    (acc, p) => ({
-      totalAssets: acc.totalAssets + (p.bs?.totalAssets ?? 0),
-      totalLiabilities: acc.totalLiabilities + (p.bs?.totalLiabilities ?? 0),
-      equity: acc.equity + (p.bs?.equity ?? 0),
-    }),
-    { totalAssets: 0, totalLiabilities: 0, equity: 0 },
-  );
+  const latestBs = [...bsDocs].sort((a, b) => {
+    const aTime = (a.asOf ?? a.periodEnd ?? a.periodStart)?.getTime() ?? (a.year ? Date.UTC(a.year, 11, 31) : 0);
+    const bTime = (b.asOf ?? b.periodEnd ?? b.periodStart)?.getTime() ?? (b.year ? Date.UTC(b.year, 11, 31) : 0);
+    return bTime - aTime || b.docId - a.docId;
+  })[0] ?? null;
+  const bsTotals = {
+    totalAssets: latestBs?.bs?.totalAssets ?? 0,
+    totalLiabilities: latestBs?.bs?.totalLiabilities ?? 0,
+    equity: latestBs?.bs?.equity ?? 0,
+  };
 
   const cfTotals = cfDocs.reduce(
     (acc, p) => ({

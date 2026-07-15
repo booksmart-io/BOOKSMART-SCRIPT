@@ -81,7 +81,7 @@ Rules:
 
 router.post("/clean-pl-transactions", requireAuth, async (req, res) => {
   const token = req.headers.authorization!.slice(7);
-  const { dryRun = true } = req.body as { dryRun?: boolean };
+  const { dryRun = true, org_id } = req.body as { dryRun?: boolean; org_id?: number };
 
   const apiKey = process.env.OPENROUTER_API_KEY?.trim();
   if (!apiKey) {
@@ -90,7 +90,11 @@ router.post("/clean-pl-transactions", requireAuth, async (req, res) => {
   }
 
   try {
-    const orgRes = await sbFetch("organizations?select=id&limit=1", token);
+    const requestedOrgId = Number(org_id);
+    const orgPath = Number.isFinite(requestedOrgId) && requestedOrgId > 0
+      ? `organizations?id=eq.${requestedOrgId}&select=id&limit=1`
+      : "organizations?select=id&order=id.asc&limit=1";
+    const orgRes = await sbFetch(orgPath, token);
     const orgs = (await orgRes.json()) as Array<{ id: number }>;
     if (!orgs?.length) {
       res.status(404).json({ error: "no_organization" });

@@ -7,11 +7,14 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Slider } from "@/components/ui/slider";
 import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from "@/components/ui/select";
+import {
   Loader2, Gavel, MapPin, Globe2, Map, Wallet, Briefcase, TrendingUp, Users,
   Calculator, Wrench, Car, Route, Truck, Home, Building2, Laptop, Building,
   Handshake, HeartPulse, PiggyBank, GraduationCap, Target, Landmark, ShieldCheck,
   Ruler, Lightbulb, Utensils, DollarSign, CreditCard, Receipt, Trophy, Sparkles,
-  Check, ChevronLeft, Plus,
+  Check, ChevronLeft, Plus, Package, Flag, ClipboardList,
 } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/lib/supabase";
@@ -48,6 +51,13 @@ const FAMILY_EDUCATION = ["Paying Student Loans","Child in Daycare","K-12 Privat
 const TAX_GOALS = ["Immediate Cash Flow (Pay less now)","Long-term Wealth (Retirement focus)","Audit Protection (Play it safe)","Business Growth (Reinvestment focus)"];
 const RETIREMENT_CURRENT = ["No Plan","Maxing out 401k","Backdoor Roth IRA","Solo 401k/SEP IRA","Pension/Defined Benefit"];
 const AUDIT_APPETITE = ["Conservative (Low Risk)","Moderate (Standard)","Aggressive (Maximized Savings)"];
+const US_STATES = [
+  "Alabama","Alaska","Arizona","Arkansas","California","Colorado","Connecticut","Delaware","Florida","Georgia",
+  "Hawaii","Idaho","Illinois","Indiana","Iowa","Kansas","Kentucky","Louisiana","Maine","Maryland",
+  "Massachusetts","Michigan","Minnesota","Mississippi","Missouri","Montana","Nebraska","Nevada","New Hampshire","New Jersey",
+  "New Mexico","New York","North Carolina","North Dakota","Ohio","Oklahoma","Oregon","Pennsylvania","Rhode Island","South Carolina",
+  "South Dakota","Tennessee","Texas","Utah","Vermont","Virginia","Washington","West Virginia","Wisconsin","Wyoming",
+];
 
 const DEBT_CATEGORIES: Array<{ key: string; label: string }> = [
   { key: "credit_cards", label: "Credit Cards" },
@@ -79,6 +89,7 @@ type SurveyData = {
   residency_status: string | null;
   multi_state_activity: boolean | null;
   primary_income_types: string[] | null;
+  industry: string | null;
   industry_niche: string | null;
   passive_income: string[] | null;
   team_structure: string[] | null;
@@ -104,7 +115,7 @@ type SurveyData = {
   business_utility_percent: number | null;
   business_meal_percent: number | null;
   equipment_cost: number | null;
-  debts: Record<string, number> | null;
+  debts: Record<string, unknown> | null;
 };
 
 interface BusinessSurveyDialogProps {
@@ -129,10 +140,10 @@ function ChoicePill({
       type="button"
       onClick={onToggle}
       className={cn(
-        "flex items-center gap-1.5 px-3 py-2 rounded-full text-xs font-medium border transition-all",
+        "flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold border transition-all",
         selected
-          ? "bg-primary text-primary-foreground border-primary"
-          : "bg-muted text-muted-foreground border-border hover:border-primary/50"
+          ? "bg-[#2F8A24] text-white border-[#60C14F] shadow-[0_0_18px_rgba(96,193,79,0.18)]"
+          : "bg-[#07182c] text-[#D7E6FF] border-[#1c3c66] hover:border-[#60C14F]/70"
       )}
     >
       {selected && <Check className="h-3 w-3" />}
@@ -155,21 +166,21 @@ function OptionRow({
       type="button"
       onClick={onToggle}
       className={cn(
-        "w-full flex items-center gap-3 rounded-xl border px-4 py-3 text-left transition-all",
+        "w-full flex items-center gap-3 rounded-lg border px-4 py-3 text-left transition-all",
         selected
-          ? "border-emerald-500 bg-emerald-500/10"
-          : "border-border/60 hover:border-border"
+          ? "border-[#60C14F] bg-[#2F8A24] shadow-[0_0_18px_rgba(96,193,79,0.18)]"
+          : "border-[#1c3c66] bg-[#07182c] hover:border-[#60C14F]/70"
       )}
     >
       <span
         className={cn(
-          "h-5 w-5 rounded-full border flex items-center justify-center shrink-0",
-          selected ? "bg-emerald-500 border-emerald-500" : "border-muted-foreground/40"
+          "h-4 w-4 rounded border flex items-center justify-center shrink-0",
+          selected ? "bg-[#66C94D] border-[#66C94D]" : "border-[#55759f]"
         )}
       >
         {selected && <Check className="h-3 w-3 text-white" />}
       </span>
-      <span className={cn("text-sm font-medium", selected ? "text-emerald-400" : "text-foreground")}>
+      <span className={cn("text-sm font-medium", selected ? "text-white" : "text-[#EAF2FF]")}>
         {label}
       </span>
     </button>
@@ -237,7 +248,7 @@ function PercentSlider({
   return (
     <div>
       <div className="flex justify-center mb-3">
-        <span className="text-3xl font-bold text-emerald-400">{Math.round(value)}%</span>
+        <span className="text-5xl font-bold text-[#78C94D]">{Math.round(value)}%</span>
       </div>
       <Slider
         value={[value]}
@@ -245,13 +256,104 @@ function PercentSlider({
         max={100}
         step={1}
         onValueChange={([v]) => onChange(v)}
-        className="[&_[data-radix-slider-range]]:bg-emerald-500 [&_[data-radix-slider-track]]:bg-emerald-500/15 [&_[data-radix-slider-thumb]]:border-emerald-500 [&_[data-radix-slider-thumb]]:bg-emerald-400"
+        className="[&_[data-radix-slider-range]]:bg-[#78C94D] [&_[data-radix-slider-track]]:bg-[#1c3c66] [&_[data-radix-slider-thumb]]:border-[#78C94D] [&_[data-radix-slider-thumb]]:bg-[#78C94D]"
       />
       <div className="flex justify-between mt-1.5">
-        <span className="text-[11px] text-muted-foreground">0%</span>
-        <span className="text-[11px] text-muted-foreground">100%</span>
+        <span className="text-[11px] text-[#B8C9E6]">0%</span>
+        <span className="text-[11px] text-[#B8C9E6]">100%</span>
       </div>
     </div>
+  );
+}
+
+function SurveyQuestionCard({
+  icon: Icon,
+  title,
+  description,
+  example,
+  children,
+}: {
+  icon: React.ElementType;
+  title: string;
+  description: string;
+  example?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="rounded-2xl border border-white/85 bg-[#0d2a4f] p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]">
+      <div className="flex items-start gap-3">
+        <div className="h-12 w-12 rounded-2xl bg-[#FFC72B] text-white flex items-center justify-center shrink-0">
+          <Icon className="h-6 w-6" />
+        </div>
+        <div className="min-w-0">
+          <h4 className="text-[17px] font-bold leading-tight text-white">{title}</h4>
+          {description && <p className="mt-1 text-[12px] font-semibold text-white">{description}</p>}
+        </div>
+      </div>
+      {example && (
+        <div className="mt-4 flex items-center gap-2 rounded-xl bg-[#9a8b41] px-3 py-2 text-[12px] text-[#06172b]">
+          <Lightbulb className="h-4 w-4 shrink-0" />
+          <span>{example}</span>
+        </div>
+      )}
+      <div className="mt-4">{children}</div>
+    </div>
+  );
+}
+
+function InlineChoices({
+  options,
+  selected,
+  onChange,
+}: {
+  options: string[];
+  selected: string | null;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <div className="flex flex-wrap gap-2">
+      {options.map((option) => (
+        <button
+          key={option}
+          type="button"
+          onClick={() => onChange(option)}
+          className={cn(
+            "rounded-full border px-4 py-2 text-sm font-bold transition-all",
+            selected === option
+              ? "border-[#FFC72B] bg-[#FFC72B] text-white"
+              : "border-white/90 bg-transparent text-white hover:border-[#FFC72B]"
+          )}
+        >
+          {selected === option && <Check className="mr-1 inline h-4 w-4" />}
+          {option}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function CompactSelect({
+  value,
+  placeholder,
+  options,
+  onChange,
+}: {
+  value: string;
+  placeholder: string;
+  options: string[];
+  onChange: (value: string) => void;
+}) {
+  return (
+    <Select value={value} onValueChange={onChange}>
+      <SelectTrigger className="h-11 border-[#274a77] bg-[#07182c] text-white">
+        <SelectValue placeholder={placeholder} />
+      </SelectTrigger>
+      <SelectContent className="max-h-72">
+        {options.map((option) => (
+          <SelectItem key={option} value={option}>{option}</SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
   );
 }
 
@@ -307,6 +409,16 @@ export default function BusinessSurveyDialog({ orgId, open, onOpenChange, initia
   const [dedicatedOfficeArea, setDedicatedOfficeArea] = useState("");
   const [utilityPct, setUtilityPct] = useState(100);
   const [mealPct, setMealPct] = useState(100);
+  const [homeBusinessPct, setHomeBusinessPct] = useState(10);
+  const [phonePct, setPhonePct] = useState(50);
+  const [internetPct, setInternetPct] = useState(50);
+  const [hasReceivables, setHasReceivables] = useState<boolean | null>(null);
+  const [hasInventory, setHasInventory] = useState<boolean | null>(null);
+  const [ownerContributed, setOwnerContributed] = useState<boolean | null>(null);
+  const [ownerContributionAmount, setOwnerContributionAmount] = useState("");
+  const [ownerContributionDate, setOwnerContributionDate] = useState("");
+  const [ownerDraws, setOwnerDraws] = useState<boolean | null>(null);
+  const [additionalCategories, setAdditionalCategories] = useState<string[]>([]);
 
   // Equipment & Debt
   const [equipmentCost, setEquipmentCost] = useState("0");
@@ -332,11 +444,12 @@ export default function BusinessSurveyDialog({ orgId, open, onOpenChange, initia
           "total_house_area_sqft","dedicated_office_area_sqft",
           "business_vehicle_percent","business_utility_percent","business_meal_percent",
           "equipment_cost","debts",
+          "industry",
         ].join(","))
         .eq("id", orgId!)
         .single();
       if (error) throw error;
-      return data as SurveyData;
+      return data as unknown as SurveyData;
     },
   });
 
@@ -369,6 +482,9 @@ export default function BusinessSurveyDialog({ orgId, open, onOpenChange, initia
     setAuditAppetite(orgData.audit_appetite);
     setTotalHouseArea(orgData.total_house_area_sqft?.toString() ?? "");
     setDedicatedOfficeArea(orgData.dedicated_office_area_sqft?.toString() ?? "");
+    if (orgData.total_house_area_sqft && orgData.dedicated_office_area_sqft) {
+      setHomeBusinessPct(Math.round((orgData.dedicated_office_area_sqft / orgData.total_house_area_sqft) * 100));
+    }
     setVehiclePct(orgData.business_vehicle_percent ?? 100);
     setUtilityPct(orgData.business_utility_percent ?? 100);
     setMealPct(orgData.business_meal_percent ?? 100);
@@ -379,6 +495,15 @@ export default function BusinessSurveyDialog({ orgId, open, onOpenChange, initia
       strDebts[k] = rawDebts[k]?.toString() ?? "";
     }
     setDebts(strDebts);
+    setPhonePct(typeof rawDebts.phone_business_percent === "number" ? rawDebts.phone_business_percent : 50);
+    setInternetPct(typeof rawDebts.internet_business_percent === "number" ? rawDebts.internet_business_percent : 50);
+    setHasReceivables(typeof rawDebts.has_receivables === "boolean" ? rawDebts.has_receivables : null);
+    setHasInventory(typeof rawDebts.has_inventory === "boolean" ? rawDebts.has_inventory : null);
+    setOwnerContributed(typeof rawDebts.owner_contributed === "boolean" ? rawDebts.owner_contributed : null);
+    setOwnerContributionAmount(typeof rawDebts.owner_contribution_amount === "number" ? String(rawDebts.owner_contribution_amount) : "");
+    setOwnerContributionDate(typeof rawDebts.owner_contribution_date === "string" ? rawDebts.owner_contribution_date : "");
+    setOwnerDraws(typeof rawDebts.owner_draws === "boolean" ? rawDebts.owner_draws : null);
+    setAdditionalCategories(Array.isArray(rawDebts.additional_balance_sheet_categories) ? rawDebts.additional_balance_sheet_categories as string[] : []);
   }, [orgData]);
 
   // Reset step when dialog opens
@@ -388,10 +513,12 @@ export default function BusinessSurveyDialog({ orgId, open, onOpenChange, initia
 
   // ─── One-question-per-screen step definitions ──────────────────────────────
   type StepDef = {
+    part: "business" | "balance";
     icon: React.ElementType;
     image?: string;
     title: string;
     description: string;
+    subtitle?: string;
     example?: string;
     visual?: () => React.ReactNode;
     render: () => React.ReactNode;
@@ -399,297 +526,418 @@ export default function BusinessSurveyDialog({ orgId, open, onOpenChange, initia
     skip?: () => boolean;
   };
 
-  const STEPS: StepDef[] = useMemo(() => [
+  const debtExtras = (extra: Record<string, unknown> = {}) => {
+    const numericDebts: Record<string, number> = {};
+    for (const { key } of DEBT_CATEGORIES) {
+      const val = parseFloat(debts[key] ?? "");
+      if (!isNaN(val) && val > 0) numericDebts[key] = val;
+    }
+    return { debts: { ...(orgData?.debts ?? {}), ...numericDebts, ...extra } };
+  };
+
+  const selectedDebtKeys = DEBT_CATEGORIES.filter(({ key }) => (debts[key] ?? "") !== "" || debts[`__${key}_selected`] === "1");
+  const ADDITIONAL_CATEGORIES = ["Accounts Payable", "Goodwill", "Retained Earnings", "Notes Payable", "Investments", "Security Deposits", "Prepaid Expenses", "Accrued Expenses", "Deferred Revenue", "Other Assets / Liabilities"];
+
+  const BUSINESS_STEPS: StepDef[] = useMemo(() => [
     {
+      part: "business",
       icon: Gavel,
-      title: "How do you file your personal tax return?",
-      description: "This helps match your business income to the right filing context.",
-      example: "Example: Married Filing Jointly if you file one return with your spouse.",
-      render: () => <PillGroup options={FILING_STATUS} selected={filingStatus} multi={false} onChange={(v) => setFilingStatus(v as string)} />,
-      payload: () => ({ filing_status: filingStatus || null }),
-    },
-    {
-      icon: MapPin,
-      title: "What is your primary business state?",
-      description: "Use the state where the business mainly operates or files taxes.",
-      example: "Example: California if most revenue and operations are there.",
+      title: "Legal and Tax Identity",
+      description: "Start with the basics that shape your filing strategy.",
       render: () => (
-        <Input value={primaryState} onChange={(e) => setPrimaryState(e.target.value)} placeholder="e.g. California, Texas" className="bg-background" />
+        <div className="space-y-4">
+          <SurveyQuestionCard
+            icon={Briefcase}
+            title="How do you file your personal tax return?"
+            description="This helps match your business income to the right filing context."
+            example="Example: Married Filing Jointly if you file one return with your spouse."
+          >
+            <InlineChoices options={FILING_STATUS} selected={filingStatus} onChange={setFilingStatus} />
+          </SurveyQuestionCard>
+          <SurveyQuestionCard
+            icon={MapPin}
+            title="What is your primary business state?"
+            description="Use the state where the business mainly operates or files taxes."
+            example="Example: California if most revenue and operations are there."
+          >
+            <CompactSelect value={primaryState} placeholder="Select state" options={US_STATES} onChange={setPrimaryState} />
+          </SurveyQuestionCard>
+          <SurveyQuestionCard
+            icon={Home}
+            title="What is your U.S. residency status?"
+            description="Residency affects which income and deductions apply."
+            example="Example: Resident Alien if you meet the IRS substantial presence test."
+          >
+            <InlineChoices options={RESIDENCY_STATUS} selected={residencyStatus} onChange={setResidencyStatus} />
+          </SurveyQuestionCard>
+          <SurveyQuestionCard
+            icon={Globe2}
+            title="Do you operate, work, or own property in multiple states?"
+            description="Multi-state activity can create extra filing and deduction rules."
+            example="Example: You live in Texas but earn client revenue in California."
+          >
+            <div className="flex gap-3">
+              <Button type="button" variant={multiState === true ? "default" : "outline"} onClick={() => setMultiState(true)} className="min-w-20">Yes</Button>
+              <Button type="button" variant={multiState === false ? "default" : "outline"} onClick={() => setMultiState(false)} className="min-w-20">No</Button>
+            </div>
+          </SurveyQuestionCard>
+        </div>
       ),
-      payload: () => ({ primary_state: primaryState.trim() || null }),
+      payload: () => ({
+        filing_status: filingStatus,
+        primary_state: primaryState || null,
+        residency_status: residencyStatus,
+        multi_state_activity: multiState,
+      }),
     },
     {
-      icon: Globe2,
-      title: "What is your U.S. residency status?",
-      description: "Residency affects which income and deductions apply.",
-      example: "Example: Resident Alien if you meet the IRS substantial presence test.",
-      render: () => <PillGroup options={RESIDENCY_STATUS} selected={residencyStatus} multi={false} onChange={(v) => setResidencyStatus(v as string)} />,
-      payload: () => ({ residency_status: residencyStatus || null }),
-    },
-    {
-      icon: Map,
-      title: "Do you operate, work, or own property in multiple states?",
-      description: "Multi-state activity can create extra filing and deduction rules.",
-      example: "Example: You live in Texas but earn client revenue in California.",
-      render: () => <YesNoToggle value={multiState} onChange={setMultiState} />,
-      payload: () => ({ multi_state_activity: multiState }),
-    },
-    {
+      part: "business",
       icon: Wallet,
-      image: walletIcon,
-      title: "Which income types describe you?",
-      description: "Select every source that materially contributes to your income.",
-      example: "Example: 1099 Contractor plus Single-Member LLC.",
-      render: () => <PillGroup options={INCOME_TYPES} selected={incomeTypes} multi={true} onChange={(v) => setIncomeTypes(v as string[])} />,
-      payload: () => ({ primary_income_types: incomeTypes.length ? incomeTypes : null }),
+      title: "Income Profile",
+      description: "Show how money enters the business so we can spot entity-level opportunities.",
+      render: () => (
+        <div className="space-y-4">
+          <SurveyQuestionCard icon={Wallet} title="What income types apply to you?" description="Select every source that matches your business or personal filing mix.">
+            <PillGroup options={INCOME_TYPES} selected={incomeTypes} multi onChange={(v) => setIncomeTypes(v as string[])} />
+          </SurveyQuestionCard>
+          <SurveyQuestionCard icon={TrendingUp} title="Do you have passive or investment income?" description="Select any income that may need separate tax treatment.">
+            <PillGroup options={PASSIVE_INCOME} selected={passiveIncome} multi onChange={(v) => setPassiveIncome(v as string[])} />
+          </SurveyQuestionCard>
+        </div>
+      ),
+      payload: () => ({ primary_income_types: incomeTypes, industry_niche: industryNiche || orgData?.industry || null, passive_income: passiveIncome }),
     },
     {
-      icon: Briefcase,
-      title: "What industry or niche best describes the business?",
-      description: "Specific niches help us tailor deduction examples and benchmarks.",
-      example: "Example: Mobile detailing, bookkeeping, SaaS consulting, or real estate.",
-      render: () => <Input value={industryNiche} onChange={(e) => setIndustryNiche(e.target.value)} placeholder="e.g. Bookkeeping services" className="bg-background" />,
-      payload: () => ({ industry_niche: industryNiche.trim() || null }),
-    },
-    {
-      icon: TrendingUp,
-      title: "Do you have any passive or investment income?",
-      description: "Passive income is taxed differently than active business income.",
-      example: "Example: Dividend Income if you hold a brokerage account.",
-      render: () => <PillGroup options={PASSIVE_INCOME} selected={passiveIncome} multi={true} onChange={(v) => setPassiveIncome(v as string[])} />,
-      payload: () => ({ passive_income: passiveIncome.length ? passiveIncome : null }),
-    },
-    {
+      part: "business",
       icon: Users,
-      title: "How is your team structured?",
-      description: "Payroll and family-employment setups unlock different deductions.",
-      example: "Example: Solo Operator if you don't pay anyone else yet.",
-      render: () => <PillGroup options={TEAM_STRUCTURE} selected={teamStructure} multi={true} onChange={(v) => setTeamStructure(v as string[])} />,
-      payload: () => ({ team_structure: teamStructure.length ? teamStructure : null }),
+      title: "People and Accounting",
+      description: "Document the people and accounting setup behind the business.",
+      render: () => (
+        <div className="space-y-4">
+          <SurveyQuestionCard icon={Users} title="Who helps run the business?" description="This affects payroll, contractor, and family employment strategies.">
+            <PillGroup options={TEAM_STRUCTURE} selected={teamStructure} multi onChange={(v) => setTeamStructure(v as string[])} />
+          </SurveyQuestionCard>
+          <SurveyQuestionCard icon={Calculator} title="What accounting method do you use?" description="Most small businesses use cash basis unless they elected accrual.">
+            <InlineChoices options={ACCOUNTING_METHOD} selected={accountingMethod} onChange={setAccountingMethod} />
+          </SurveyQuestionCard>
+          <SurveyQuestionCard icon={Wrench} title="Did you buy major tools, equipment, or machinery?" description="Major assets can unlock depreciation or Section 179 planning.">
+            <div className="flex gap-3">
+              <Button type="button" variant={majorEquipment === true ? "default" : "outline"} onClick={() => setMajorEquipment(true)} className="min-w-20">Yes</Button>
+              <Button type="button" variant={majorEquipment === false ? "default" : "outline"} onClick={() => setMajorEquipment(false)} className="min-w-20">No</Button>
+            </div>
+          </SurveyQuestionCard>
+        </div>
+      ),
+      payload: () => ({ team_structure: teamStructure, accounting_method: accountingMethod, major_equipment: majorEquipment }),
     },
     {
-      icon: Calculator,
-      title: "What accounting method do you use?",
-      description: "This determines when income and expenses are recognized.",
-      example: "Example: Cash Basis if you record income when it's received.",
-      render: () => <PillGroup options={ACCOUNTING_METHOD} selected={accountingMethod} multi={false} onChange={(v) => setAccountingMethod(v as string)} />,
-      payload: () => ({ accounting_method: accountingMethod || null }),
+      part: "business",
+      icon: Car,
+      title: "Vehicle Use",
+      description: "Capture vehicle ownership and deduction method.",
+      render: () => (
+        <div className="space-y-4">
+          <SurveyQuestionCard icon={Car} title="How is your business vehicle owned or leased?" description="Example: Company Owned if the vehicle is titled to the business.">
+            <PillGroup options={VEHICLE_OWNERSHIP} selected={vehicleOwnership} multi={false} onChange={(v) => setVehicleOwnership(v as string)} />
+          </SurveyQuestionCard>
+          <SurveyQuestionCard icon={Route} title="How do you track vehicle deductions?" description="Example: Standard Mileage Rate if you track business miles.">
+            <PillGroup options={VEHICLE_USAGE} selected={vehicleUsage} multi={false} onChange={(v) => setVehicleUsage(v as string)} />
+          </SurveyQuestionCard>
+          <SurveyQuestionCard icon={Truck} title="Is the vehicle over 6,000 lbs?" description="Heavy vehicles can qualify for different depreciation rules.">
+            <div className="flex gap-3">
+              <Button type="button" variant={vehicleOver6k === true ? "default" : "outline"} onClick={() => setVehicleOver6k(true)} className="min-w-20">Yes</Button>
+              <Button type="button" variant={vehicleOver6k === false ? "default" : "outline"} onClick={() => setVehicleOver6k(false)} className="min-w-20">No</Button>
+            </div>
+          </SurveyQuestionCard>
+        </div>
+      ),
+      payload: () => ({ vehicle_ownership: vehicleOwnership, vehicle_usage: vehicleUsage, vehicle_over_6k_lbs: vehicleOver6k }),
     },
     {
+      part: "business",
+      icon: Home,
+      title: "Workspace and Technology",
+      description: "Capture your office setup and technology that supports the business.",
+      render: () => (
+        <div className="space-y-4">
+          <SurveyQuestionCard icon={Home} title="What type of workspace do you use?" description="Example: Dedicated Room if the room is used only for business.">
+            <PillGroup options={HOME_OFFICE_TYPE} selected={homeOfficeType} multi={false} onChange={(v) => setHomeOfficeType(v as string)} />
+          </SurveyQuestionCard>
+          <SurveyQuestionCard icon={Building} title="What is your home status?" description="This helps estimate home-office treatment correctly.">
+            <PillGroup options={HOME_STATUS} selected={homeStatus} multi={false} onChange={(v) => setHomeStatus(v as string)} />
+          </SurveyQuestionCard>
+          <SurveyQuestionCard icon={Laptop} title="Which technology costs support your business?" description="Select all that apply.">
+            <PillGroup options={TECH_USAGE} selected={techUsage} multi onChange={(v) => setTechUsage(v as string[])} />
+          </SurveyQuestionCard>
+        </div>
+      ),
+      payload: () => ({ home_office_type: homeOfficeType, home_status: homeStatus, tech_usage: techUsage }),
+    },
+    {
+      part: "business",
+      icon: Landmark,
+      title: "Real Estate",
+      description: "Identify property connected to your household or business.",
+      render: () => (
+        <div className="space-y-4">
+          <SurveyQuestionCard icon={Building2} title="Which property types apply to you?" description="Select every property type connected to your household or business.">
+            <PillGroup options={REAL_ESTATE_INTERESTS} selected={realEstate} multi onChange={(v) => setRealEstate(v as string[])} />
+          </SurveyQuestionCard>
+          <SurveyQuestionCard icon={Handshake} title="Do you host business meetings or corporate minutes at home?" description="Example: Renting your home to your business for board meetings.">
+            <div className="flex gap-3">
+              <Button type="button" variant={hostsMeetings === true ? "default" : "outline"} onClick={() => setHostsMeetings(true)} className="min-w-20">Yes</Button>
+              <Button type="button" variant={hostsMeetings === false ? "default" : "outline"} onClick={() => setHostsMeetings(false)} className="min-w-20">No</Button>
+            </div>
+          </SurveyQuestionCard>
+        </div>
+      ),
+      payload: () => ({ real_estate_interests: realEstate, hosts_business_meetings: hostsMeetings }),
+    },
+    {
+      part: "business",
+      icon: HeartPulse,
+      title: "Health and Family",
+      description: "Find healthcare, family, and education planning opportunities.",
+      render: () => (
+        <div className="space-y-4">
+          <SurveyQuestionCard icon={HeartPulse} title="What health insurance do you use?" description="This can affect self-employed health deductions.">
+            <PillGroup options={HEALTH_INSURANCE} selected={healthInsurance} multi={false} onChange={(v) => setHealthInsurance(v as string)} />
+          </SurveyQuestionCard>
+          <SurveyQuestionCard icon={PiggyBank} title="Do you use any health savings accounts?" description="Select every account type that applies.">
+            <PillGroup options={HEALTH_SAVINGS} selected={healthSavings} multi onChange={(v) => setHealthSavings(v as string[])} />
+          </SurveyQuestionCard>
+          <SurveyQuestionCard icon={GraduationCap} title="Any education or family support costs?" description="These may affect tax credits or planning.">
+            <PillGroup options={FAMILY_EDUCATION} selected={familyEducation} multi onChange={(v) => setFamilyEducation(v as string[])} />
+          </SurveyQuestionCard>
+        </div>
+      ),
+      payload: () => ({ health_insurance: healthInsurance, health_savings: healthSavings, family_education: familyEducation }),
+    },
+    {
+      part: "business",
+      icon: Target,
+      title: "Tax Strategy Goals",
+      description: "Tell the AI how aggressive or conservative the plan should be.",
+      render: () => (
+        <div className="space-y-4">
+          <SurveyQuestionCard icon={Target} title="What is your main tax goal?" description="Choose the planning style you want BookSmart to prioritize.">
+            <PillGroup options={TAX_GOALS} selected={taxGoal} multi={false} onChange={(v) => setTaxGoal(v as string)} />
+          </SurveyQuestionCard>
+          <SurveyQuestionCard icon={PiggyBank} title="What retirement setup do you currently have?" description="Retirement plans can create large tax strategy opportunities.">
+            <PillGroup options={RETIREMENT_CURRENT} selected={retirementCurrent} multi onChange={(v) => setRetirementCurrent(v as string[])} />
+          </SurveyQuestionCard>
+          <SurveyQuestionCard icon={ShieldCheck} title="What is your audit-risk appetite?" description="This controls how conservative the generated strategy should be.">
+            <PillGroup options={AUDIT_APPETITE} selected={auditAppetite} multi={false} onChange={(v) => setAuditAppetite(v as string)} />
+          </SurveyQuestionCard>
+        </div>
+      ),
+      payload: () => ({ tax_goal: taxGoal, retirement_current: retirementCurrent, audit_appetite: auditAppetite }),
+    },
+    {
+      part: "business",
+      icon: Ruler,
+      title: "Deduction Percentages",
+      description: "Use practical percentages to estimate mixed personal and business use.",
+      render: () => (
+        <div className="space-y-4">
+          <SurveyQuestionCard icon={Home} title="What percentage of your home is business use?" description="This estimates the business-use percentage of your home.">
+            <PercentSlider value={homeBusinessPct} onChange={setHomeBusinessPct} />
+          </SurveyQuestionCard>
+          <SurveyQuestionCard icon={Car} title="What percentage of vehicle use is business related?" description="Estimate the business share based on mileage or usage logs.">
+            <PercentSlider value={vehiclePct} onChange={setVehiclePct} />
+          </SurveyQuestionCard>
+          <SurveyQuestionCard icon={Lightbulb} title="What percentage of utilities support the business?" description="Estimate the household utility share used for business.">
+            <PercentSlider value={utilityPct} onChange={setUtilityPct} />
+          </SurveyQuestionCard>
+        </div>
+      ),
+      payload: () => {
+        const totalArea = parseFloat(totalHouseArea) || 0;
+        return {
+          dedicated_office_area_sqft: totalArea > 0 ? Math.round(totalArea * (homeBusinessPct / 100)) : null,
+          business_vehicle_percent: Math.round(vehiclePct),
+          business_utility_percent: Math.round(utilityPct),
+        };
+      },
+    },
+    {
+      part: "business",
+      icon: ClipboardList,
+      title: "Equipment and Debts",
+      description: "Finish with major equipment costs and business liabilities.",
+      render: () => (
+        <div className="space-y-4">
+          <SurveyQuestionCard icon={DollarSign} title="How much did you spend on business equipment this year?" description="Enter the total cost of equipment, tools, hardware, or machinery bought for business use.">
+            <div className="relative">
+              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-[#D7E6FF]">$</span>
+              <Input value={equipmentCost} onChange={(e) => setEquipmentCost(e.target.value)} type="number" min="0" className="h-11 pl-8" />
+            </div>
+          </SurveyQuestionCard>
+          <SurveyQuestionCard icon={CreditCard} title="Does your business owe money to anyone?" description="Example: $12,000 SBA loan and $3,500 business credit card balance.">
+            <div className="grid grid-cols-1 gap-2">
+              {DEBT_CATEGORIES.map(({ key, label }) => (
+                <ChoicePill
+                  key={key}
+                  label={label}
+                  selected={(debts[key] ?? "") !== "" || debts[`__${key}_selected`] === "1"}
+                  onToggle={() => setDebts((d) => {
+                    const has = (d[key] ?? "") !== "" || d[`__${key}_selected`] === "1";
+                    const next = { ...d };
+                    if (has) delete next[`__${key}_selected`];
+                    else next[`__${key}_selected`] = "1";
+                    return next;
+                  })}
+                />
+              ))}
+            </div>
+          </SurveyQuestionCard>
+        </div>
+      ),
+      payload: () => ({ equipment_cost: parseFloat(equipmentCost) || 0, ...debtExtras() }),
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  ], [
+    filingStatus, primaryState, residencyStatus, multiState, incomeTypes, industryNiche,
+    passiveIncome, teamStructure, accountingMethod, majorEquipment, vehicleOwnership,
+    vehicleUsage, vehicleOver6k, homeOfficeType, homeStatus, techUsage, realEstate,
+    hostsMeetings, healthInsurance, healthSavings, familyEducation, taxGoal,
+    retirementCurrent, auditAppetite, homeBusinessPct, vehiclePct, utilityPct,
+    totalHouseArea, equipmentCost, debts,
+  ]);
+
+  const BALANCE_STEPS: StepDef[] = useMemo(() => [
+    {
+      part: "balance",
+      icon: Home,
+      title: "Where do you primarily work from?",
+      description: "",
+      visual: () => (
+        <div className="flex items-center justify-center gap-3">
+          <img src={houseIcon} alt="" className="h-16 w-16 object-contain" />
+          <Plus className="h-4 w-4 text-white" />
+          <img src={buildingIcon} alt="" className="h-16 w-16 object-contain" />
+          <div className="flex flex-col items-center gap-1">
+            <div className="h-10 w-10 rounded bg-[#1d2d45] flex items-center justify-center">
+              <Plus className="h-6 w-6 text-[#FFC72B]" />
+            </div>
+            <span className="text-xs text-white">both</span>
+          </div>
+        </div>
+      ),
+      render: () => <PillGroup options={["My Home", "Commercial Office", "Both (Home & Office)"]} selected={homeOfficeType} multi={false} onChange={(v) => setHomeOfficeType(v as string)} />,
+      payload: () => ({ home_office_type: homeOfficeType || null }),
+    },
+    {
+      part: "balance",
+      icon: Ruler,
+      image: houseIcon,
+      title: "What is the total square footage of your home?",
+      description: "",
+      example: "Example: If your home is 2,000 sq ft, enter 2,000.",
+      render: () => (
+        <div className="relative">
+          <Input value={totalHouseArea} onChange={(e) => setTotalHouseArea(e.target.value)} type="number" min="0" className="h-12 pr-14 text-lg" />
+          <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-[#D7E6FF]">sq ft</span>
+        </div>
+      ),
+      payload: () => ({ total_house_area_sqft: parseFloat(totalHouseArea) || null }),
+    },
+    {
+      part: "balance",
+      icon: Home,
+      title: "What percentage of your home is used regularly for business?",
+      description: "Only include areas used regularly for business.",
+      render: () => <PercentSlider value={homeBusinessPct} onChange={setHomeBusinessPct} />,
+      payload: () => {
+        const totalArea = parseFloat(totalHouseArea) || 0;
+        return { dedicated_office_area_sqft: totalArea > 0 ? Math.round(totalArea * (homeBusinessPct / 100)) : null };
+      },
+    },
+    {
+      part: "balance",
+      icon: Car,
+      image: carIcon,
+      title: "How much of your vehicle use is for business?",
+      description: "Include trips to customers, job sites, suppliers, and business meetings.",
+      render: () => <PercentSlider value={vehiclePct} onChange={setVehiclePct} />,
+      payload: () => ({ business_vehicle_percent: Math.round(vehiclePct) }),
+    },
+    {
+      part: "balance",
+      icon: Laptop,
+      image: phoneIcon,
+      title: "What percentage of your phone service is used for business?",
+      description: "Include calls, texts, email, scheduling, and business apps.",
+      render: () => <PercentSlider value={phonePct} onChange={setPhonePct} />,
+      payload: () => debtExtras({ phone_business_percent: Math.round(phonePct) }),
+    },
+    {
+      part: "balance",
+      icon: Globe2,
+      image: wifiIcon,
+      title: "What percentage of your internet service is used for business?",
+      description: "Include email, bookkeeping, online meetings, research, and other business activities.",
+      render: () => <PercentSlider value={internetPct} onChange={setInternetPct} />,
+      payload: () => debtExtras({ internet_business_percent: Math.round(internetPct) }),
+    },
+    {
+      part: "balance",
+      icon: Lightbulb,
+      image: lightbulbIcon,
+      title: "What percentage of your household utilities support your business activities?",
+      description: "Includes electricity, water, gas, trash and other household utilities.",
+      render: () => <PercentSlider value={utilityPct} onChange={setUtilityPct} />,
+      payload: () => ({ business_utility_percent: Math.round(utilityPct) }),
+    },
+    {
+      part: "balance",
       icon: Wrench,
       image: equipmentIcon,
       title: "Do you own any business equipment?",
-      description: "Examples: Computers, machinery, tools, furniture.",
+      description: "Examples: Computers, machinery, tools, furniture, etc.",
       render: () => <YesNoToggle value={majorEquipment} onChange={setMajorEquipment} />,
       payload: () => ({ major_equipment: majorEquipment }),
     },
     {
+      part: "balance",
       icon: DollarSign,
+      image: equipmentIcon,
       title: "What is the estimated value of your equipment?",
       description: "Enter the total current value of all equipment.",
-      example: "Upload receipt/proof optional.",
       render: () => (
-        <div className="relative max-w-xs">
-          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm">$</span>
-          <Input value={equipmentCost} onChange={(e) => setEquipmentCost(e.target.value)} type="number" min="0" className="bg-background pl-7" />
+        <div className="relative">
+          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-[#D7E6FF]">$</span>
+          <Input value={equipmentCost} onChange={(e) => setEquipmentCost(e.target.value)} type="number" min="0" className="h-12 pl-8 text-lg" />
         </div>
       ),
       payload: () => ({ equipment_cost: parseFloat(equipmentCost) || 0 }),
-      skip: () => majorEquipment === false,
     },
     {
-      icon: Car,
-      image: carIcon,
-      title: "How is your business vehicle owned or leased?",
-      description: "This affects which vehicle deduction rules apply.",
-      example: "Example: Company Owned if the vehicle is titled to the business.",
-      render: () => <PillGroup options={VEHICLE_OWNERSHIP} selected={vehicleOwnership} multi={false} onChange={(v) => setVehicleOwnership(v as string)} />,
-      payload: () => ({ vehicle_ownership: vehicleOwnership || null }),
+      part: "balance",
+      icon: Receipt,
+      image: invoiceIcon,
+      title: "Does anyone owe your business money?",
+      description: "Examples: Unpaid invoices, client balances, retainers.",
+      render: () => <YesNoToggle value={hasReceivables} onChange={setHasReceivables} />,
+      payload: () => debtExtras({ has_receivables: hasReceivables }),
     },
     {
-      icon: Route,
-      title: "How do you usually deduct vehicle use?",
-      description: "Choose the method that matches how you track vehicle expenses.",
-      render: () => <PillGroup options={VEHICLE_USAGE} selected={vehicleUsage} multi={false} onChange={(v) => setVehicleUsage(v as string)} />,
-      payload: () => ({ vehicle_usage: vehicleUsage || null }),
-      skip: () => vehicleOwnership === "No Business Vehicle",
+      part: "balance",
+      icon: Package,
+      image: packageIcon,
+      title: "Do you keep inventory or products for sale?",
+      description: "",
+      render: () => <YesNoToggle value={hasInventory} onChange={setHasInventory} />,
+      payload: () => debtExtras({ has_inventory: hasInventory }),
     },
     {
-      icon: Truck,
-      title: "Is the vehicle over 6,000 pounds?",
-      description: "Heavy vehicles can qualify for larger depreciation deductions.",
-      render: () => <YesNoToggle value={vehicleOver6k} onChange={setVehicleOver6k} />,
-      payload: () => ({ vehicle_over_6k_lbs: vehicleOver6k }),
-      skip: () => vehicleOwnership === "No Business Vehicle",
-    },
-    {
-      icon: Car,
-      image: carIcon,
-      title: "What percentage of your vehicle use is for business?",
-      description: "Include trips to customers, job sites, suppliers, and meetings.",
-      render: () => <PercentSlider value={vehiclePct} onChange={setVehiclePct} />,
-      payload: () => ({ business_vehicle_percent: Math.round(vehiclePct) }),
-      skip: () => vehicleOwnership === "No Business Vehicle",
-    },
-    {
-      icon: Home,
-      title: "Where do you primarily work from?",
-      description: "This determines which home-office deductions may apply.",
-      visual: () => (
-        <div className="flex items-center justify-center gap-3 mb-6">
-          <img src={houseIcon} alt="" className="h-16 w-16 object-contain" />
-          <Plus className="h-4 w-4 text-muted-foreground shrink-0" />
-          <img src={buildingIcon} alt="" className="h-16 w-16 object-contain" />
-          <div className="flex flex-col items-center gap-1 ml-2">
-            <div className="h-12 w-12 rounded-xl bg-muted flex items-center justify-center">
-              <Plus className="h-6 w-6 text-amber-400" />
-            </div>
-            <span className="text-xs text-muted-foreground">both</span>
-          </div>
-        </div>
-      ),
-      render: () => <PillGroup options={HOME_OFFICE_TYPE} selected={homeOfficeType} multi={false} onChange={(v) => setHomeOfficeType(v as string)} />,
-      payload: () => ({ home_office_type: homeOfficeType || null }),
-    },
-    {
-      icon: Building2,
-      image: buildingIcon,
-      title: "What is your home ownership status?",
-      description: "Owning vs. renting changes which home costs are deductible.",
-      render: () => <PillGroup options={HOME_STATUS} selected={homeStatus} multi={false} onChange={(v) => setHomeStatus(v as string)} />,
-      payload: () => ({ home_status: homeStatus || null }),
-      skip: () => homeOfficeType === "No Home Office",
-    },
-    {
-      icon: Ruler,
-      title: "What is the total square footage of your home?",
-      description: "Include the whole home, not just the office area.",
-      example: "Example: If your home is 2,000 sq ft, enter 2,000.",
-      render: () => (
-        <div className="relative max-w-xs">
-          <Input value={totalHouseArea} onChange={(e) => setTotalHouseArea(e.target.value)} type="number" min="0" className="bg-background pr-14" />
-          <span className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm">sq ft</span>
-        </div>
-      ),
-      payload: () => {
-        const totalArea = parseFloat(totalHouseArea) || 0;
-        const officeArea = parseFloat(dedicatedOfficeArea) || 0;
-        const businessArea = totalArea > 0 ? (officeArea / totalArea) * 100 : 0;
-        return { total_house_area_sqft: totalArea || null, business_area_sqft: businessArea || null };
-      },
-      skip: () => homeOfficeType === "No Home Office",
-    },
-    {
-      icon: Ruler,
-      title: "What percentage of your home is used regularly for business?",
-      description: "Only include areas used regularly for business.",
-      render: () => (
-        <div className="max-w-xs">
-          <Input
-            value={dedicatedOfficeArea}
-            onChange={(e) => setDedicatedOfficeArea(e.target.value)}
-            type="number" min="0" className="bg-background"
-            placeholder="Dedicated office area (sq ft)"
-          />
-        </div>
-      ),
-      payload: () => {
-        const totalArea = parseFloat(totalHouseArea) || 0;
-        const officeArea = parseFloat(dedicatedOfficeArea) || 0;
-        const businessArea = totalArea > 0 ? (officeArea / totalArea) * 100 : 0;
-        return { dedicated_office_area_sqft: officeArea || null, business_area_sqft: businessArea || null };
-      },
-      skip: () => homeOfficeType === "No Home Office",
-    },
-    {
-      icon: Laptop,
-      image: phoneIcon,
-      title: "Which tech and digital tools support the business?",
-      description: "Select every tool or service you regularly pay for.",
-      render: () => <PillGroup options={TECH_USAGE} selected={techUsage} multi={true} onChange={(v) => setTechUsage(v as string[])} />,
-      payload: () => ({ tech_usage: techUsage.length ? techUsage : null }),
-    },
-    {
-      icon: Lightbulb,
-      image: lightbulbIcon,
-      title: "What percentage of your household utilities support your business activities?",
-      description: "Includes electricity, gas, trash, and other household utilities.",
-      render: () => <PercentSlider value={utilityPct} onChange={setUtilityPct} />,
-      payload: () => ({ business_utility_percent: Math.round(utilityPct) }),
-      skip: () => homeOfficeType === "No Home Office",
-    },
-    {
-      icon: Utensils,
-      title: "What percentage of your meals are business-related?",
-      description: "Client meetings, business travel meals, and similar expenses.",
-      render: () => <PercentSlider value={mealPct} onChange={setMealPct} />,
-      payload: () => ({ business_meal_percent: Math.round(mealPct) }),
-    },
-    {
-      icon: Building,
-      image: buildingIcon,
-      title: "Which real estate interests apply to you?",
-      description: "Select every property type you hold an interest in.",
-      render: () => <PillGroup options={REAL_ESTATE_INTERESTS} selected={realEstate} multi={true} onChange={(v) => setRealEstate(v as string[])} />,
-      payload: () => ({ real_estate_interests: realEstate.length ? realEstate : null }),
-    },
-    {
-      icon: Handshake,
-      title: "Do you host business meetings at home?",
-      description: "This can unlock the Augusta Rule for tax-free rental income from your business.",
-      render: () => <YesNoToggle value={hostsMeetings} onChange={setHostsMeetings} />,
-      payload: () => ({ hosts_business_meetings: hostsMeetings }),
-    },
-    {
-      icon: HeartPulse,
-      title: "How is your health insurance set up?",
-      description: "This affects self-employed health insurance deductions.",
-      render: () => <PillGroup options={HEALTH_INSURANCE} selected={healthInsurance} multi={false} onChange={(v) => setHealthInsurance(v as string)} />,
-      payload: () => ({ health_insurance: healthInsurance || null }),
-    },
-    {
-      icon: PiggyBank,
-      title: "Do you use any health savings accounts?",
-      description: "Select all that apply.",
-      render: () => <PillGroup options={HEALTH_SAVINGS} selected={healthSavings} multi={true} onChange={(v) => setHealthSavings(v as string[])} />,
-      payload: () => ({ health_savings: healthSavings.length ? healthSavings : null }),
-    },
-    {
-      icon: GraduationCap,
-      title: "Do any family or education costs apply to you?",
-      description: "Select all that apply.",
-      render: () => <PillGroup options={FAMILY_EDUCATION} selected={familyEducation} multi={true} onChange={(v) => setFamilyEducation(v as string[])} />,
-      payload: () => ({ family_education: familyEducation.length ? familyEducation : null }),
-    },
-    {
-      icon: Target,
-      title: "What's your primary tax goal?",
-      description: "This shapes which strategies we recommend first.",
-      render: () => <PillGroup options={TAX_GOALS} selected={taxGoal} multi={false} onChange={(v) => setTaxGoal(v as string)} />,
-      payload: () => ({ tax_goal: taxGoal || null }),
-    },
-    {
-      icon: Landmark,
-      title: "Which retirement strategies are already in place?",
-      description: "Select every plan you currently contribute to.",
-      example: "Example: Solo 401k/SEP IRA if you have a self-employed retirement plan.",
-      render: () => <PillGroup options={RETIREMENT_CURRENT} selected={retirementCurrent} multi={true} onChange={(v) => setRetirementCurrent(v as string[])} />,
-      payload: () => ({ retirement_current: retirementCurrent.length ? retirementCurrent : null }),
-    },
-    {
-      icon: ShieldCheck,
-      title: "How much audit risk are you comfortable with?",
-      description: "This tunes how aggressive our recommended deductions are.",
-      render: () => <PillGroup options={AUDIT_APPETITE} selected={auditAppetite} multi={false} onChange={(v) => setAuditAppetite(v as string)} />,
-      payload: () => ({ audit_appetite: auditAppetite || null }),
-    },
-    {
+      part: "balance",
       icon: CreditCard,
       image: creditCardsIcon,
       title: "Does your business owe money to anyone?",
       description: "Select all that apply.",
       render: () => (
-        <div className="flex flex-wrap gap-2">
+        <div className="grid grid-cols-1 gap-2">
           {DEBT_CATEGORIES.map(({ key, label }) => (
             <ChoicePill
               key={key}
@@ -699,11 +947,8 @@ export default function BusinessSurveyDialog({ orgId, open, onOpenChange, initia
                 setDebts((d) => {
                   const has = (d[key] ?? "") !== "" || d[`__${key}_selected`] === "1";
                   const next = { ...d };
-                  if (has) {
-                    delete next[`__${key}_selected`];
-                  } else {
-                    next[`__${key}_selected`] = "1";
-                  }
+                  if (has) delete next[`__${key}_selected`];
+                  else next[`__${key}_selected`] = "1";
                   return next;
                 });
               }}
@@ -711,54 +956,79 @@ export default function BusinessSurveyDialog({ orgId, open, onOpenChange, initia
           ))}
         </div>
       ),
-      payload: () => ({}),
+      payload: () => debtExtras(),
     },
     {
+      part: "balance",
       icon: Receipt,
-      image: invoiceIcon,
+      image: creditCardsIcon,
       title: "Enter the current balances for the selected items.",
       description: "Enter the total amount owed for each item selected.",
       render: () => (
-        <div className="space-y-2 max-w-sm">
-          {DEBT_CATEGORIES.filter(({ key }) => (debts[key] ?? "") !== "" || debts[`__${key}_selected`] === "1").map(({ key, label }) => (
-            <div key={key} className="flex items-center justify-between gap-3">
-              <span className="text-sm text-muted-foreground">{label}</span>
-              <div className="relative w-32">
-                <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground text-xs">$</span>
-                <Input
-                  value={debts[key] ?? ""}
-                  onChange={(e) => setDebts((d) => ({ ...d, [key]: e.target.value }))}
-                  type="number" min="0" className="bg-background pl-6 h-8 text-sm"
-                />
+        <div className="space-y-2">
+          {selectedDebtKeys.map(({ key, label }) => (
+            <div key={key} className="grid grid-cols-[1fr_120px] gap-2 items-center">
+              <span className="text-xs text-[#D7E6FF]">{label}</span>
+              <div className="relative">
+                <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs text-[#D7E6FF]">$</span>
+                <Input value={debts[key] ?? ""} onChange={(e) => setDebts((d) => ({ ...d, [key]: e.target.value }))} type="number" min="0" className="h-8 pl-6 text-sm" />
               </div>
             </div>
           ))}
         </div>
       ),
-      payload: () => {
-        const debtPayload: Record<string, number> = {};
-        for (const { key } of DEBT_CATEGORIES) {
-          const val = parseFloat(debts[key] ?? "");
-          if (!isNaN(val) && val > 0) debtPayload[key] = val;
-        }
-        return { debts: Object.keys(debtPayload).length ? debtPayload : null };
-      },
-      skip: () => !DEBT_CATEGORIES.some(({ key }) => (debts[key] ?? "") !== "" || debts[`__${key}_selected`] === "1"),
+      payload: () => debtExtras(),
+    },
+    {
+      part: "balance",
+      icon: Wallet,
+      image: walletIcon,
+      title: "Have you put personal money into the business?",
+      description: "",
+      render: () => <YesNoToggle value={ownerContributed} onChange={setOwnerContributed} />,
+      payload: () => debtExtras({ owner_contributed: ownerContributed }),
+    },
+    {
+      part: "balance",
+      icon: DollarSign,
+      image: walletIcon,
+      title: "How much did you contribute and when?",
+      description: "Enter total contributions and the most recent date.",
+      render: () => (
+        <div className="space-y-3">
+          <div className="relative">
+            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-[#D7E6FF]">$</span>
+            <Input value={ownerContributionAmount} onChange={(e) => setOwnerContributionAmount(e.target.value)} type="number" min="0" className="h-12 pl-8 text-lg" />
+          </div>
+          <Input value={ownerContributionDate} onChange={(e) => setOwnerContributionDate(e.target.value)} type="date" className="h-12 text-sm" />
+        </div>
+      ),
+      payload: () => debtExtras({ owner_contribution_amount: parseFloat(ownerContributionAmount) || 0, owner_contribution_date: ownerContributionDate || null }),
+    },
+    {
+      part: "balance",
+      icon: TrendingUp,
+      title: "Have you taken money out of the business for personal use?",
+      description: "Examples: Owner draws, distributions, personal expenses.",
+      visual: () => (
+        <div className="flex justify-center">
+          <div className="h-24 w-36 rounded-lg bg-[#123056] flex items-center justify-center text-[#78C94D] text-5xl font-bold">↕</div>
+        </div>
+      ),
+      render: () => <YesNoToggle value={ownerDraws} onChange={setOwnerDraws} />,
+      payload: () => debtExtras({ owner_draws: ownerDraws, additional_balance_sheet_categories: additionalCategories }),
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
   ], [
-    filingStatus, primaryState, residencyStatus, multiState,
-    incomeTypes, industryNiche, passiveIncome,
-    teamStructure, accountingMethod, majorEquipment,
-    vehicleOwnership, vehicleUsage, vehicleOver6k, vehiclePct,
-    homeOfficeType, homeStatus, techUsage,
-    realEstate, hostsMeetings,
-    healthInsurance, healthSavings, familyEducation,
-    taxGoal, retirementCurrent, auditAppetite,
-    totalHouseArea, dedicatedOfficeArea, utilityPct, mealPct,
-    equipmentCost, debts,
+    homeOfficeType, totalHouseArea, homeBusinessPct, vehiclePct, phonePct, internetPct,
+    utilityPct, majorEquipment, equipmentCost, hasReceivables, hasInventory, debts,
+    selectedDebtKeys, ownerContributed, ownerContributionAmount, ownerContributionDate,
+    ownerDraws, additionalCategories,
   ]);
 
+  const STEPS = useMemo(() => [...BUSINESS_STEPS, ...BALANCE_STEPS], [BUSINESS_STEPS, BALANCE_STEPS]);
+  const BUSINESS_STEP_COUNT = BUSINESS_STEPS.length;
+  const BALANCE_STEP_COUNT = BALANCE_STEPS.length;
   const TOTAL_STEPS = STEPS.length;
 
   function firstNonSkipped(from: number): number {
@@ -805,61 +1075,100 @@ export default function BusinessSurveyDialog({ orgId, open, onOpenChange, initia
   }
 
   const current = step < TOTAL_STEPS ? STEPS[step] : null;
+  const CurrentIcon = current?.icon;
+  const currentPartIndex = current?.part === "balance" ? step - BUSINESS_STEP_COUNT : step;
+  const currentPartTotal = current?.part === "balance" ? BALANCE_STEP_COUNT : BUSINESS_STEP_COUNT;
+  const progressPct = current ? ((currentPartIndex + 1) / currentPartTotal) * 100 : 100;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-lg p-0 overflow-hidden bg-card border-border/60 gap-0">
-        <div className="p-6 pb-4 max-h-[70vh] overflow-y-auto">
+      <DialogContent className="max-w-[600px] p-0 overflow-hidden border-white/80 bg-[#06172b] gap-0 text-[#EAF2FF] rounded-2xl">
+        <div className="border-b border-white/20 px-4 py-4">
+          <h2 className="text-lg font-bold text-white">Business Survey</h2>
+        </div>
+        <div className="p-5 max-h-[78vh] overflow-y-auto bg-[#0d2a4f]">
           {current ? (
-            <>
-              <div className="flex items-start gap-3 mb-5">
-                <div className="h-8 w-8 rounded-full bg-blue-500 flex items-center justify-center text-sm font-bold text-white shrink-0">
-                  {step + 1}
-                </div>
-                <p className="text-xl font-bold leading-snug pt-0.5">{current.title}</p>
-              </div>
-
-              {current.visual ? (
-                current.visual()
-              ) : current.image ? (
-                <div className="flex items-center justify-center mb-6">
-                  <img src={current.image} alt="" className="h-20 w-20 object-contain" />
-                </div>
-              ) : (
-                <div className="flex items-center justify-center mb-6">
-                  <div className="h-20 w-20 rounded-2xl bg-blue-500/15 flex items-center justify-center">
-                    <current.icon className="h-10 w-10 text-blue-400" />
+            <div className={cn("flex flex-col", current.part === "business" ? "min-h-[620px]" : "min-h-[560px]")}>
+              {current.part === "business" ? (
+                <>
+                  <h3 className="text-2xl font-bold text-white">Business Survey</h3>
+                  <div className="mt-5 flex items-center gap-2 text-[#FFC72B] font-bold">
+                    <Flag className="h-4 w-4 fill-[#FFC72B]" />
+                    <span>Step {currentPartIndex + 1} of {BUSINESS_STEP_COUNT}</span>
                   </div>
-                </div>
+                  <div className="mt-2 h-1.5 w-14 rounded-full bg-[#FFC72B]" />
+                  <div className="mt-5 rounded-xl border border-[#3b577d] bg-[#203750] p-4 flex items-center gap-4">
+                    <div className="h-12 w-12 rounded-xl bg-[#FFC72B]/15 text-[#FFC72B] flex items-center justify-center shrink-0">
+                      {CurrentIcon && <CurrentIcon className="h-7 w-7" />}
+                    </div>
+                    <div>
+                      <h4 className="text-lg font-bold text-white">{current.title}</h4>
+                      <p className="text-sm font-semibold text-white">{current.description}</p>
+                    </div>
+                  </div>
+                  <div className="mt-5">{current.render()}</div>
+                </>
+              ) : (
+                <>
+                  <h3 className="text-2xl font-bold text-white">Balance Sheet Questionnaire</h3>
+                  <div className="mt-2 flex items-center gap-2 text-[#FFC72B] font-bold">
+                    <Flag className="h-4 w-4 fill-[#FFC72B]" />
+                    <span>Question {currentPartIndex + 1} of {BALANCE_STEP_COUNT}</span>
+                  </div>
+                  <div className="mt-5 flex items-start gap-4 mb-5">
+                    <div className="h-10 w-10 rounded-full bg-[#2F6FDB] flex items-center justify-center text-lg font-bold text-white shadow-[0_0_16px_rgba(47,111,219,0.55)] shrink-0">
+                      {currentPartIndex + 1}
+                    </div>
+                    <h3 className="text-[20px] font-bold leading-tight text-white">{current.title}</h3>
+                  </div>
+
+                  <div className="min-h-[135px] flex items-center justify-center mb-5">
+                    {current.visual ? (
+                      <div className="w-full [&_img]:drop-shadow-[0_10px_16px_rgba(0,0,0,0.45)]">
+                        {current.visual()}
+                      </div>
+                    ) : current.image ? (
+                      <img src={current.image} alt="" className="h-[118px] w-[160px] object-contain drop-shadow-[0_10px_16px_rgba(0,0,0,0.45)]" />
+                    ) : (
+                      <div className="h-[118px] w-[160px] rounded-lg bg-[#102c52] border border-[#2C5A91] flex items-center justify-center">
+                        {CurrentIcon && <CurrentIcon className="h-14 w-14 text-[#7FB4FF]" />}
+                      </div>
+                    )}
+                  </div>
+
+                  {current.description && (
+                    <p className="text-[12px] leading-snug text-[#D7E6FF] text-center mb-4">{current.description}</p>
+                  )}
+
+                  {current.example && (
+                    <p className="text-[12px] leading-snug text-[#D7E6FF] mb-4">{current.example}</p>
+                  )}
+
+                  <div className="[&_input]:bg-[#031327] [&_input]:border-[#274a77] [&_input]:text-[#EAF2FF] [&_input]:placeholder:text-[#7993ba]">
+                    {current.render()}
+                  </div>
+                </>
               )}
 
-              {current.example && (
-                <div className="flex items-start gap-2 bg-muted/40 rounded-lg px-3 py-2 mb-4">
-                  <Lightbulb className="h-3.5 w-3.5 text-amber-400 mt-0.5 shrink-0" />
-                  <p className="text-xs text-muted-foreground">{current.example}</p>
-                </div>
-              )}
-              <div>{current.render()}</div>
-
-              <div className="mt-6">
-                <span className="text-xs text-muted-foreground">{step + 1} of {TOTAL_STEPS}</span>
-                <div className="h-1.5 rounded-full bg-muted overflow-hidden mt-1.5">
+              <div className="mt-auto pt-7">
+                <div className="text-xs text-white mb-2">{currentPartIndex + 1} of {currentPartTotal}</div>
+                <div className="h-2 rounded-full bg-[#1c3c66] overflow-hidden">
                   <div
-                    className="h-full rounded-full bg-emerald-500 transition-all duration-300"
-                    style={{ width: `${((step + 1) / TOTAL_STEPS) * 100}%` }}
+                    className="h-full rounded-full bg-[#78C94D] transition-all duration-300"
+                    style={{ width: `${progressPct}%` }}
                   />
                 </div>
               </div>
-            </>
+            </div>
           ) : (
-            <div className="flex flex-col items-center text-center py-6">
-              <div className="h-24 w-24 flex items-center justify-center mb-4">
-                <img src={trophyIcon} alt="" className="h-24 w-24 object-contain drop-shadow-lg" />
+            <div className="rounded-xl border border-[#203f6c] bg-[#06172b] flex flex-col items-center text-center py-10 px-6">
+              <div className="h-32 w-32 flex items-center justify-center mb-4">
+                <img src={trophyIcon} alt="" className="h-32 w-32 object-contain drop-shadow-lg" />
               </div>
-              <p className="text-xl font-bold mb-1 flex items-center gap-2">
-                Great Job! <Sparkles className="h-5 w-5 text-amber-400" />
+              <p className="text-2xl font-bold mb-1 flex items-center gap-2 text-[#FFC72B]">
+                Great Job! <Sparkles className="h-5 w-5" />
               </p>
-              <p className="text-sm text-muted-foreground max-w-sm">
+              <p className="text-sm text-[#D7E6FF] max-w-md">
                 Your business profile is saved. This helps our AI generate personalized tax
                 strategies, accurate deductions, and a more complete financial picture.
               </p>
@@ -867,17 +1176,17 @@ export default function BusinessSurveyDialog({ orgId, open, onOpenChange, initia
           )}
         </div>
 
-        <div className="flex items-center justify-between border-t border-border/60 px-6 py-4 bg-muted/20">
-          <Button variant="ghost" onClick={goBack} className="gap-1">
+        <div className="flex items-center justify-between border-t border-[#18375e] px-5 py-4 bg-[#031327]">
+          <Button size="sm" variant="ghost" onClick={goBack} className="gap-1 text-[#D7E6FF] hover:text-white hover:bg-[#102c52] px-2">
             {step === 0 ? "Cancel" : <><ChevronLeft className="h-4 w-4" /> Back</>}
           </Button>
           <div className="flex gap-2">
             {current && (
-              <Button variant="outline" onClick={advance}>Skip</Button>
+              <Button size="sm" variant="outline" onClick={advance} className="border-[#274a77] bg-transparent text-[#D7E6FF] hover:bg-[#102c52] hover:text-white px-2">Skip</Button>
             )}
-            <Button onClick={current ? saveAndAdvance : () => onOpenChange(false)} disabled={saving} className="gap-1.5">
+            <Button size="sm" onClick={current ? saveAndAdvance : () => onOpenChange(false)} disabled={saving} className="gap-1.5 bg-[#FFC72B] text-[#031327] hover:bg-[#ffd95e] px-3">
               {saving && <Loader2 className="h-4 w-4 animate-spin" />}
-              {current ? (step === TOTAL_STEPS - 1 ? "Save & Finish" : "Save & Next") : "Done"}
+              {current ? (step === TOTAL_STEPS - 1 ? "Finish" : "Next") : "Done"}
             </Button>
           </div>
         </div>

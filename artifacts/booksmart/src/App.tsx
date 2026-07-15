@@ -41,6 +41,7 @@ import CpaEarnings from "@/pages/cpa/earnings";
 import CpaChat from "@/pages/cpa/chat";
 import CpaSettings from "@/pages/cpa/settings";
 import CpaProfile from "@/pages/cpa/profile";
+import CpaUnderReview from "@/pages/cpa/under-review";
 import CpaClients from "@/pages/cpa/clients";
 import CpaReferrals from "@/pages/cpa/referrals";
 import CpaDocuments from "@/pages/cpa/documents";
@@ -88,6 +89,7 @@ const CPA_ROUTES: Record<string, RouteEntry> = {
   "/cpa/chat": { role: "cpa", component: CpaChat },
   "/cpa/settings": { role: "cpa", component: CpaSettings },
   "/cpa/profile": { role: "cpa", component: CpaProfile },
+  "/cpa/under-review": { role: "cpa", component: CpaUnderReview },
   "/cpa/referrals": { role: "cpa", component: CpaReferrals },
   "/cpa/documents": { role: "cpa", component: CpaDocuments },
   "/cpa/insights": { role: "cpa", component: CpaInsights },
@@ -111,7 +113,11 @@ function Router() {
   useEffect(() => {
     if (isLoading) return;
     if (session && location === "/") {
-      if (profile?.role === "cpa") setLocation("/cpa");
+      if (!session.user.email_confirmed_at) setLocation("/verify-email");
+      else if (profile?.role === "cpa") {
+        const status = (profile.verification_status ?? "pending").toLowerCase();
+        setLocation(status === "approved" ? "/cpa" : "/cpa/under-review");
+      }
       else if (profile?.role === "admin") setLocation("/admin");
       else setLocation("/user");
     } else if (!session && location === "/") {

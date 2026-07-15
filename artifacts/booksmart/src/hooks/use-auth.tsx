@@ -11,6 +11,7 @@ export type UserProfile = {
   token_balance: number;
   phone?: string;
   img_url?: string | null;
+  verification_status?: "pending" | "approved" | "rejected" | string | null;
 };
 
 type AuthContextType = {
@@ -96,7 +97,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       //             last_name, phone_number, img_url, token_balance
       const { data: appUser, error: appUserError } = await supabase
         .from("users")
-        .select("id, auth_id, email, role, first_name, middle_name, last_name, phone_number, token_balance, img_url")
+        .select("id, auth_id, email, role, first_name, middle_name, last_name, phone_number, token_balance, img_url, verification_status")
         .eq("auth_id", authUuid)
         .single();
 
@@ -113,6 +114,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
           token_balance: appUser.token_balance ?? 0,
           phone: appUser.phone_number,
           img_url: appUser.img_url,
+          verification_status: appUser.verification_status ?? null,
         });
         return;
       }
@@ -158,7 +160,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
           last_name: rest.join(" "),
           phone_number: meta.phone ?? "",
         })
-        .select("id, email, role, first_name, last_name, phone_number, token_balance")
+        .select("id, email, role, first_name, last_name, phone_number, token_balance, verification_status")
         .single();
 
       if (!createError && createdUser) {
@@ -171,6 +173,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
           token_balance: createdUser.token_balance ?? 0,
           phone: createdUser.phone_number,
           img_url: null,
+          verification_status: createdUser.verification_status ?? null,
         });
         return;
       }
@@ -183,7 +186,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
         if (createError.code === "23505") {
           const { data: existingUser, error: refetchError } = await supabase
             .from("users")
-            .select("id, email, role, first_name, last_name, phone_number, token_balance")
+            .select("id, email, role, first_name, last_name, phone_number, token_balance, verification_status")
             .eq("auth_id", authUuid)
             .single();
           if (!refetchError && existingUser) {
@@ -196,6 +199,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
               token_balance: existingUser.token_balance ?? 0,
               phone: existingUser.phone_number,
               img_url: null,
+              verification_status: existingUser.verification_status ?? null,
             });
             return;
           }
@@ -213,6 +217,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
         token_balance: meta.token_balance ?? 0,
         phone: meta.phone,
         img_url: null,
+        verification_status: (meta.verification_status as string | undefined) ?? null,
       });
     } catch (e) {
       console.error("fetchProfile error:", e);

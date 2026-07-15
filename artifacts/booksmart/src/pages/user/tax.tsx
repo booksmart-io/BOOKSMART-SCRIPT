@@ -1,6 +1,8 @@
 import { useState, useRef, useEffect } from "react";
 import { supabase } from "@/lib/supabase";
 import { checkAddTransaction } from "@/lib/plan-limits";
+import { categorizeUncategorizedTransactions } from "@/lib/ai-categorization";
+import { pickActiveOrganization, useActiveOrganizationId } from "@/lib/active-organization";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/hooks/use-auth";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -555,6 +557,8 @@ function StatementReviewDialog({
       });
       if (insertError) throw new Error(insertError.message);
 
+      await categorizeUncategorizedTransactions(1);
+
       const { error: deleteError } = await supabase
         .from("pending_transactions")
         .delete()
@@ -918,6 +922,22 @@ type UploadDialogProps = {
 function UploadDialog({ open, onClose, onUploaded, onImportCreated, numericUserId, authUuid }: UploadDialogProps) {
   const { toast } = useToast();
   const fileRef = useRef<HTMLInputElement>(null);
+  const [activeOrgId] = useActiveOrganizationId(numericUserId);
+
+  const { data: uploadOrgId } = useQuery<number | null>({
+    queryKey: ["user_org_tax_upload", numericUserId, activeOrgId],
+    enabled: open,
+    staleTime: 5 * 60 * 1000,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("organizations")
+        .select("id")
+        .eq("owner_id", numericUserId)
+        .order("id", { ascending: true });
+      if (error) throw error;
+      return pickActiveOrganization(data as { id: number }[] | null, activeOrgId)?.id ?? null;
+    },
+  });
 
   // Form state
   const [pickedFile, setPickedFile] = useState<File | null>(null);
@@ -1074,17 +1094,7 @@ function UploadDialog({ open, onClose, onUploaded, onImportCreated, numericUserI
         // PDF or image → extract text and trigger the statement import pipeline.
         // Mirrors Flutter: only P&L / BS / CF get AI extraction; everything else
         // that is a PDF/image goes through the bank-statement/n8n pipeline.
-        const { data: orgData, error: orgError } = await supabase
-          .from("organizations")
-          .select("id")
-          .eq("owner_id", numericUserId)
-          .limit(1)
-          .maybeSingle();
-        if (orgError) {
-          console.error("[upload] org lookup error:", orgError);
-          throw new Error(`Could not find your organization: ${orgError.message}`);
-        }
-        const orgId = (orgData as { id: number } | null)?.id ?? null;
+        const orgId = uploadOrgId ?? null;
         if (orgId === null) {
           throw new Error("No organization found for your account. Please contact support.");
         }

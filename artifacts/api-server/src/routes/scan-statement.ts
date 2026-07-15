@@ -48,11 +48,12 @@ router.post("/scan-statement", requireAuth, async (req, res) => {
     return;
   }
 
-  const { importId, fileData, mimeType, documentId } = req.body as {
+  const { importId, fileData, mimeType, documentId, org_id } = req.body as {
     importId?: number;
     fileData?: string;
     mimeType?: string;
     documentId?: string;
+    org_id?: number;
   };
 
   if (typeof fileData !== "string" || !mimeType) {
@@ -72,12 +73,33 @@ router.post("/scan-statement", requireAuth, async (req, res) => {
     numericUserId = userRow?.id ?? null;
 
     if (numericUserId) {
-      const orgRes = await sbFetch(
-        `organizations?owner_id=eq.${numericUserId}&select=id&limit=1`,
-        userJwt
-      );
-      const [orgRow] = (await orgRes.json()) as { id: number }[];
-      orgId = orgRow?.id ?? null;
+      if (importId) {
+        const importRes = await sbFetch(
+          `statement_imports?id=eq.${importId}&user_id=eq.${numericUserId}&select=org_id&limit=1`,
+          userJwt
+        );
+        const [importRow] = (await importRes.json()) as { org_id: number | null }[];
+        orgId = importRow?.org_id ?? null;
+      }
+
+      const requestedOrgId = Number(org_id);
+      if (orgId === null && Number.isFinite(requestedOrgId) && requestedOrgId > 0) {
+        const requestedOrgRes = await sbFetch(
+          `organizations?id=eq.${requestedOrgId}&owner_id=eq.${numericUserId}&select=id&limit=1`,
+          userJwt
+        );
+        const [requestedOrgRow] = (await requestedOrgRes.json()) as { id: number }[];
+        orgId = requestedOrgRow?.id ?? null;
+      }
+
+      if (orgId === null) {
+        const orgRes = await sbFetch(
+          `organizations?owner_id=eq.${numericUserId}&select=id&order=id.asc&limit=1`,
+          userJwt
+        );
+        const [orgRow] = (await orgRes.json()) as { id: number }[];
+        orgId = orgRow?.id ?? null;
+      }
     }
   } catch {
     // proceed without; pending_transactions may lack org_id

@@ -3,6 +3,8 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/hooks/use-auth";
 import { supabase } from "@/lib/supabase";
 import { checkAddTransaction } from "@/lib/plan-limits";
+import { categorizeUncategorizedTransactions } from "@/lib/ai-categorization";
+import { pickActiveOrganization, useActiveOrganizationId } from "@/lib/active-organization";
 import { useToast } from "@/hooks/use-toast";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -46,6 +48,7 @@ export default function BulkReview() {
   const numericId = profile?.numericId ?? null;
   const { toast } = useToast();
   const qc = useQueryClient();
+  const [activeOrgId] = useActiveOrganizationId(numericId);
 
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [categoryMap, setCategoryMap] = useState<Record<number, number>>({});
@@ -53,20 +56,21 @@ export default function BulkReview() {
 
   // ── Org lookup ──────────────────────────────────────────────────────────────
   const { data: orgId } = useQuery<number | null>({
-    queryKey: ["user_org_bulk", numericId],
+    queryKey: ["user_org_bulk", numericId, activeOrgId],
     enabled: numericId !== null,
     staleTime: 5 * 60_000,
     queryFn: async () => {
-      const { data } = await supabase
-        .from("organizations").select("id").eq("owner_id", numericId!).limit(1).maybeSingle();
-      return (data as { id: number } | null)?.id ?? null;
+      const { data, error } = await supabase
+        .from("organizations").select("id").eq("owner_id", numericId!).order("id", { ascending: true });
+      if (error) throw error;
+      return pickActiveOrganization(data as { id: number }[] | null, activeOrgId)?.id ?? null;
     },
   });
 
   // ── Pending transactions ────────────────────────────────────────────────────
   const { data: pending = [], isLoading } = useQuery<PendingTx[]>({
-    queryKey: ["pending_txs", numericId],
-    enabled: numericId !== null,
+    queryKey: ["pending_txs", numericId, orgId],
+    enabled: numericId !== null && orgId !== null,
     staleTime: 30_000,
     queryFn: async () => {
       const { data, error } = await supabase
@@ -74,6 +78,7 @@ export default function BulkReview() {
         .select("id,title,amount,transaction_type,date_time,description,import_id,org_id,is_duplicate,status,statement_imports(document_id)")
         .eq("user_id", numericId!)
         .eq("status", "pending")
+        .or(`org_id.eq.${orgId},org_id.is.null`)
         .order("date_time", { ascending: false });
       if (error) throw error;
       // Flatten the nested join result into a flat document_id field
@@ -118,6 +123,8 @@ export default function BulkReview() {
         ...(tx.document_id !== null ? { file_path: String(tx.document_id) } : {}),
       });
       if (insertErr) throw new Error(`Insert failed: ${insertErr.message}`);
+
+      await categorizeUncategorizedTransactions(1);
 
       const { error: updateErr } = await supabase
         .from("pending_transactions")

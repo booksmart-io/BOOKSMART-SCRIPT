@@ -79,3 +79,91 @@ CREATE POLICY "Admins can manage tax rules"
 CREATE POLICY "Users own their category rules"
   ON category_rules FOR ALL
   USING (user_id IN (SELECT id FROM users WHERE auth_id = auth.uid()));
+
+-- Plaid bank connections ------------------------------------------------------
+CREATE TABLE IF NOT EXISTS plaid_items (
+  id BIGSERIAL PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  org_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  plaid_item_id TEXT NOT NULL UNIQUE,
+  access_token TEXT NOT NULL,
+  institution_id TEXT,
+  institution_name TEXT,
+  transactions_cursor TEXT,
+  status TEXT NOT NULL DEFAULT 'active',
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS plaid_accounts (
+  id BIGSERIAL PRIMARY KEY,
+  plaid_item_id BIGINT NOT NULL REFERENCES plaid_items(id) ON DELETE CASCADE,
+  plaid_account_id TEXT NOT NULL UNIQUE,
+  name TEXT NOT NULL,
+  official_name TEXT,
+  mask TEXT,
+  type TEXT,
+  subtype TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+ALTER TABLE transactions
+  ADD COLUMN IF NOT EXISTS plaid_transaction_id TEXT,
+  ADD COLUMN IF NOT EXISTS plaid_account_id TEXT,
+  ADD COLUMN IF NOT EXISTS plaid_category JSONB,
+  ADD COLUMN IF NOT EXISTS pending BOOLEAN DEFAULT false;
+
+CREATE UNIQUE INDEX IF NOT EXISTS transactions_plaid_transaction_id_key
+  ON transactions (plaid_transaction_id)
+  WHERE plaid_transaction_id IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS plaid_items_user_org_idx
+  ON plaid_items (user_id, org_id);
+
+CREATE INDEX IF NOT EXISTS plaid_accounts_item_idx
+  ON plaid_accounts (plaid_item_id);
+
+ALTER TABLE plaid_items ENABLE ROW LEVEL SECURITY;
+ALTER TABLE plaid_accounts ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Users own their Plaid items"
+  ON plaid_items FOR ALL
+  USING (user_id IN (SELECT id FROM users WHERE auth_id = auth.uid()))
+  WITH CHECK (user_id IN (SELECT id FROM users WHERE auth_id = auth.uid()));
+
+CREATE POLICY "Users own their Plaid accounts"
+  ON plaid_accounts FOR ALL
+  USING (
+    plaid_item_id IN (
+      SELECT id FROM plaid_items
+      WHERE user_id IN (SELECT id FROM users WHERE auth_id = auth.uid())
+    )
+  )
+  WITH CHECK (
+    plaid_item_id IN (
+      SELECT id FROM plaid_items
+      WHERE user_id IN (SELECT id FROM users WHERE auth_id = auth.uid())
+    )
+  );
+
+-- Token-based feature unlocks -------------------------------------------------
+CREATE TABLE IF NOT EXISTS feature_unlocks (
+  id BIGSERIAL PRIMARY KEY,
+  user_id UUID NOT NULL,
+  feature_key TEXT NOT NULL,
+  scope_key TEXT,
+  tokens_spent INTEGER NOT NULL DEFAULT 0,
+  expires_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS feature_unlocks_user_feature_idx
+  ON feature_unlocks (user_id, feature_key, scope_key, expires_at);
+
+ALTER TABLE feature_unlocks ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Users own their feature unlocks"
+  ON feature_unlocks FOR ALL
+  USING (user_id = auth.uid())
+  WITH CHECK (user_id = auth.uid());

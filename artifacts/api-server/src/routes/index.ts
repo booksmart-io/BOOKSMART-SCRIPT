@@ -13,6 +13,8 @@ import documentDeleteRouter from "./document-delete";
 import chatUploadRouter from "./chat-upload";
 import planLimitsRouter from "./plan-limits";
 import adminRouter from "./admin";
+import plaidRouter from "./plaid";
+import tokenUnlocksRouter from "./token-unlocks";
 
 const router: IRouter = Router();
 
@@ -30,5 +32,7 @@ router.use(documentDeleteRouter);
 router.use(chatUploadRouter);
 router.use(planLimitsRouter);
 router.use(adminRouter);
+router.use(plaidRouter);
+router.use(tokenUnlocksRouter);
 
 export default router;
