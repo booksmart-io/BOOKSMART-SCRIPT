@@ -167,3 +167,10 @@ CREATE POLICY "Users own their feature unlocks"
   ON feature_unlocks FOR ALL
   USING (user_id = auth.uid())
   WITH CHECK (user_id = auth.uid());
+
+-- Persist the user's selected organization across browsers/devices.
+ALTER TABLE users
+  ADD COLUMN IF NOT EXISTS active_org_id BIGINT REFERENCES organizations(id) ON DELETE SET NULL;
+
+CREATE INDEX IF NOT EXISTS users_active_org_id_idx
+  ON users (active_org_id);

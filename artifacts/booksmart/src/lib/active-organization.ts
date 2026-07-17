@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { supabase } from "./supabase";
 
 const ACTIVE_ORG_EVENT = "booksmart-active-organization-change";
 
@@ -13,16 +14,43 @@ export function getStoredActiveOrganizationId(numericUserId: number | null | und
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 }
 
-export function setStoredActiveOrganizationId(numericUserId: number | null | undefined, orgId: number) {
-  if (numericUserId == null || typeof window === "undefined") return;
-  window.localStorage.setItem(storageKey(numericUserId), String(orgId));
+function cacheActiveOrganizationId(numericUserId: number, orgId: number | null) {
+  if (typeof window === "undefined") return;
+  if (orgId == null) {
+    window.localStorage.removeItem(storageKey(numericUserId));
+  } else {
+    window.localStorage.setItem(storageKey(numericUserId), String(orgId));
+  }
+}
+
+function notifyActiveOrganizationChange(numericUserId: number, orgId: number | null) {
+  if (typeof window === "undefined") return;
   window.dispatchEvent(new CustomEvent(ACTIVE_ORG_EVENT, { detail: { numericUserId, orgId } }));
 }
 
+async function persistActiveOrganizationId(numericUserId: number, orgId: number | null) {
+  const { error } = await supabase
+    .from("users")
+    .update({ active_org_id: orgId })
+    .eq("id", numericUserId);
+
+  if (error) {
+    console.warn("Unable to save active organization preference", error);
+  }
+}
+
+export function setStoredActiveOrganizationId(numericUserId: number | null | undefined, orgId: number) {
+  if (numericUserId == null) return;
+  cacheActiveOrganizationId(numericUserId, orgId);
+  notifyActiveOrganizationChange(numericUserId, orgId);
+  void persistActiveOrganizationId(numericUserId, orgId);
+}
+
 export function clearStoredActiveOrganizationId(numericUserId: number | null | undefined) {
-  if (numericUserId == null || typeof window === "undefined") return;
-  window.localStorage.removeItem(storageKey(numericUserId));
-  window.dispatchEvent(new CustomEvent(ACTIVE_ORG_EVENT, { detail: { numericUserId, orgId: null } }));
+  if (numericUserId == null) return;
+  cacheActiveOrganizationId(numericUserId, null);
+  notifyActiveOrganizationChange(numericUserId, null);
+  void persistActiveOrganizationId(numericUserId, null);
 }
 
 export function useActiveOrganizationId(numericUserId: number | null | undefined) {
@@ -31,6 +59,26 @@ export function useActiveOrganizationId(numericUserId: number | null | undefined
   useEffect(() => {
     setActiveOrgIdState(getStoredActiveOrganizationId(numericUserId));
     if (numericUserId == null || typeof window === "undefined") return;
+    let cancelled = false;
+
+    supabase
+      .from("users")
+      .select("active_org_id")
+      .eq("id", numericUserId)
+      .maybeSingle()
+      .then(({ data, error }) => {
+        if (cancelled) return;
+        if (error) {
+          console.warn("Unable to load active organization preference", error);
+          return;
+        }
+
+        const dbOrgId = Number((data as { active_org_id?: number | null } | null)?.active_org_id);
+        if (Number.isFinite(dbOrgId) && dbOrgId > 0) {
+          cacheActiveOrganizationId(numericUserId, dbOrgId);
+          setActiveOrgIdState(dbOrgId);
+        }
+      });
 
     const onChange = (event: Event) => {
       const detail = (event as CustomEvent<{ numericUserId?: number; orgId?: number | null }>).detail;
@@ -47,6 +95,7 @@ export function useActiveOrganizationId(numericUserId: number | null | undefined
     window.addEventListener(ACTIVE_ORG_EVENT, onChange);
     window.addEventListener("storage", onStorage);
     return () => {
+      cancelled = true;
       window.removeEventListener(ACTIVE_ORG_EVENT, onChange);
       window.removeEventListener("storage", onStorage);
     };

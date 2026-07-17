@@ -1,5 +1,5 @@
-import { useMemo, useState } from "react";
-import { Loader2, Building2, MapPin, BadgeDollarSign, Landmark, BriefcaseBusiness, ShieldCheck, ChevronLeft, ChevronRight } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { Loader2, Building2, MapPin, Landmark, BriefcaseBusiness, ShieldCheck, ChevronLeft, ChevronRight } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -59,13 +59,11 @@ const PAYMENT_PLATFORMS = ["Stripe", "Square", "PayPal", "Shopify", "Amazon", "E
 const ACCOUNTING_SOFTWARE = ["QuickBooks", "Xero", "Wave", "FreshBooks", "Zoho", "Sage", "None"];
 const PAYROLL_PROVIDERS = ["Gusto", "ADP", "Paychex", "Rippling", "Justworks", "None"];
 const BUSINESS_OPERATIONS = ["Sell Products", "Sell Services", "Have Employees", "Issue 1099s"];
+const EMPLOYEE_TYPES = ["1099", "W-2 Employee", "Self / Single"];
 const REVENUE_RANGES = ["Under $25,000", "$25K to $50K", "$50K to $100K", "$100K to $250K", "$250K to $500K", "$500K to $1M", "$1M to $5M", "$5M+"];
 const PROFITABILITY = ["Profitable", "Breaking Even", "Losing Money", "Unsure"];
-const DEDUCTION_AREAS = ["Home Office", "Vehicle", "Phone", "Internet", "Travel", "Meals", "Equipment", "Contractors", "Employees", "Advertising", "Software", "Subscriptions", "Professional Services", "Insurance", "Rent", "Utilities", "Inventory", "Shipping", "Education"];
 const BUSINESS_GOALS = ["Bookkeeping", "Tax Savings", "AI Financial Insights", "Cash Flow", "Budgeting", "Financial Reports", "CPA Access", "Tax Preparation", "Loan Readiness", "Business Credit", "Financial Forecasting", "Expense Tracking", "Receipt Management", "Bank Reconciliation"];
 const FUNDING_PURPOSES = ["Working Capital", "Equipment", "Vehicle", "Commercial Property", "SBA Loan", "Line of Credit", "Expansion", "Startup", "Inventory"];
-const AI_NOTIFICATIONS = ["Tax Savings", "Missing Deductions", "Large Expenses", "Cash Flow Issues", "Upcoming Tax Deadlines", "Funding Opportunities", "Business Health Score Changes", "Monthly Reports"];
-const DOCUMENT_TYPES = ["Prior Tax Return", "Bank Statements", "Credit Card Statements", "Profit & Loss", "Balance Sheet", "Articles of Incorporation", "EIN Letter", "Business License", "Sales Tax Permit"];
 
 const INITIAL_FORM = {
   legalName: "",
@@ -117,24 +115,20 @@ const INITIAL_FORM = {
   accountingSoftware: "",
   payrollProvider: "",
   operations: [] as string[],
+  employeeType: "",
   annualRevenue: "",
   monthlyRevenue: "",
   monthlyExpenses: "",
   profitability: "",
-  deductionAreas: [] as string[],
   goals: [] as string[],
   applyingFunding: "maybe",
   fundingPurposes: [] as string[],
   desiredFundingAmount: "",
   fundingTimeline: "",
+  operationsNotes: "",
   hasCpa: "no",
   wantsCpaMatch: "yes",
   wantsBookkeeper: "no",
-  aiNotifications: [] as string[],
-  uploadDocumentsNow: "later",
-  documents: [] as string[],
-  enableMfa: "no",
-  inviteTeamMembers: "no",
   certifyAccurate: false,
   authorizeAnalysis: false,
   acceptTerms: false,
@@ -150,7 +144,6 @@ const STEPS = [
   { title: "Company", icon: Building2 },
   { title: "Address", icon: MapPin },
   { title: "Tax", icon: Landmark },
-  { title: "Banking", icon: BadgeDollarSign },
   { title: "Operations", icon: BriefcaseBusiness },
   { title: "Legal", icon: ShieldCheck },
 ];
@@ -188,6 +181,12 @@ export default function BusinessSetupDialog({
   const progress = ((step + 1) / STEPS.length) * 100;
   const CurrentIcon = STEPS[step].icon;
 
+  useEffect(() => {
+    if (!open) return;
+    setStep(0);
+    setForm((current) => ({ ...current, businessEmail: current.businessEmail || defaultEmail }));
+  }, [open, defaultEmail]);
+
   const selectedStateName = useMemo(
     () => states.find((s) => String(s.id) === form.state)?.name ?? "",
     [states, form.state]
@@ -220,7 +219,7 @@ export default function BusinessSetupDialog({
       if (!form.einTin.trim()) return "EIN / Tax ID is required.";
       if (!form.federalTaxClass) return "Federal tax classification is required.";
     }
-    if (step === 5) {
+    if (step === 4) {
       if (!form.certifyAccurate || !form.authorizeAnalysis || !form.acceptTerms || !form.acceptPrivacy) {
         return "Please complete all legal confirmations.";
       }
@@ -289,9 +288,12 @@ export default function BusinessSetupDialog({
           filings: form.operations.includes("Issue 1099s") ? [...TAX_FILINGS.filter((f) => f !== "1099"), "1099"] : [],
           tax_preparer: form.taxPreparer || null,
           current_cpa: form.currentCpa.trim() || null,
+          has_cpa: form.hasCpa === "yes",
+          wants_cpa_match: form.wantsCpaMatch === "yes",
+          wants_bookkeeper: form.wantsBookkeeper === "yes",
         },
         banking: {
-          connect_bank_now: form.connectBankNow === "yes",
+          connect_bank_now: false,
           primary_bank: form.primaryBank.trim() || null,
           bank_account_count: form.bankAccountCount || null,
           business_credit_cards: form.businessCreditCards === "yes",
@@ -302,13 +304,13 @@ export default function BusinessSetupDialog({
           payroll_provider: form.payrollProvider || null,
         },
         operations: form.operations,
+        employee_type: form.employeeType || null,
         financial_snapshot: {
           approximate_annual_revenue: form.annualRevenue || null,
           average_monthly_revenue: Number(form.monthlyRevenue) || null,
           average_monthly_expenses: Number(form.monthlyExpenses) || null,
           profitability: form.profitability || null,
         },
-        deduction_profile: form.deductionAreas,
         goals: form.goals,
         funding: {
           plans_to_apply: form.applyingFunding,
@@ -316,20 +318,7 @@ export default function BusinessSetupDialog({
           desired_amount: Number(form.desiredFundingAmount) || null,
           timeline: form.fundingTimeline.trim() || null,
         },
-        cpa_profile: {
-          has_cpa: form.hasCpa === "yes",
-          wants_cpa_match: form.wantsCpaMatch === "yes",
-          wants_bookkeeper: form.wantsBookkeeper === "yes",
-        },
-        ai_preferences: form.aiNotifications,
-        documents: {
-          upload_now: form.uploadDocumentsNow === "now",
-          requested_documents: form.documents,
-        },
-        security: {
-          enable_mfa: form.enableMfa === "yes",
-          invite_team_members: form.inviteTeamMembers === "yes",
-        },
+        operations_notes: form.operationsNotes.trim() || null,
         legal: {
           certified_accurate: form.certifyAccurate,
           authorized_analysis: form.authorizeAnalysis,
@@ -466,33 +455,25 @@ export default function BusinessSetupDialog({
               {form.taxYear === "Fiscal" && <Field label="Fiscal year end"><Input type="date" value={form.fiscalYearEnd} onChange={(e) => update("fiscalYearEnd", e.target.value)} /></Field>}
               <Field label="Who prepares your taxes?"><SelectField value={form.taxPreparer} onChange={(v) => update("taxPreparer", v)} options={TAX_PREPARERS} placeholder="Select preparer" /></Field>
               <Field label="Current CPA"><Input value={form.currentCpa} onChange={(e) => update("currentCpa", e.target.value)} /></Field>
+              <Field label="Do you have a CPA?"><SelectField value={form.hasCpa} onChange={(v) => update("hasCpa", v)} options={["no", "yes"]} /></Field>
+              <Field label="Match with BookSmart CPA?"><SelectField value={form.wantsCpaMatch} onChange={(v) => update("wantsCpaMatch", v)} options={["yes", "no"]} /></Field>
+              <Field label="BookSmart bookkeeper?"><SelectField value={form.wantsBookkeeper} onChange={(v) => update("wantsBookkeeper", v)} options={["no", "yes"]} /></Field>
             </div>
           )}
 
           {step === 3 && (
-            <div className="grid gap-4 md:grid-cols-2">
-              <Field label="Connect bank now?"><SelectField value={form.connectBankNow} onChange={(v) => update("connectBankNow", v)} options={["later", "yes"]} /></Field>
-              <Field label="Primary bank"><Input value={form.primaryBank} onChange={(e) => update("primaryBank", e.target.value)} /></Field>
-              <Field label="Number of business bank accounts"><Input type="number" min="0" value={form.bankAccountCount} onChange={(e) => update("bankAccountCount", e.target.value)} /></Field>
-              <Field label="Business credit cards"><SelectField value={form.businessCreditCards} onChange={(v) => update("businessCreditCards", v)} options={["no", "yes"]} /></Field>
-              <Field label="Loans"><SelectField value={form.loans} onChange={(v) => update("loans", v)} options={["no", "yes"]} /></Field>
-              <Field label="Line of credit"><SelectField value={form.lineOfCredit} onChange={(v) => update("lineOfCredit", v)} options={["no", "yes"]} /></Field>
-              <Field label="Accounting software"><SelectField value={form.accountingSoftware} onChange={(v) => update("accountingSoftware", v)} options={ACCOUNTING_SOFTWARE} placeholder="Select software" /></Field>
-              <Field label="Payroll provider"><SelectField value={form.payrollProvider} onChange={(v) => update("payrollProvider", v)} options={PAYROLL_PROVIDERS} placeholder="Select provider" /></Field>
-              <MultiSection title="Payment platforms" options={PAYMENT_PLATFORMS} selected={form.paymentPlatforms} onToggle={(v) => toggleList("paymentPlatforms", v)} />
-            </div>
-          )}
-
-          {step === 4 && (
             <div className="space-y-5">
               <MultiSection title="Business operations" options={BUSINESS_OPERATIONS} selected={form.operations} onToggle={(v) => toggleList("operations", v)} />
               <div className="grid gap-4 md:grid-cols-2">
+                <Field label="Employee type"><SelectField value={form.employeeType} onChange={(v) => update("employeeType", v)} options={EMPLOYEE_TYPES} placeholder="Select employee type" /></Field>
                 <Field label="Approximate annual revenue"><SelectField value={form.annualRevenue} onChange={(v) => update("annualRevenue", v)} options={REVENUE_RANGES} placeholder="Select range" /></Field>
                 <Field label="Average monthly revenue"><Input type="number" min="0" value={form.monthlyRevenue} onChange={(e) => update("monthlyRevenue", e.target.value)} /></Field>
                 <Field label="Average monthly expenses"><Input type="number" min="0" value={form.monthlyExpenses} onChange={(e) => update("monthlyExpenses", e.target.value)} /></Field>
                 <Field label="Profitability"><SelectField value={form.profitability} onChange={(v) => update("profitability", v)} options={PROFITABILITY} placeholder="Select status" /></Field>
+                <Field label="Accounting software"><SelectField value={form.accountingSoftware} onChange={(v) => update("accountingSoftware", v)} options={ACCOUNTING_SOFTWARE} placeholder="Select software" /></Field>
+                <Field label="Payroll provider"><SelectField value={form.payrollProvider} onChange={(v) => update("payrollProvider", v)} options={PAYROLL_PROVIDERS} placeholder="Select provider" /></Field>
               </div>
-              <MultiSection title="Tax deduction profile" options={DEDUCTION_AREAS} selected={form.deductionAreas} onToggle={(v) => toggleList("deductionAreas", v)} />
+              <MultiSection title="Payment platforms" options={PAYMENT_PLATFORMS} selected={form.paymentPlatforms} onToggle={(v) => toggleList("paymentPlatforms", v)} />
               <MultiSection title="Business goals" options={BUSINESS_GOALS} selected={form.goals} onToggle={(v) => toggleList("goals", v)} />
               <div className="grid gap-4 md:grid-cols-2">
                 <Field label="Applying for funding?"><SelectField value={form.applyingFunding} onChange={(v) => update("applyingFunding", v)} options={["yes", "no", "maybe"]} /></Field>
@@ -500,23 +481,12 @@ export default function BusinessSetupDialog({
                 <Field label="Expected timeline"><Input value={form.fundingTimeline} onChange={(e) => update("fundingTimeline", e.target.value)} placeholder="3-6 months" /></Field>
               </div>
               <MultiSection title="Funding purpose" options={FUNDING_PURPOSES} selected={form.fundingPurposes} onToggle={(v) => toggleList("fundingPurposes", v)} />
+              <Field label="Operations notes"><Textarea value={form.operationsNotes} onChange={(e) => update("operationsNotes", e.target.value)} placeholder="Describe sales channels, employees, contractors, products, services, or bookkeeping setup." /></Field>
             </div>
           )}
 
-          {step === 5 && (
+          {step === 4 && (
             <div className="space-y-5">
-              <div className="grid gap-4 md:grid-cols-3">
-                <Field label="Do you have a CPA?"><SelectField value={form.hasCpa} onChange={(v) => update("hasCpa", v)} options={["no", "yes"]} /></Field>
-                <Field label="Match with BookSmart CPA?"><SelectField value={form.wantsCpaMatch} onChange={(v) => update("wantsCpaMatch", v)} options={["yes", "no"]} /></Field>
-                <Field label="BookSmart bookkeeper?"><SelectField value={form.wantsBookkeeper} onChange={(v) => update("wantsBookkeeper", v)} options={["no", "yes"]} /></Field>
-              </div>
-              <MultiSection title="AI notifications" options={AI_NOTIFICATIONS} selected={form.aiNotifications} onToggle={(v) => toggleList("aiNotifications", v)} />
-              <div className="grid gap-4 md:grid-cols-2">
-                <Field label="Upload documents now or later?"><SelectField value={form.uploadDocumentsNow} onChange={(v) => update("uploadDocumentsNow", v)} options={["later", "now"]} /></Field>
-                <Field label="Enable MFA?"><SelectField value={form.enableMfa} onChange={(v) => update("enableMfa", v)} options={["no", "yes"]} /></Field>
-                <Field label="Invite team members?"><SelectField value={form.inviteTeamMembers} onChange={(v) => update("inviteTeamMembers", v)} options={["no", "yes"]} /></Field>
-              </div>
-              <MultiSection title="Documents" options={DOCUMENT_TYPES} selected={form.documents} onToggle={(v) => toggleList("documents", v)} />
               <div className="rounded-lg border border-border/60 p-4 space-y-3">
                 <CheckRow label="I certify that the information is accurate." checked={form.certifyAccurate} onChange={(v) => update("certifyAccurate", v)} />
                 <CheckRow label="I authorize BookSmart to analyze my financial data." checked={form.authorizeAnalysis} onChange={(v) => update("authorizeAnalysis", v)} />

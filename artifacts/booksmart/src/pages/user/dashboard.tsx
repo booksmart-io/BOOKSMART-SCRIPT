@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link } from "wouter";
+import { Link, useLocation } from "wouter";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/hooks/use-auth";
 import { supabase } from "@/lib/supabase";
@@ -7,7 +7,6 @@ import { useToast } from "@/hooks/use-toast";
 import { normalizeStatementDoc, computeFinancialSnapshot, type StatementPeriod } from "@/lib/financial-statements";
 import { pickActiveOrganization, useActiveOrganizationId } from "@/lib/active-organization";
 import BusinessSurveyDialog from "@/components/business-survey-dialog";
-import BusinessSetupDialog from "@/components/business-setup-dialog";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import {
@@ -33,8 +32,6 @@ type DashboardOrder = {
   services: string | null; status: string; created_at: string;
   cpa: { first_name: string | null; last_name: string | null } | null;
 };
-
-type StateRow = { id: number; name: string; code: string };
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -153,15 +150,13 @@ export default function UserDashboard() {
   const numericId = profile?.numericId ?? null;
   const tokenBalance = profile?.token_balance ?? 0;
   const qc = useQueryClient();
-  const [activeOrgId, setActiveOrgId] = useActiveOrganizationId(numericId);
+  const [, setLocation] = useLocation();
+  const [activeOrgId] = useActiveOrganizationId(numericId);
 
   const [insightData, setInsightData] = useState<{ strategies: AiStrategy[]; totalSavings: number } | null>(null);
   const [insightLoading, setInsightLoading] = useState(false);
   const [insightUnlocked, setInsightUnlocked] = useState(false);
   const [surveyOpen, setSurveyOpen] = useState(false);
-  const [starterOrgId, setStarterOrgId] = useState<number | null>(null);
-  const [businessDialogOpen, setBusinessDialogOpen] = useState(false);
-  const [businessDialogDismissed, setBusinessDialogDismissed] = useState(false);
 
   // ── Org lookup ──────────────────────────────────────────────────────────────
   const { data: orgData, isLoading: orgLoading } = useQuery<{ id: number } | null>({
@@ -175,24 +170,22 @@ export default function UserDashboard() {
       return pickActiveOrganization(data as { id: number }[] | null, activeOrgId);
     },
   });
-  const orgId = orgData?.id ?? starterOrgId ?? null;
+  const orgId = orgData?.id ?? null;
 
   useEffect(() => { console.log("[dashboard] numericId:", numericId, "orgId:", orgId); }, [numericId, orgId]);
 
-  const { data: states = [] } = useQuery<StateRow[]>({
-    queryKey: ["states"],
-    staleTime: Infinity,
-    queryFn: async () => {
-      const { data, error } = await supabase.from("states").select("id, name, code").order("name");
-      if (error) throw error;
-      return (data as StateRow[]) ?? [];
-    },
-  });
+  useEffect(() => {
+    if (numericId === null || orgLoading || orgData) return;
+    setLocation("/user/profile");
+  }, [numericId, orgLoading, orgData, setLocation]);
 
   useEffect(() => {
-    if (numericId === null || orgLoading || orgData || starterOrgId || businessDialogDismissed) return;
-    setBusinessDialogOpen(true);
-  }, [numericId, orgLoading, orgData, starterOrgId, businessDialogDismissed]);
+    if (typeof window === "undefined" || !orgId) return;
+    const pendingSurveyOrgId = Number(window.sessionStorage.getItem("booksmart:start-business-survey"));
+    if (pendingSurveyOrgId !== orgId) return;
+    window.sessionStorage.removeItem("booksmart:start-business-survey");
+    setSurveyOpen(true);
+  }, [orgId]);
 
   // ── Real-time tx updates ────────────────────────────────────────────────────
   useEffect(() => {
@@ -877,26 +870,6 @@ difficulty must be "Easy", "Medium", or "Hard". savings is a USD number.`;
 
       {/* ── Hidden username usage to silence linter ── */}
       <span className="hidden">{firstName}</span>
-      <BusinessSetupDialog
-        open={businessDialogOpen}
-        onOpenChange={(open) => {
-          if (!open) setBusinessDialogDismissed(true);
-          setBusinessDialogOpen(open);
-        }}
-        ownerId={numericId}
-        states={states}
-        defaultEmail={user?.email ?? profile?.email ?? ""}
-        onSaved={(newOrgId) => {
-          setStarterOrgId(newOrgId);
-          setActiveOrgId(newOrgId);
-          setBusinessDialogOpen(false);
-          setSurveyOpen(true);
-          qc.invalidateQueries({ queryKey: ["user_org", numericId] });
-          qc.invalidateQueries({ queryKey: ["organizations_list", numericId] });
-          toast({ title: "Business added", description: "Now complete the business survey." });
-        }}
-        onError={(message) => toast({ title: "Could not add business", description: message, variant: "destructive" })}
-      />
       <BusinessSurveyDialog
         orgId={orgId}
         open={surveyOpen}

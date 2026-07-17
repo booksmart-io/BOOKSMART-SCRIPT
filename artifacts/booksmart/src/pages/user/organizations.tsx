@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useLocation } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -68,6 +69,7 @@ export default function Organizations() {
   const { profile } = useAuth();
   const numericId = profile?.numericId ?? null;
   const qc = useQueryClient();
+  const [, setLocation] = useLocation();
   const [activeOrgId, setActiveOrgId] = useActiveOrganizationId(numericId);
 
   const [formOpen, setFormOpen] = useState(false);
@@ -178,7 +180,8 @@ export default function Organizations() {
     onSuccess: (newId) => {
       toast.success(editingOrg ? "Business updated." : "Business added.");
       qc.invalidateQueries({ queryKey: ["organizations_list", numericId] });
-      qc.invalidateQueries({ queryKey: ["dashboard_org", numericId] });
+      qc.invalidateQueries({ queryKey: ["user_org", numericId] });
+      qc.invalidateQueries({ queryKey: ["auth_guard_organization_count", numericId] });
       setFormOpen(false);
     },
     onError: (error: Error) => {
@@ -197,7 +200,11 @@ export default function Organizations() {
         clearStoredActiveOrganizationId(numericId);
       }
       qc.invalidateQueries({ queryKey: ["organizations_list", numericId] });
-      qc.invalidateQueries({ queryKey: ["dashboard_org", numericId] });
+      qc.invalidateQueries({ queryKey: ["user_org", numericId] });
+      qc.invalidateQueries({ queryKey: ["auth_guard_organization_count", numericId] });
+      if (orgs.length <= 1) {
+        setLocation("/user/profile");
+      }
       setDeleteTarget(null);
     },
     onError: (error: Error) => {
@@ -416,7 +423,8 @@ export default function Organizations() {
         onSaved={(newId) => {
           toast.success("Business added. Now complete the business survey.");
           qc.invalidateQueries({ queryKey: ["organizations_list", numericId] });
-          qc.invalidateQueries({ queryKey: ["dashboard_org", numericId] });
+          qc.invalidateQueries({ queryKey: ["user_org", numericId] });
+          qc.invalidateQueries({ queryKey: ["auth_guard_organization_count", numericId] });
           setSetupOpen(false);
           setActiveOrgId(newId);
           openSurvey(newId);

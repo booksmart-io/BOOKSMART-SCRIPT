@@ -1,6 +1,8 @@
 import { useEffect } from "react";
 import { useLocation } from "wouter";
+import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/hooks/use-auth";
+import { supabase } from "@/lib/supabase";
 
 interface AuthGuardProps {
   children: React.ReactNode;
@@ -10,6 +12,22 @@ interface AuthGuardProps {
 export function AuthGuard({ children, requiredRole }: AuthGuardProps) {
   const { session, profile, isLoading } = useAuth();
   const [location, setLocation] = useLocation();
+  const numericId = profile?.numericId ?? null;
+  const shouldRequireOrganization = requiredRole === "user" && location !== "/user/profile";
+
+  const { data: organizationCount, isLoading: organizationLoading } = useQuery<number>({
+    queryKey: ["auth_guard_organization_count", numericId],
+    enabled: !isLoading && !!session && requiredRole === "user" && numericId !== null,
+    staleTime: 30_000,
+    queryFn: async () => {
+      const { count, error } = await supabase
+        .from("organizations")
+        .select("id", { count: "exact", head: true })
+        .eq("owner_id", numericId!);
+      if (error) throw error;
+      return count ?? 0;
+    },
+  });
 
   useEffect(() => {
     if (isLoading) return;
@@ -35,9 +53,16 @@ export function AuthGuard({ children, requiredRole }: AuthGuardProps) {
         return;
       }
     }
-  }, [isLoading, session, profile, requiredRole, location, setLocation]);
+    if (shouldRequireOrganization) {
+      if (organizationLoading) return;
+      if ((organizationCount ?? 0) === 0) {
+        setLocation("/user/profile");
+        return;
+      }
+    }
+  }, [isLoading, session, profile, requiredRole, location, setLocation, shouldRequireOrganization, organizationLoading, organizationCount]);
 
-  if (isLoading) {
+  if (isLoading || (shouldRequireOrganization && organizationLoading)) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background">
         <div className="h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" />
@@ -47,6 +72,7 @@ export function AuthGuard({ children, requiredRole }: AuthGuardProps) {
 
   if (!session) return null;
   if (!session.user.email_confirmed_at) return null;
+  if (shouldRequireOrganization && (organizationCount ?? 0) === 0) return null;
 
   return <>{children}</>;
 }
