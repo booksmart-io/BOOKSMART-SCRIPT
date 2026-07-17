@@ -14,10 +14,12 @@ export function AuthGuard({ children, requiredRole }: AuthGuardProps) {
   const [location, setLocation] = useLocation();
   const numericId = profile?.numericId ?? null;
   const shouldRequireOrganization = requiredRole === "user" && location !== "/user/profile";
+  const waitingForProfile = !!session && !profile;
+  const waitingForNumericUserId = shouldRequireOrganization && !!profile && numericId === null;
 
   const { data: organizationCount, isLoading: organizationLoading } = useQuery<number>({
     queryKey: ["auth_guard_organization_count", numericId],
-    enabled: !isLoading && !!session && requiredRole === "user" && numericId !== null,
+    enabled: !isLoading && !!session && shouldRequireOrganization && numericId !== null,
     staleTime: 30_000,
     queryFn: async () => {
       const { count, error } = await supabase
@@ -35,6 +37,7 @@ export function AuthGuard({ children, requiredRole }: AuthGuardProps) {
       setLocation("/login");
       return;
     }
+    if (waitingForProfile) return;
     if (!session.user.email_confirmed_at) {
       setLocation("/verify-email");
       return;
@@ -54,15 +57,16 @@ export function AuthGuard({ children, requiredRole }: AuthGuardProps) {
       }
     }
     if (shouldRequireOrganization) {
+      if (waitingForNumericUserId) return;
       if (organizationLoading) return;
       if ((organizationCount ?? 0) === 0) {
         setLocation("/user/profile");
         return;
       }
     }
-  }, [isLoading, session, profile, requiredRole, location, setLocation, shouldRequireOrganization, organizationLoading, organizationCount]);
+  }, [isLoading, session, profile, requiredRole, location, setLocation, shouldRequireOrganization, waitingForProfile, waitingForNumericUserId, organizationLoading, organizationCount]);
 
-  if (isLoading || (shouldRequireOrganization && organizationLoading)) {
+  if (isLoading || waitingForProfile || waitingForNumericUserId || (shouldRequireOrganization && organizationLoading)) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background">
         <div className="h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" />
@@ -72,6 +76,7 @@ export function AuthGuard({ children, requiredRole }: AuthGuardProps) {
 
   if (!session) return null;
   if (!session.user.email_confirmed_at) return null;
+  if (waitingForProfile || waitingForNumericUserId) return null;
   if (shouldRequireOrganization && (organizationCount ?? 0) === 0) return null;
 
   return <>{children}</>;
