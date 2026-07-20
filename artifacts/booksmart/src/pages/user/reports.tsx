@@ -64,14 +64,37 @@ function fmtTrendTick(v: number) {
   if (Math.abs(v) >= 1_000) return `$${Math.round(v / 1_000)}K`;
   return `$${v}`;
 }
+function getNiceTrendScale(rows: Array<Record<string, unknown>>, keys: string[]) {
+  const maxValue = rows.reduce((max, row) => {
+    const rowMax = keys.reduce((innerMax, key) => {
+      const value = typeof row[key] === "number" ? Math.abs(row[key] as number) : 0;
+      return Math.max(innerMax, value);
+    }, 0);
+    return Math.max(max, rowMax);
+  }, 0);
+
+  if (maxValue <= 0) {
+    return { ticks: [0, 25, 50, 75], domain: [0, 75] as [number, number], topLabel: "$75" };
+  }
+
+  const rawStep = maxValue / 3;
+  const magnitude = 10 ** Math.floor(Math.log10(rawStep));
+  const normalized = rawStep / magnitude;
+  const niceStep = normalized <= 1 ? 1 : normalized <= 2 ? 2 : normalized <= 5 ? 5 : 10;
+  const step = niceStep * magnitude;
+  const top = step * 3;
+  return {
+    ticks: [0, step, step * 2, top],
+    domain: [0, top] as [number, number],
+    topLabel: fmtTrendTick(top),
+  };
+}
 const trendChartPanelStyle = {
   background: "#061f49",
   border: "1px solid rgba(43,127,255,0.38)",
   borderRadius: 12,
 };
 const trendChartGrid = "rgba(120,160,220,0.2)";
-const trendChartTicks = [0, 500000, 1000000, 1500000];
-const trendChartDomain: [number, number] = [0, 1500000];
 const trendAxisTick = { fontSize: 9, fill: "rgba(172,190,226,0.72)" };
 const trendTooltipStyle = {
   background: "#082754",
@@ -227,18 +250,29 @@ function getPrevRange(period: Period): { start: Date; end: Date } {
 /** Group transactions into time buckets for the chart */
 function buildTrendData(txs: Transaction[], period: Period) {
   const buckets: Map<string, { revenue: number; expenses: number }> = new Map();
+  const labels: Map<string, string> = new Map();
   const order: string[] = [];
 
-  const addBucket = (key: string) => {
+  const addBucket = (key: string, label: string) => {
     if (!buckets.has(key)) {
       buckets.set(key, { revenue: 0, expenses: 0 });
+      labels.set(key, label);
       order.push(key);
     }
   };
 
-  const monthKey = (d: Date) => d.toLocaleDateString("en-US", { month: "short", year: "2-digit" });
-  const dayKey = (d: Date) => d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  const parseTxDate = (value: string) => {
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  };
+  const monthId = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+  const dayId = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  const monthLabel = (d: Date) => d.toLocaleDateString("en-US", { month: "short", year: "2-digit" });
+  const dayLabel = (d: Date) => d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
   const { start, end } = getPeriodRange(period);
+  const datedTxs = txs
+    .map((tx) => ({ tx, date: parseTxDate(tx.date_time) }))
+    .filter((item): item is { tx: Transaction; date: Date } => item.date !== null);
 
   if (period === "7d" || period === "30d") {
     const cursor = new Date(start);
@@ -246,25 +280,29 @@ function buildTrendData(txs: Transaction[], period: Period) {
     const last = new Date(end);
     last.setHours(0, 0, 0, 0);
     while (cursor <= last) {
-      addBucket(dayKey(cursor));
+      addBucket(dayId(cursor), dayLabel(cursor));
       cursor.setDate(cursor.getDate() + 1);
     }
+  } else if (period === "all" && datedTxs.length > 0) {
+    for (const { date } of datedTxs) {
+      addBucket(monthId(date), monthLabel(date));
+    }
+    order.sort();
   } else {
     const monthCount = period === "3m" ? 4 : 13;
     const cursor = new Date(end.getFullYear(), end.getMonth() - (monthCount - 1), 1);
     for (let i = 0; i < monthCount; i += 1) {
-      addBucket(monthKey(cursor));
+      addBucket(monthId(cursor), monthLabel(cursor));
       cursor.setMonth(cursor.getMonth() + 1);
     }
   }
 
-  for (const tx of txs) {
-    const d = new Date(tx.date_time);
+  for (const { tx, date: d } of datedTxs) {
     let key: string;
     if (period === "7d" || period === "30d") {
-      key = dayKey(d);
+      key = dayId(d);
     } else {
-      key = monthKey(d);
+      key = monthId(d);
     }
     if (!buckets.has(key)) continue;
     const b = buckets.get(key)!;
@@ -273,10 +311,10 @@ function buildTrendData(txs: Transaction[], period: Period) {
   }
 
   return order
-    .map((label) => {
-      const v = buckets.get(label) ?? { revenue: 0, expenses: 0 };
+    .map((key) => {
+      const v = buckets.get(key) ?? { revenue: 0, expenses: 0 };
       return {
-      label,
+      label: labels.get(key) ?? key,
       revenue: Math.round(v.revenue),
       expenses: Math.round(v.expenses),
       netCash: Math.round(v.revenue - v.expenses),
@@ -1945,9 +1983,10 @@ Respond with ONLY valid JSON, no explanation:
   }
 
   // ── Current period transactions ─────────────────────────────────────────────
-  const { start, end } = getPeriodRange(period);
+  const txPeriod = tab === "pl" ? plPeriod : period;
+  const { start, end } = getPeriodRange(txPeriod);
   const { data: txs = [], isLoading } = useQuery<Transaction[]>({
-    queryKey: ["tx_period", orgId, period],
+    queryKey: ["tx_period", orgId, txPeriod],
     enabled: orgId != null,
     staleTime: 60 * 1000,
     queryFn: async () => {
@@ -1964,9 +2003,9 @@ Respond with ONLY valid JSON, no explanation:
   });
 
   // ── Previous period transactions ────────────────────────────────────────────
-  const { start: prevStart, end: prevEnd } = getPrevRange(period);
+  const { start: prevStart, end: prevEnd } = getPrevRange(txPeriod);
   const { data: prevTxs = [] } = useQuery<{ amount: number; title: string }[]>({
-    queryKey: ["tx_prev_period", orgId, period],
+    queryKey: ["tx_prev_period", orgId, txPeriod],
     enabled: orgId != null,
     staleTime: 2 * 60 * 1000,
     queryFn: async () => {
@@ -2150,7 +2189,7 @@ Respond with ONLY valid JSON, no explanation:
   ));
 
   // Trend chart data
-  const trendData = useMemo(() => buildTrendData(txs, period), [txs, period]);
+  const trendData = useMemo(() => buildTrendData(txs, txPeriod), [txs, txPeriod]);
 
   // Period label
   const periodLabel = `${start.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })} – ${end.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`;
@@ -2694,6 +2733,18 @@ Respond with ONLY valid JSON, no explanation:
       "Net Income": p.pnl?.netIncome ?? 0,
     }));
   }, [hasPnlPeriodDocs, pnlPeriods, trendData]);
+  const financialTrendScale = useMemo(
+    () => getNiceTrendScale(trendData, ["revenue", "expenses", "netCash", "profit"]),
+    [trendData],
+  );
+  const pnlTrendScale = useMemo(
+    () => getNiceTrendScale(pnlChartData, ["Revenue", "Expenses", "Net Income"]),
+    [pnlChartData],
+  );
+  const cashFlowTrendScale = useMemo(
+    () => getNiceTrendScale(trendData, cfShowPaid ? ["revenue", "netCash"] : ["revenue", "expenses", "netCash", "profit"]),
+    [cfShowPaid, trendData],
+  );
 
   // Period-over-period growth % for Revenue, Expenses (COGS+Opex), and COGS
   // alone — computed strictly from the same uploaded/manual P&L statements
@@ -3104,7 +3155,7 @@ Respond with ONLY valid JSON, no explanation:
                 <Card className="lg:col-span-2 shadow-none" style={trendChartPanelStyle}>
                   <CardHeader className="pb-0 pt-4 px-4">
                     <CardTitle className="text-sm font-semibold text-[#DCE8FF]">Financial Trend</CardTitle>
-                    <p className="text-[10px] text-[#8EA5D2]">$1.5M</p>
+                    <p className="text-[10px] text-[#8EA5D2]">{financialTrendScale.topLabel}</p>
                   </CardHeader>
                   <CardContent className="pb-3 px-4 pt-0">
                     {trendData.length === 0 ? (
@@ -3127,7 +3178,7 @@ Respond with ONLY valid JSON, no explanation:
                             </defs>
                             <CartesianGrid vertical={false} stroke={trendChartGrid} />
                             <XAxis dataKey="label" tick={trendAxisTick} tickLine={false} axisLine={false} interval="preserveStartEnd" />
-                            <YAxis tick={trendAxisTick} tickLine={false} axisLine={false} tickFormatter={fmtTrendTick} ticks={trendChartTicks} domain={trendChartDomain} width={58} />
+                            <YAxis tick={trendAxisTick} tickLine={false} axisLine={false} tickFormatter={fmtTrendTick} ticks={financialTrendScale.ticks} domain={financialTrendScale.domain} width={58} />
                             <Tooltip
                               contentStyle={trendTooltipStyle}
                               labelStyle={{ color: "#EAF2FF" }}
@@ -3335,7 +3386,7 @@ Respond with ONLY valid JSON, no explanation:
                   <div className="flex items-center justify-between">
                     <div>
                       <CardTitle className="text-sm font-semibold text-[#DCE8FF]">P &amp; L Trends</CardTitle>
-                      <p className="text-[10px] text-[#8EA5D2] mt-0.5">$1.5M</p>
+                      <p className="text-[10px] text-[#8EA5D2] mt-0.5">{pnlTrendScale.topLabel}</p>
                     </div>
                     <div className="flex items-center gap-2">
                       <button className="text-[10px] font-medium text-[#8EA5D2] border border-[#2B7FFF]/35 rounded px-2 py-1 hover:text-[#EAF2FF] transition-colors">
@@ -3373,7 +3424,7 @@ Respond with ONLY valid JSON, no explanation:
                           </defs>
                           <CartesianGrid vertical={false} stroke={trendChartGrid} />
                           <XAxis dataKey="label" tick={trendAxisTick} axisLine={false} tickLine={false} interval="preserveStartEnd" />
-                          <YAxis tick={trendAxisTick} axisLine={false} tickLine={false} tickFormatter={fmtTrendTick} ticks={trendChartTicks} domain={trendChartDomain} width={58} />
+                          <YAxis tick={trendAxisTick} axisLine={false} tickLine={false} tickFormatter={fmtTrendTick} ticks={pnlTrendScale.ticks} domain={pnlTrendScale.domain} width={58} />
                           <Tooltip
                             contentStyle={trendTooltipStyle}
                             labelStyle={{ color: "#EAF2FF" }}
@@ -3944,7 +3995,7 @@ Respond with ONLY valid JSON, no explanation:
             <div className="flex items-start justify-between mb-1">
               <div>
                 <p className="text-sm font-semibold text-[#DCE8FF]">Cash Flow Trend</p>
-                <p className="text-[10px] text-[#8EA5D2] mt-0.5">$1.5M</p>
+                <p className="text-[10px] text-[#8EA5D2] mt-0.5">{cashFlowTrendScale.topLabel}</p>
                 {/* Reference chart keeps this header compact. */}
                 {false && <p className="hidden">
                   {cfShowPaid
@@ -3984,7 +4035,7 @@ Respond with ONLY valid JSON, no explanation:
                     </defs>
                     <CartesianGrid vertical={false} stroke={trendChartGrid} />
                     <XAxis dataKey="label" tick={trendAxisTick} axisLine={false} tickLine={false} interval="preserveStartEnd" />
-                    <YAxis tick={trendAxisTick} tickFormatter={fmtTrendTick} ticks={trendChartTicks} domain={trendChartDomain} axisLine={false} tickLine={false} width={58} />
+                    <YAxis tick={trendAxisTick} tickFormatter={fmtTrendTick} ticks={cashFlowTrendScale.ticks} domain={cashFlowTrendScale.domain} axisLine={false} tickLine={false} width={58} />
                     <Tooltip
                       formatter={(v: number) => fmt(v)}
                       contentStyle={trendTooltipStyle}

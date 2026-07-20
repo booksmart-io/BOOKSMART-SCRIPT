@@ -174,3 +174,10 @@ ALTER TABLE users
 
 CREATE INDEX IF NOT EXISTS users_active_org_id_idx
   ON users (active_org_id);
+
+-- Track clients who signed up from a CPA referral link.
+ALTER TABLE users
+  ADD COLUMN IF NOT EXISTS referred_by_cpa_id BIGINT REFERENCES users(id) ON DELETE SET NULL;
+
+CREATE INDEX IF NOT EXISTS users_referred_by_cpa_id_idx
+  ON users (referred_by_cpa_id);

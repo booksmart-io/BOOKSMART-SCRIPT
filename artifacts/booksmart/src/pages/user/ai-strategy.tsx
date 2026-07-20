@@ -28,6 +28,7 @@ type Difficulty = "Easy" | "Medium" | "Hard";
 type Status     = "New" | "Recommended" | "Action Required";
 type TabKey     = "strategy" | "deduction";
 type TaxType    = "Federal" | "State";
+type DeductionPeriod = "year" | "all";
 
 type Strategy = {
   title: string; description: string; savings: number;
@@ -328,6 +329,7 @@ export default function AiStrategy() {
 
   // ── AI Deduction state ───────────────────────────────────────────────────
   const curYear = new Date().getFullYear();
+  const [dedPeriod, setDedPeriod]         = useState<DeductionPeriod>("year");
   const [dedStart, setDedStart]           = useState(`${curYear}-01-01`);
   const [dedEnd, setDedEnd]               = useState(`${curYear}-12-31`);
   const [taxType, setTaxType]             = useState<TaxType>("Federal");
@@ -413,16 +415,21 @@ export default function AiStrategy() {
 
   // ── Deduction period transactions ─────────────────────────────────────────
   const { data: dedTxs = [], isLoading: dedLoading } = useQuery<Transaction[]>({
-    queryKey: ["tx_deductions", orgId, dedStart, dedEnd],
+    queryKey: ["tx_deductions", orgId, dedPeriod, dedStart, dedEnd],
     enabled:  orgId != null && tab === "deduction",
     staleTime: 60_000,
     queryFn:  async () => {
-      const { data } = await supabase.from("transactions")
+      let query = supabase.from("transactions")
         .select("id,title,amount,type,date_time,description,deductible,category_id,sub_category_id")
-        .eq("org_id", orgId!)
-        .gte("date_time", `${dedStart}T00:00:00`)
-        .lte("date_time", `${dedEnd}T23:59:59`)
-        .order("date_time", { ascending: false });
+        .eq("org_id", orgId!);
+
+      if (dedPeriod === "year") {
+        query = query
+          .gte("date_time", `${dedStart}T00:00:00`)
+          .lte("date_time", `${dedEnd}T23:59:59`);
+      }
+
+      const { data } = await query.order("date_time", { ascending: false });
       return data ?? [];
     },
   });
@@ -795,13 +802,29 @@ Rules:
               <p className="text-muted-foreground text-sm mt-0.5">Review AI-identified deductions and their impact on your taxes.</p>
             </div>
             <div className="flex items-center gap-2 flex-shrink-0">
+              <div className="flex items-center rounded-lg border border-border bg-muted p-1 text-xs text-foreground">
+                <button
+                  type="button"
+                  onClick={() => setDedPeriod("year")}
+                  className={`rounded-md px-3 py-1.5 transition-colors ${dedPeriod === "year" ? "bg-[#FFC72B] text-black" : "text-muted-foreground hover:text-foreground"}`}
+                >
+                  This Year
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setDedPeriod("all")}
+                  className={`rounded-md px-3 py-1.5 transition-colors ${dedPeriod === "all" ? "bg-[#FFC72B] text-black" : "text-muted-foreground hover:text-foreground"}`}
+                >
+                  All Time
+                </button>
+              </div>
               {/* Date range pill */}
-              <div className="flex items-center gap-2 rounded-lg border border-border bg-muted px-3 py-2 text-xs text-foreground">
+              <div className={`flex items-center gap-2 rounded-lg border border-border bg-muted px-3 py-2 text-xs text-foreground ${dedPeriod === "all" ? "opacity-60" : ""}`}>
                 <Calendar className="h-3.5 w-3.5 text-muted-foreground" />
-                <input type="date" value={dedStart} onChange={e => setDedStart(e.target.value)}
+                <input type="date" value={dedStart} onChange={e => { setDedPeriod("year"); setDedStart(e.target.value); }}
                   className="bg-transparent focus:outline-none text-xs w-[96px]" />
                 <span className="text-muted-foreground">-</span>
-                <input type="date" value={dedEnd} onChange={e => setDedEnd(e.target.value)}
+                <input type="date" value={dedEnd} onChange={e => { setDedPeriod("year"); setDedEnd(e.target.value); }}
                   className="bg-transparent focus:outline-none text-xs w-[96px]" />
                 <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
               </div>

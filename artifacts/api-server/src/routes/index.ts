@@ -15,6 +15,7 @@ import planLimitsRouter from "./plan-limits";
 import adminRouter from "./admin";
 import plaidRouter from "./plaid";
 import tokenUnlocksRouter from "./token-unlocks";
+import referralsRouter from "./referrals";
 
 const router: IRouter = Router();
 
@@ -34,5 +35,6 @@ router.use(planLimitsRouter);
 router.use(adminRouter);
 router.use(plaidRouter);
 router.use(tokenUnlocksRouter);
+router.use(referralsRouter);
 
 export default router;

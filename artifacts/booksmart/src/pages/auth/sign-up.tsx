@@ -17,6 +17,12 @@ export default function SignUp() {
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [, setLocation] = useLocation();
+  const referralParam = typeof window !== "undefined"
+    ? new URLSearchParams(window.location.search).get("ref")
+    : null;
+  const referralCpaId = referralParam && Number.isFinite(Number(referralParam)) && Number(referralParam) > 0
+    ? Number(referralParam)
+    : null;
 
   const handleSignUp = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -68,6 +74,7 @@ export default function SignUp() {
           last_name: "",
           phone_number: "",
           verification_status: role === "cpa" ? "pending" : null,
+          referred_by_cpa_id: role === "user" ? referralCpaId : null,
         });
 
         if (userRowError && userRowError.code !== "23505") {
@@ -96,6 +103,9 @@ export default function SignUp() {
           <div className="mb-9 text-center">
             <h1 className="text-lg font-bold text-foreground">Create Account</h1>
             <p className="mt-2 text-sm text-muted-foreground">Sign up to get started with BookSmart</p>
+            {referralCpaId && (
+              <p className="mt-2 text-xs font-medium text-primary">CPA referral detected</p>
+            )}
           </div>
 
           <div className="space-y-4">
