@@ -147,13 +147,14 @@ router.post("/admin/set-plan", async (req, res) => {
 
     const { SUBSCRIPTION_PLANS } = await import("../lib/stripe-catalog");
 
-    const { data: existingSub } = await admin
+    const { data: existingSub, error: existingSubError } = await admin
       .from("subscriptions")
       .select("id")
       .eq("user_id", authId)
       .order("created_at", { ascending: false })
       .limit(1)
       .maybeSingle();
+    if (existingSubError) throw existingSubError;
 
     const now = new Date();
     const periodEnd = new Date(now);
@@ -172,26 +173,40 @@ router.post("/admin/set-plan", async (req, res) => {
     }
 
     const plan = SUBSCRIPTION_PLANS[tier as "plus" | "pro"];
+    // Admin plan overrides are not real Stripe subscriptions. Keep the write to
+    // the fields BookSmart actually reads when resolving plan access so it works
+    // even if optional Stripe metadata columns are absent in an older database.
     const fields = {
       status: "active",
       stripe_price_id: plan.priceId,
-      stripe_product_id: plan.productId,
-      current_period_start: now.toISOString(),
       current_period_end: periodEnd.toISOString(),
-      cancel_at_period_end: false,
     };
 
     if (existingSub) {
       const { error } = await admin.from("subscriptions").update(fields).eq("id", existingSub.id as number);
       if (error) throw error;
     } else {
-      const { error } = await admin.from("subscriptions").insert({ user_id: authId, ...fields });
+      const { error } = await admin.from("subscriptions").insert({
+        user_id: authId,
+        stripe_customer_id: `admin_override_customer_${authId}`,
+        stripe_subscription_id: `admin_override_subscription_${authId}`,
+        stripe_product_id: plan.productId,
+        current_period_start: now.toISOString(),
+        cancel_at_period_end: false,
+        updated_at: now.toISOString(),
+        ...fields,
+      });
       if (error) throw error;
     }
 
     res.json({ ok: true, tier });
   } catch (e) {
-    res.status(502).json({ error: "admin_set_plan_error", message: String(e) });
+    const message = e && typeof e === "object" && "message" in e ? String((e as { message?: unknown }).message) : String(e);
+    const details = e && typeof e === "object" && "details" in e ? String((e as { details?: unknown }).details) : undefined;
+    const hint = e && typeof e === "object" && "hint" in e ? String((e as { hint?: unknown }).hint) : undefined;
+    const code = e && typeof e === "object" && "code" in e ? String((e as { code?: unknown }).code) : undefined;
+    console.error("[admin/set-plan]", { message, details, hint, code });
+    res.status(502).json({ error: "admin_set_plan_error", message, details, hint, code });
   }
 });
 

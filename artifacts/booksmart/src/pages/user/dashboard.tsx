@@ -11,11 +11,11 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import {
   Flame, Star, Lock, Coins, FileText, BarChart2, MessageSquare, Lightbulb,
-  Folder, CreditCard, Upload, Trophy, TrendingUp, ShieldCheck, Loader2, Sparkles,
-  ArrowRight, Wallet,
+  CreditCard, Upload, ShieldCheck, Loader2, Sparkles, ArrowRight, Wallet,
+  CheckCircle2, CircleAlert, Landmark,
 } from "lucide-react";
 
-// ─── Types ───────────────────────────────────────────────────────────────────
+// Types
 
 type Transaction = {
   id: number; title: string; amount: number; type: string;
@@ -33,7 +33,13 @@ type DashboardOrder = {
   cpa: { first_name: string | null; last_name: string | null } | null;
 };
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
+type SubscriptionStatus = {
+  tier?: string;
+  tokenBalance?: number;
+  status?: string | null;
+};
+
+// Helpers
 
 function formatMoney(v: number) {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(v);
@@ -49,7 +55,7 @@ function startOfMonth() {
   return new Date(d.getFullYear(), d.getMonth(), 1).toISOString();
 }
 
-// BPS score → level/title
+// BPS score to level/title
 function calcBPS({ txCount, docCount, hasOrg, profileComplete, netPositive, hasPendingReview }: {
   txCount: number; docCount: number; hasOrg: boolean;
   profileComplete: boolean; netPositive: boolean; hasPendingReview: boolean;
@@ -77,7 +83,7 @@ function bpsLevel(score: number) {
   return { level: 1, title: "Starter", next: "Beginner" };
 }
 
-// ─── BPS Gauge ───────────────────────────────────────────────────────────────
+// BPS Gauge
 
 function BPSGauge({ score }: { score: number }) {
   const startDeg = 150;
@@ -142,7 +148,7 @@ function BPSGauge({ score }: { score: number }) {
   );
 }
 
-// ─── Main Dashboard ───────────────────────────────────────────────────────────
+// Main Dashboard
 
 export default function UserDashboard() {
   const { user, profile } = useAuth();
@@ -158,7 +164,7 @@ export default function UserDashboard() {
   const [insightUnlocked, setInsightUnlocked] = useState(false);
   const [surveyOpen, setSurveyOpen] = useState(false);
 
-  // ── Org lookup ──────────────────────────────────────────────────────────────
+  // Org lookup
   const { data: orgData, isLoading: orgLoading } = useQuery<{ id: number } | null>({
     queryKey: ["user_org", numericId, activeOrgId],
     enabled: numericId !== null,
@@ -187,7 +193,7 @@ export default function UserDashboard() {
     setSurveyOpen(true);
   }, [orgId]);
 
-  // ── Real-time tx updates ────────────────────────────────────────────────────
+  // Real-time tx updates
   useEffect(() => {
     if (!orgId) return;
     const ch = supabase.channel(`transactions:org_${orgId}`)
@@ -200,7 +206,7 @@ export default function UserDashboard() {
     return () => { supabase.removeChannel(ch); };
   }, [orgId, qc]);
 
-  // ── Queries ─────────────────────────────────────────────────────────────────
+  // Queries
   const { data: monthTxs = [], isLoading: monthLoading } = useQuery<Transaction[]>({
     queryKey: ["tx_month", orgId],
     enabled: orgId != null,
@@ -311,7 +317,50 @@ export default function UserDashboard() {
     },
   });
 
-  // ── Derived metrics ─────────────────────────────────────────────────────────
+  // Derived metrics
+  const { data: subscriptionStatus } = useQuery<SubscriptionStatus>({
+    queryKey: ["dashboard_subscription_status", numericId],
+    enabled: numericId !== null,
+    staleTime: 60 * 1000,
+    queryFn: async () => {
+      const { data: session } = await supabase.auth.getSession();
+      const token = session.session?.access_token;
+      const res = await fetch("/api/stripe/status", {
+        headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      });
+      if (!res.ok) return { tier: "free", tokenBalance: liveTokens };
+      return await res.json() as SubscriptionStatus;
+    },
+  });
+
+  const { data: connectedBankCount = 0 } = useQuery<number>({
+    queryKey: ["dashboard_connected_banks", orgId],
+    enabled: orgId !== null,
+    staleTime: 60 * 1000,
+    queryFn: async () => {
+      const { count, error } = await supabase.from("plaid_items")
+        .select("id", { count: "exact", head: true })
+        .eq("org_id", orgId!)
+        .eq("status", "active");
+      if (error) return 0;
+      return count ?? 0;
+    },
+  });
+
+  const { data: uncategorizedCount = 0 } = useQuery<number>({
+    queryKey: ["dashboard_uncategorized_count", orgId],
+    enabled: orgId !== null,
+    staleTime: 60 * 1000,
+    queryFn: async () => {
+      const { count, error } = await supabase.from("transactions")
+        .select("id", { count: "exact", head: true })
+        .eq("org_id", orgId!)
+        .or("category_id.is.null,sub_category_id.is.null");
+      if (error) return 0;
+      return count ?? 0;
+    },
+  });
+
   const snapshot = computeFinancialSnapshot(monthTxs, statementDocs);
   const { income, expenses, netProfit } = snapshot;
   const lastMonthIncome = lastMonthTxs.filter(t => t.amount > 0).reduce((s, t) => s + t.amount, 0);
@@ -325,9 +374,6 @@ export default function UserDashboard() {
   const xpTotal = allTxCount * 50 + docCount * 100;
   const recentDays = new Set(recentTxs.map(t => t.date_time.split("T")[0])).size;
   const streakDays = Math.min(7, recentDays);
-
-  const cashFlowPct = income + expenses === 0 ? 0 : Math.min(100, Math.round((income / (income + expenses)) * 100));
-  const taxReadinessPct = Math.min(100, Math.round((docCount / 4) * 100));
   const revGrowthPct = lastMonthIncome === 0 ? (income > 0 ? 100 : 0) : Math.min(100, Math.round((income / lastMonthIncome) * 100));
 
   // Dun & Bradstreet proxy score (based on BPS)
@@ -340,56 +386,57 @@ export default function UserDashboard() {
   const levelCeil  = [0, 15, 25, 35, 45, 55, 65, 75, 85, 95, 100][bpsInfo.level] ?? 100;
   const levelPct   = levelCeil === levelFloor ? 100 : Math.round(((bpsScore - levelFloor) / (levelCeil - levelFloor)) * 100);
 
-  // XP available from uncompleted missions
-  const xpPotential = [550, 120, 75, 90].reduce((a, b) => a + b, 0);
-
   const firstName = profile?.full_name?.split(" ")[0] ?? user?.email?.split("@")[0] ?? "there";
+  const planTier = (subscriptionStatus?.tier ?? "free").toLowerCase();
+  const planLabel = planTier.charAt(0).toUpperCase() + planTier.slice(1);
 
-  // Missions (matching Flutter screenshot)
-  const missions = [
+  const actionItems = [
     {
-      icon: <Folder className="h-[15px] w-[15px] text-emerald-200" />,
-      iconBg: "bg-emerald-600",
-      title: "Categorize 5 uncategorized transactions",
-      xp: "+550 XP",
-      done: pendingCount === 0 && allTxCount >= 5,
-      href: "/user/reports?tab=transactions",
+      icon: <Landmark className="h-[17px] w-[17px] text-emerald-200" />,
+      iconBg: "bg-emerald-600/90",
+      title: connectedBankCount > 0 ? "Manage bank connections" : "Connect bank account",
+      detail: connectedBankCount > 0 ? `${connectedBankCount} active bank connection${connectedBankCount === 1 ? "" : "s"}` : "Import transactions automatically with Plaid.",
+      href: "/user/reports",
+      cta: connectedBankCount > 0 ? "View" : "Connect",
     },
     {
-      icon: <CreditCard className="h-[15px] w-[15px] text-orange-200" />,
-      iconBg: "bg-orange-500",
-      title: "Pay down credit card balance",
-      xp: "+120 XP",
-      done: netPositive && expenses > 0,
-      href: "/user/reports?tab=transactions",
+      icon: <Upload className="h-[17px] w-[17px] text-blue-200" />,
+      iconBg: "bg-blue-600/90",
+      title: "Upload documents",
+      detail: `${docCount} document${docCount === 1 ? "" : "s"} uploaded for reports, tax, and AI context.`,
+      href: "/user/reports",
+      cta: "Upload",
     },
     {
-      icon: <Upload className="h-[15px] w-[15px] text-blue-200" />,
-      iconBg: "bg-blue-600",
-      title: "Upload receipts for deductions",
-      xp: "+75 XP",
-      done: docCount > 0,
-      href: "/user/tax",
+      icon: <CreditCard className="h-[17px] w-[17px] text-orange-200" />,
+      iconBg: "bg-orange-500/90",
+      title: "Review transactions",
+      detail: `${allTxCount} transaction${allTxCount === 1 ? "" : "s"} imported, ${uncategorizedCount} need categorization.`,
+      href: "/user/reports",
+      cta: "Review",
     },
     {
-      icon: <Lightbulb className="h-[15px] w-[15px] text-purple-200" />,
-      iconBg: "bg-purple-600",
-      title: "Review tax strategy suggestion",
-      xp: "+90 XP",
-      done: insightUnlocked,
+      icon: <Lightbulb className="h-[17px] w-[17px] text-purple-200" />,
+      iconBg: "bg-purple-600/90",
+      title: "Open AI strategy",
+      detail: "Review deductions, strategy, and AI guidance for the active business.",
       href: "/user/ai-strategy",
+      cta: "Open",
     },
   ];
 
-  // Achievements (matching Flutter screenshot)
-  const achievements = [
-    { icon: <Trophy className="h-5 w-5 text-amber-400" />, label: "First $10k Month", done: income >= 10000 },
-    { icon: <Flame className="h-5 w-5 text-orange-400" />, label: "30-Day Profit Streak", done: streakDays >= 7 },
-    { icon: <TrendingUp className="h-5 w-5 text-blue-400" />, label: "Revenue Growth", done: income > lastMonthIncome && lastMonthIncome > 0 },
-    { icon: <ShieldCheck className="h-5 w-5 text-purple-400" />, label: "Tax Doc Ready", done: docCount >= 4 },
+  const readinessItems = [
+    { label: "Business profile", detail: orgId ? "Active business selected" : "Create a business profile", complete: orgId !== null },
+    { label: "User profile", detail: profileComplete ? "Name and phone saved" : "Add name and phone", complete: profileComplete },
+    { label: "Bank connection", detail: connectedBankCount > 0 ? `${connectedBankCount} connected` : "No bank connected yet", complete: connectedBankCount > 0 },
+    { label: "Documents", detail: docCount > 0 ? `${docCount} uploaded` : "Upload financial or tax documents", complete: docCount > 0 },
+    { label: "Transactions", detail: allTxCount > 0 ? `${allTxCount} available` : "Upload or sync transactions", complete: allTxCount > 0 },
+    { label: "Categories", detail: uncategorizedCount === 0 && allTxCount > 0 ? "All transactions categorized" : `${uncategorizedCount} need review`, complete: uncategorizedCount === 0 && allTxCount > 0 },
   ];
+  const readinessComplete = readinessItems.filter(item => item.complete).length;
+  const readinessPct = Math.round((readinessComplete / readinessItems.length) * 100);
 
-  // ── AI Insight unlock ──────────────────────────────────────────────────────
+  // AI Insight unlock
   async function unlockAiInsight() {
     if (liveTokens < 150) {
       toast({ title: "Insufficient tokens", description: "You need at least 150 tokens.", variant: "destructive" });
@@ -454,7 +501,7 @@ difficulty must be "Easy", "Medium", or "Hard". savings is a USD number.`;
 
   const _ = { monthLoading, revGrowthPct, activeOrders };  // silence unused warnings
 
-  // ── Render ─────────────────────────────────────────────────────────────────
+  // Render
   return (
     <div className="min-h-0">
       <div className="relative -top-2 mb-2 flex justify-start sm:-top-9 sm:mb-0 sm:h-0 sm:justify-end items-center gap-5 pr-1 text-[14px] font-semibold">
@@ -468,13 +515,13 @@ difficulty must be "Easy", "Medium", or "Hard". savings is a USD number.`;
         </span>
       </div>
 
-      {/* ── 2-column grid: main content + right sidebar ── */}
+      {/* 2-column grid: main content + right sidebar */}
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_350px]">
 
-        {/* ════════════ LEFT / MAIN ════════════ */}
+        {/* LEFT / MAIN */}
         <div className="space-y-4 min-w-0">
 
-          {/* ── BPS Card ── */}
+          {/* BPS Card */}
           <Card>
             <CardContent className="px-5 pt-4 pb-5 min-h-[296px] flex flex-col">
               {/* Card title + streak/XP */}
@@ -519,52 +566,46 @@ difficulty must be "Easy", "Medium", or "Hard". savings is a USD number.`;
                     <span>Streak: {(xpTotal / 1000).toFixed(3)}</span>
                   </div>
 
-                  {/* XP potential chip — matches Flutter "Todays XP Potential:" chip */}
+                  {/* Setup progress chip */}
                   <div className="ml-auto flex items-center justify-between gap-2 bg-[#29415f] border border-white/10 rounded-full px-5 py-2 w-[445px] max-w-full">
-                    <span className="text-[12px] text-muted-foreground">Todays XP Potential:</span>
-                    <span className="text-[13px] font-bold text-primary">+{xpPotential - missions.filter(m => m.done).reduce((sum, _, i) => sum + [550, 120, 75, 90][i], 0)} XP</span>
+                    <span className="text-[12px] text-muted-foreground">Business setup:</span>
+                    <span className="text-[13px] font-bold text-primary">{readinessComplete}/{readinessItems.length} complete</span>
                   </div>
                 </div>
               </div>
             </CardContent>
           </Card>
 
-          {/* ── Missions + AI Insight row ── */}
+          {/* Action Center + AI Insight row */}
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
 
             {/* Today's Missions */}
             <Card>
               <CardContent className="p-0 min-h-[316px]">
                 <div className="px-5 pt-4 pb-3">
-                  <p className="text-[14px] font-bold">Today's Missions</p>
+                  <p className="text-[15px] font-bold">Action Center</p>
+                  <p className="text-[12px] text-muted-foreground mt-1">Quick access to the setup and finance tasks that are live now.</p>
                 </div>
                 <div className="px-4 pb-4 space-y-2">
-                  {missions.map(m => {
-                    const inner = (
-                      <div className={`flex items-center gap-3 rounded-xl px-3 py-2.5 transition-colors
-                        ${m.done ? "bg-muted/8 opacity-60" : "bg-muted/12 hover:bg-muted/20 cursor-pointer"}`}>
-                        {/* Colored square icon — matches Flutter Card indicator bar style */}
-                        <div className={`h-8 w-8 flex-shrink-0 rounded-lg flex items-center justify-center ${m.iconBg}`}>
-                          {m.icon}
+                  {actionItems.map(item => (
+                    <Link key={item.title} href={item.href}>
+                      <div className="flex items-center gap-3 rounded-xl bg-muted/12 px-3 py-3 transition-colors hover:bg-muted/20 cursor-pointer">
+                        <div className={`h-10 w-10 flex-shrink-0 rounded-lg flex items-center justify-center ${item.iconBg}`}>
+                          {item.icon}
                         </div>
-                        <span className={`text-[13px] flex-1 min-w-0 truncate ${m.done ? "line-through text-muted-foreground" : ""}`}>
-                          {m.title}
-                        </span>
-                        <span className={`text-[12px] font-semibold whitespace-nowrap flex-shrink-0
-                          ${m.done ? "text-muted-foreground" : "text-emerald-400"}`}>
-                          {m.done ? "Done ✓" : m.xp}
-                        </span>
+                        <div className="min-w-0 flex-1">
+                          <p className="text-[13px] font-semibold truncate">{item.title}</p>
+                          <p className="text-[11px] text-muted-foreground truncate mt-0.5">{item.detail}</p>
+                        </div>
+                        <span className="text-[12px] font-semibold text-primary whitespace-nowrap">{item.cta}</span>
                       </div>
-                    );
-                    return m.href && !m.done
-                      ? <Link key={m.title} href={m.href}>{inner}</Link>
-                      : <div key={m.title}>{inner}</div>;
-                  })}
+                    </Link>
+                  ))}
                 </div>
               </CardContent>
             </Card>
 
-            {/* AI Insight — dark gradient matching Flutter _FinancialDashboard custom palette */}
+            {/* AI Insight */}
             <Card style={{ background: "linear-gradient(135deg, #020e2c 0%, #071f4a 50%, #061a3d 100%)", borderColor: "rgba(255,255,255,0.08)" }}>
               <CardContent className="p-5 min-h-[316px] flex flex-col items-center justify-center text-center gap-1.5">
                 <p className="text-[15px] font-bold text-white">AI Insight</p>
@@ -573,7 +614,7 @@ difficulty must be "Easy", "Medium", or "Hard". savings is a USD number.`;
                 {insightLoading ? (
                   <div className="flex flex-col items-center gap-2 mt-4">
                     <Loader2 className="h-8 w-8 animate-spin text-primary" />
-                    <p className="text-[12px] text-white/50">Analyzing your finances…</p>
+                    <p className="text-[12px] text-white/50">Analyzing your finances...</p>
                   </div>
                 ) : insightUnlocked && insightData ? (
                   <>
@@ -631,91 +672,86 @@ difficulty must be "Easy", "Medium", or "Hard". savings is a USD number.`;
             </Card>
           </div>
 
-          {/* ── Achievements + Business Challenges row ── */}
+          {/* Readiness + Plan row */}
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-
-            {/* Achievements Unlocked */}
             <Card>
               <CardContent className="p-0">
                 <div className="px-5 pt-4 pb-3">
-                  <p className="text-[14px] font-bold">Achievements Unlocked</p>
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="text-[15px] font-bold">Business Readiness</p>
+                      <p className="text-[12px] text-muted-foreground mt-1">{readinessComplete} of {readinessItems.length} setup items complete</p>
+                    </div>
+                    <span className="text-[20px] font-bold text-primary">{readinessPct}%</span>
+                  </div>
+                  <div className="mt-3 h-1.5 bg-muted/25 rounded-full overflow-hidden">
+                    <div className="h-full bg-primary rounded-full transition-all duration-700" style={{ width: `${readinessPct}%` }} />
+                  </div>
                 </div>
                 <div className="px-4 pb-4 space-y-2">
-                  {achievements.map(a => (
-                    <div key={a.label} className={`flex items-center gap-3 rounded-xl px-3 py-3 transition-colors
-                      ${a.done ? "bg-muted/12" : "bg-muted/5 opacity-45"}`}>
-                      {/* Gold coin circle */}
-                      <div className="h-10 w-10 rounded-full bg-amber-500/15 flex items-center justify-center flex-shrink-0">
-                        {a.icon}
+                  {readinessItems.map(item => (
+                    <div key={item.label} className="flex items-center gap-3 rounded-xl bg-muted/10 px-3 py-2.5">
+                      <div className={`h-8 w-8 rounded-full flex items-center justify-center flex-shrink-0 ${item.complete ? "bg-emerald-500/15" : "bg-amber-500/15"}`}>
+                        {item.complete
+                          ? <CheckCircle2 className="h-4 w-4 text-emerald-400" />
+                          : <CircleAlert className="h-4 w-4 text-amber-400" />}
                       </div>
-                      <span className="text-[13px] font-medium flex-1 min-w-0">{a.label}</span>
-                      {a.done && (
-                        <span className="text-[10px] font-bold text-muted-foreground/70 border border-border/50 rounded px-1.5 py-0.5 uppercase tracking-wider flex-shrink-0">
-                          UNLOCKED
-                        </span>
-                      )}
+                      <div className="min-w-0 flex-1">
+                        <p className="text-[13px] font-semibold truncate">{item.label}</p>
+                        <p className="text-[11px] text-muted-foreground truncate">{item.detail}</p>
+                      </div>
                     </div>
                   ))}
                 </div>
               </CardContent>
             </Card>
 
-            {/* Business Challenges */}
             <Card>
-              <CardContent className="p-0">
-                <div className="px-5 pt-4 pb-3">
-                  <p className="text-[14px] font-bold">Business Challenges</p>
+              <CardContent className="p-5 min-h-[300px] flex flex-col">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-[15px] font-bold">Current Plan</p>
+                    <p className="text-[12px] text-muted-foreground mt-1">Subscription and token access for this account.</p>
+                  </div>
+                  <span className="rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-[12px] font-bold text-primary">{planLabel}</span>
                 </div>
-                <div className="px-4 pb-4 space-y-3">
-                  {[
-                    {
-                      title: "Cashflow Warrior Challenge",
-                      goal: "Goal: increase cashflow by 10%",
-                      progress: cashFlowPct,
-                      reward: "Profit Badge",
-                      href: "/user/reports?tab=cf",
-                    },
-                    {
-                      title: "Tax Readiness Sprint",
-                      goal: `Goal: upload 4 tax documents (${docCount}/4)`,
-                      progress: taxReadinessPct,
-                      reward: "Tax Pro Badge",
-                      href: "/user/reports?tab=pl",
-                    },
-                  ].map(c => (
-                    <Link key={c.title} href={c.href}>
-                      <div className="rounded-xl bg-muted/10 p-3 hover:bg-muted/18 transition-colors cursor-pointer">
-                        <div className="flex items-start justify-between gap-2">
-                          <div className="flex-1 min-w-0">
-                            <p className="text-[13px] font-semibold">{c.title}</p>
-                            <p className="text-[11px] text-muted-foreground mt-0.5">{c.goal}</p>
-                          </div>
-                          {/* Trophy icon — gold, matching Flutter */}
-                          <Trophy className="h-6 w-6 text-amber-400 flex-shrink-0 mt-0.5" />
-                        </div>
-                        <div className="mt-2.5">
-                          <div className="h-1.5 bg-muted/30 rounded-full overflow-hidden">
-                            <div className="h-full bg-primary rounded-full transition-all duration-700"
-                              style={{ width: `${c.progress}%` }} />
-                          </div>
-                          <div className="flex justify-between text-[10px] text-muted-foreground mt-1">
-                            <span>Progress: {c.progress}%</span>
-                            <span>Reward: {c.reward}</span>
-                          </div>
-                        </div>
-                      </div>
-                    </Link>
-                  ))}
+
+                <div className="mt-5 grid grid-cols-2 gap-3">
+                  <div className="rounded-xl bg-muted/10 p-4">
+                    <p className="text-[11px] text-muted-foreground">Tokens</p>
+                    <p className="text-[24px] font-bold mt-1">{liveTokens}</p>
+                  </div>
+                  <div className="rounded-xl bg-muted/10 p-4">
+                    <p className="text-[11px] text-muted-foreground">Banks</p>
+                    <p className="text-[24px] font-bold mt-1">{connectedBankCount}</p>
+                  </div>
+                  <div className="rounded-xl bg-muted/10 p-4">
+                    <p className="text-[11px] text-muted-foreground">Documents</p>
+                    <p className="text-[24px] font-bold mt-1">{docCount}</p>
+                  </div>
+                  <div className="rounded-xl bg-muted/10 p-4">
+                    <p className="text-[11px] text-muted-foreground">Transactions</p>
+                    <p className="text-[24px] font-bold mt-1">{allTxCount}</p>
+                  </div>
+                </div>
+
+                <div className="mt-auto pt-5 flex flex-col gap-2 sm:flex-row">
+                  <Link href="/user/subscription" className="flex-1">
+                    <Button className="w-full">{planTier === "pro" ? "Manage Plan" : "Upgrade Plan"}</Button>
+                  </Link>
+                  <Link href="/user/token" className="flex-1">
+                    <Button variant="outline" className="w-full">Buy Tokens</Button>
+                  </Link>
                 </div>
               </CardContent>
             </Card>
           </div>
         </div>
 
-        {/* ════════════ RIGHT SIDEBAR ════════════ */}
+        {/* RIGHT SIDEBAR */}
         <div className="space-y-4">
 
-          {/* ── Dun & Bradstreet Card ── */}
+          {/* Dun & Bradstreet Card */}
           <Card>
             <CardContent className="p-6 min-h-[296px] flex flex-col justify-between">
               {/* Header */}
@@ -742,7 +778,7 @@ difficulty must be "Easy", "Medium", or "Hard". savings is a USD number.`;
                 </div>
                 <div className="flex-1">
                   <p className="text-[18px] font-semibold text-emerald-400">{dbLabel}</p>
-                  <p className="text-[11px] text-muted-foreground">↓ {dbLabel}</p>
+                  <p className="text-[11px] text-muted-foreground">- {dbLabel}</p>
                 </div>
                 <ShieldCheck className="h-9 w-9 text-amber-400 flex-shrink-0" />
               </div>
@@ -793,7 +829,7 @@ difficulty must be "Easy", "Medium", or "Hard". savings is a USD number.`;
             </CardContent>
           </Card>
 
-          {/* ── Token Wallet ── */}
+          {/* Token Wallet */}
           <Card>
             <CardContent className="p-4 space-y-3">
               <p className="text-[13px] font-bold">Token Wallet</p>
@@ -829,20 +865,20 @@ difficulty must be "Easy", "Medium", or "Hard". savings is a USD number.`;
 
               <Link href="/user/token">
                 <button className="w-full mt-1 rounded-lg border border-border/40 text-[12px] font-medium text-muted-foreground py-1.5 hover:text-foreground hover:border-primary/40 transition-colors">
-                  View Wallet →
+                  View Wallet -&gt;
                 </button>
               </Link>
             </CardContent>
           </Card>
 
-          {/* ── Your CPA (active orders) ── */}
+          {/* Your CPA (active orders) */}
           {activeOrders.length > 0 && (
             <Card>
               <CardContent className="p-4">
                 <div className="flex items-center justify-between mb-3">
                   <p className="text-[13px] font-bold">Your CPA</p>
                   <Link href="/user/orders">
-                    <span className="text-[11px] text-muted-foreground hover:text-primary">All Orders →</span>
+                    <span className="text-[11px] text-muted-foreground hover:text-primary">All Orders -&gt;</span>
                   </Link>
                 </div>
                 <div className="space-y-2">
@@ -868,7 +904,7 @@ difficulty must be "Easy", "Medium", or "Hard". savings is a USD number.`;
         </div>
       </div>
 
-      {/* ── Hidden username usage to silence linter ── */}
+      {/* Hidden username usage to silence linter */}
       <span className="hidden">{firstName}</span>
       <BusinessSurveyDialog
         orgId={orgId}

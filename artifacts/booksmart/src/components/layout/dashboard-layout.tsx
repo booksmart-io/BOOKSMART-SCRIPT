@@ -7,6 +7,7 @@ import {
 import { useAuth } from "@/hooks/use-auth";
 import { useTheme } from "@/components/theme-provider";
 import { useUnreadCount } from "@/hooks/use-unread-count";
+import { SubscriptionUpgradePrompt } from "@/components/subscription-upgrade-prompt";
 import { Button } from "@/components/ui/button";
 import {
   LayoutDashboard, Gem, Copy, Scissors, MapPin, Coins, MessageSquare, Globe,
@@ -332,6 +333,8 @@ export function DashboardLayout({ children, role }: DashboardLayoutProps) {
             </div>
           </div>
         </main>
+
+        {role === "user" && <SubscriptionUpgradePrompt userId={profile?.numericId ?? null} />}
       </div>
     </SidebarProvider>
   );

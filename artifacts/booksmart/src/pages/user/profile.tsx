@@ -75,7 +75,7 @@ const INDUSTRIES = [
 ];
 
 const TAX_PREPARERS = ["Myself", "CPA", "Tax Preparer", "Bookkeeper"];
-const BUSINESS_STATUS = ["Startup", "Operating", "Seasonal", "Temporarily Closed"];
+const BUSINESS_STATUS = ["Startup", "Seasonal", "Temporarily Closed"];
 const EMPLOYEE_COUNTS = ["Just Me", "2 to 5", "6 to 10", "11 to 25", "26 to 50", "51 to 100", "100+"];
 const LOCATION_TYPES = ["Home Office", "Commercial Office", "Retail Store", "Warehouse", "Mobile Business", "Virtual Office"];
 const PAYMENT_PLATFORMS = ["Stripe", "Square", "PayPal", "Shopify", "Amazon", "Etsy", "Clover", "Toast", "Venmo", "Cash App", "Zelle", "Other"];
@@ -163,8 +163,6 @@ export default function Profile() {
   const [businessEmail, setBusinessEmail] = useState("");
   const [website, setWebsite] = useState("");
   const [businessDescription, setBusinessDescription] = useState("");
-  const [hasDba, setHasDba] = useState("no");
-  const [dba, setDba] = useState("");
   const [naics, setNaics] = useState("");
   const [businessStatus, setBusinessStatus] = useState("");
   const [yearEstablished, setYearEstablished] = useState("");
@@ -248,8 +246,6 @@ export default function Profile() {
     setWebsite(orgRow.website ?? "");
     const onboarding = orgRow.debts?.onboarding_profile as {
       business_description?: string | null;
-      dba?: string | null;
-      has_dba?: boolean | null;
       naics_code?: string | null;
       business_status?: string | null;
       year_established?: string | null;
@@ -315,8 +311,6 @@ export default function Profile() {
       legal?: { certified_accurate?: boolean | null; authorized_analysis?: boolean | null; accepted_terms?: boolean | null; accepted_privacy?: boolean | null };
     } | undefined;
     setBusinessDescription(onboarding?.business_description ?? "");
-    setHasDba(onboarding?.has_dba ? "yes" : "no");
-    setDba(onboarding?.dba ?? "");
     setNaics(onboarding?.naics_code ?? "");
     setBusinessStatus(onboarding?.business_status ?? "");
     setYearEstablished(onboarding?.year_established ?? "");
@@ -433,8 +427,6 @@ export default function Profile() {
       const onboardingProfile = {
         ...(existingDebts.onboarding_profile as Record<string, unknown> | undefined),
         business_description: businessDescription.trim() || null,
-        dba: hasDba === "yes" ? dba.trim() : null,
-        has_dba: hasDba === "yes",
         naics_code: naics.trim() || null,
         business_status: businessStatus || null,
         year_established: yearEstablished || null,
@@ -685,8 +677,6 @@ export default function Profile() {
                   <div className="grid gap-4 lg:grid-cols-2">
                     <TextField label="Legal Business Name *" value={businessName} onChange={setBusinessName} hideLabel />
                     <SelectField label="Business Type *" value={orgType} onChange={setOrgType} options={ENTITY_TYPES} placeholder="Select business type" />
-                    <SelectField label="Does Your Business Use a DBA?" value={hasDba} onChange={setHasDba} options={["no", "yes"]} />
-                    {hasDba === "yes" && <TextField label="DBA / Trade Name" value={dba} onChange={setDba} hideLabel />}
                     <SelectField label="Industry *" value={industry} onChange={setIndustry} options={INDUSTRIES} placeholder="Select industry" />
                     <TextField label="NAICS Code" value={naics} onChange={setNaics} hideLabel />
                     <SelectField label="Business Status" value={businessStatus} onChange={setBusinessStatus} options={BUSINESS_STATUS} placeholder="Select status" />

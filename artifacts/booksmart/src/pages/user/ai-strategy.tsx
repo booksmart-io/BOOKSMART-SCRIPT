@@ -188,7 +188,6 @@ function buildSurveyProfile(org: OrgRow | null | undefined): string {
       const addArray = (label: string, value: unknown) => {
         if (Array.isArray(value) && value.length) lines.push(`- ${label}: ${value.join(", ")}`);
       };
-      addText("DBA/trade name", onboarding.dba);
       addText("NAICS code", onboarding.naics_code);
       addText("Business description", onboarding.business_description);
       addText("Business status", onboarding.business_status);
@@ -248,7 +247,7 @@ function categoryLabelFor(t: Transaction, categories: Category[], subCategories:
   const cat = categories.find(c => c.id === t.category_id);
   const sub = subCategories.find(s => s.id === t.sub_category_id);
   if (sub) return sub.name;
-  if (cat) return "Uncategorized";
+  if (cat) return cat.name;
   return "Uncategorized";
 }
 

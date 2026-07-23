@@ -50,7 +50,7 @@ const INDUSTRIES = [
   "Nonprofit", "Other",
 ];
 
-const BUSINESS_STATUS = ["Startup", "Operating", "Seasonal", "Temporarily Closed"];
+const BUSINESS_STATUS = ["Startup", "Seasonal", "Temporarily Closed"];
 const EMPLOYEE_COUNTS = ["Just Me", "2 to 5", "6 to 10", "11 to 25", "26 to 50", "51 to 100", "100+"];
 const LOCATION_TYPES = ["Home Office", "Commercial Office", "Retail Store", "Warehouse", "Mobile Business", "Virtual Office"];
 const TAX_PREPARERS = ["Myself", "CPA", "Tax Preparer", "Bookkeeper"];
@@ -67,8 +67,6 @@ const FUNDING_PURPOSES = ["Working Capital", "Equipment", "Vehicle", "Commercial
 
 const INITIAL_FORM = {
   legalName: "",
-  hasDba: "no",
-  dba: "",
   entityType: "",
   industry: "",
   naics: "",
@@ -250,8 +248,6 @@ export default function BusinessSetupDialog({
     try {
       await checkAddBusiness();
       const onboardingProfile = {
-        dba: form.hasDba === "yes" ? form.dba.trim() : null,
-        has_dba: form.hasDba === "yes",
         naics_code: form.naics.trim() || null,
         business_description: form.description.trim() || null,
         business_status: form.status || null,
@@ -408,8 +404,6 @@ export default function BusinessSetupDialog({
             <div className="grid gap-4 md:grid-cols-2">
               <Field label="Legal business name *"><Input value={form.legalName} onChange={(e) => update("legalName", e.target.value)} placeholder="Acme LLC" /></Field>
               <Field label="Entity type *"><SelectField value={form.entityType} onChange={(v) => update("entityType", v)} options={ENTITY_TYPES} placeholder="Select entity" /></Field>
-              <Field label="Does your business use a DBA?"><SelectField value={form.hasDba} onChange={(v) => update("hasDba", v)} options={["no", "yes"]} /></Field>
-              {form.hasDba === "yes" && <Field label="DBA / trade name"><Input value={form.dba} onChange={(e) => update("dba", e.target.value)} /></Field>}
               <Field label="Industry *"><SelectField value={form.industry} onChange={(v) => { update("industry", v); update("naics", NAICS_BY_INDUSTRY[v] ?? ""); }} options={INDUSTRIES} placeholder="Select industry" /></Field>
               <Field label="NAICS code"><Input value={form.naics} onChange={(e) => update("naics", e.target.value)} placeholder="Auto-filled when available" /></Field>
               <Field label="Business status"><SelectField value={form.status} onChange={(v) => update("status", v)} options={BUSINESS_STATUS} placeholder="Select status" /></Field>

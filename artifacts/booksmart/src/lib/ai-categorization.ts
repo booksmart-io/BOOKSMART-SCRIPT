@@ -1,16 +1,14 @@
 import { supabase } from "@/lib/supabase";
 
-type CategorizationResponse = {
-  total?: number;
-  ruleMatched?: number;
-  aiProcessed?: number;
-  updated?: number;
-  message?: string;
-};
-
 type Category = { id: number; name: string };
 type SubCategory = { id: number; name: string; category_id: number };
 type CategoryRule = { memo: string; category_id: number; sub_category_id: number | null };
+type RuleRow = {
+  memo?: string | null;
+  condition?: string | null;
+  category_id?: number | null;
+  sub_category_id?: number | null;
+};
 type UncategorizedTransaction = {
   id: number;
   title: string | null;
@@ -18,11 +16,16 @@ type UncategorizedTransaction = {
   amount: number | null;
   type?: string | null;
   plaid_category?: unknown;
+  category_id?: number | null;
+  sub_category_id?: number | null;
 };
 
-function isNoTransactionsError(error: unknown) {
-  const message = error instanceof Error ? error.message : String(error ?? "");
-  return message.includes("No transactions") || message.includes("401");
+function chunkArray<T>(items: T[], size: number) {
+  const chunks: T[][] = [];
+  for (let i = 0; i < items.length; i += size) {
+    chunks.push(items.slice(i, i + size));
+  }
+  return chunks;
 }
 
 function parsePlaidCategory(plaid: unknown) {
@@ -95,6 +98,21 @@ async function applyAiFallback(
 ) {
   if (!transactions.length || !categories.length) return 0;
 
+  let totalUpdated = 0;
+  for (const batch of chunkArray(transactions, 10)) {
+    totalUpdated += await applyAiFallbackBatch(batch, categories, subCategories);
+  }
+
+  return totalUpdated;
+}
+
+async function applyAiFallbackBatch(
+  transactions: UncategorizedTransaction[],
+  categories: Category[],
+  subCategories: SubCategory[]
+) {
+  if (!transactions.length || !categories.length) return 0;
+
   const { data: sessionData } = await supabase.auth.getSession();
   const token = sessionData.session?.access_token;
 
@@ -144,7 +162,8 @@ Return:
   });
 
   if (!res.ok) {
-    console.warn("[ai_categorization:fallback] AI request failed:", res.status);
+    const errorText = await res.text().catch(() => "");
+    console.warn("[ai_categorization:fallback] AI request failed:", res.status, errorText);
     return 0;
   }
 
@@ -186,29 +205,68 @@ Return:
   return updated;
 }
 
-async function fallbackCategorizeUncategorizedTransactions(limit: number) {
+async function fallbackCategorizeUncategorizedTransactions(limit: number, orgId?: number | null) {
   try {
     const { data: authData } = await supabase.auth.getUser();
     const authUserId = authData.user?.id;
+    let numericUserId: number | null = null;
+
+    if (authUserId) {
+      const { data: userRow, error: userError } = await supabase
+        .from("users")
+        .select("id")
+        .eq("auth_id", authUserId)
+        .maybeSingle();
+
+      if (!userError) {
+        numericUserId = (userRow as { id?: number } | null)?.id ?? null;
+      }
+    }
+
+    let transactionsQuery = supabase
+      .from("transactions")
+      .select("id,title,description,amount,type,plaid_category,category_id,sub_category_id")
+      .or("category_id.is.null,sub_category_id.is.null")
+      .order("date_time", { ascending: false })
+      .limit(limit);
+
+    if (orgId) {
+      transactionsQuery = transactionsQuery.eq("org_id", orgId);
+    }
+
+    const rulesPromise = numericUserId
+      ? supabase.from("category_rules").select("memo,category_id,sub_category_id").eq("user_id", numericUserId)
+      : Promise.resolve({ data: [], error: null });
 
     const [categoriesRes, subCategoriesRes, rulesRes, transactionsRes] = await Promise.all([
       supabase.from("category").select("id,name").eq("is_deleted", false),
       supabase.from("sub_category").select("id,name,category_id").eq("is_deleted", false),
-      authUserId
-        ? supabase.from("category_rules").select("memo,category_id,sub_category_id").eq("user_id", authUserId)
-        : Promise.resolve({ data: [], error: null }),
-      supabase
-        .from("transactions")
-        .select("id,title,description,amount,type,plaid_category")
-        .is("category_id", null)
-        .limit(limit),
+      rulesPromise,
+      transactionsQuery,
     ]);
 
-    if (categoriesRes.error || subCategoriesRes.error || rulesRes.error || transactionsRes.error) {
+    let ruleRows = (rulesRes.data ?? []) as RuleRow[];
+    if (rulesRes.error && numericUserId) {
+      const legacyRulesRes = await supabase
+        .from("category_rules")
+        .select("condition,category_id,sub_category_id")
+        .eq("user_id", numericUserId);
+
+      if (legacyRulesRes.error) {
+        console.warn("[ai_categorization:fallback] rules unavailable; continuing with AI only:", {
+          rules: rulesRes.error,
+          legacyRules: legacyRulesRes.error,
+        });
+        ruleRows = [];
+      } else {
+        ruleRows = (legacyRulesRes.data ?? []) as RuleRow[];
+      }
+    }
+
+    if (categoriesRes.error || subCategoriesRes.error || transactionsRes.error) {
       console.warn("[ai_categorization:fallback] fetch failed:", {
         categories: categoriesRes.error,
         subCategories: subCategoriesRes.error,
-        rules: rulesRes.error,
         transactions: transactionsRes.error,
       });
       return 0;
@@ -219,7 +277,13 @@ async function fallbackCategorizeUncategorizedTransactions(limit: number) {
 
     const categories = (categoriesRes.data ?? []) as Category[];
     const subCategories = (subCategoriesRes.data ?? []) as SubCategory[];
-    const rules = (rulesRes.data ?? []) as CategoryRule[];
+    const rules = ruleRows
+      .map((rule) => ({
+        memo: rule.memo ?? rule.condition ?? "",
+        category_id: Number(rule.category_id),
+        sub_category_id: rule.sub_category_id == null ? null : Number(rule.sub_category_id),
+      }))
+      .filter((rule): rule is CategoryRule => Boolean(rule.memo) && Number.isFinite(rule.category_id));
 
     const ruleResult = await applyRuleFallback(transactions, rules, subCategories);
     const aiUpdated = await applyAiFallback(ruleResult.unmatched, categories, subCategories);
@@ -231,38 +295,8 @@ async function fallbackCategorizeUncategorizedTransactions(limit: number) {
   }
 }
 
-export async function categorizeUncategorizedTransactions(expectedTransactions = 10) {
-  const maxPasses = Math.max(1, Math.min(10, Math.ceil(expectedTransactions / 10) + 1));
-  let updated = 0;
-  let passes = 0;
+export async function categorizeUncategorizedTransactions(expectedTransactions = 10, orgId?: number | null) {
+  const fallbackUpdated = await fallbackCategorizeUncategorizedTransactions(Math.max(expectedTransactions, 10), orgId);
 
-  for (let i = 0; i < maxPasses; i += 1) {
-    try {
-      const { data, error } = await supabase.functions.invoke<CategorizationResponse>("ai_categorization");
-      passes += 1;
-
-      if (error) {
-        if (!isNoTransactionsError(error)) {
-          console.warn("[ai_categorization] failed:", error);
-        }
-        break;
-      }
-
-      if (data?.message === "No transactions") break;
-
-      const passUpdated = Number(data?.updated ?? 0);
-      updated += passUpdated;
-
-      if (passUpdated === 0) break;
-    } catch (error) {
-      if (!isNoTransactionsError(error)) {
-        console.warn("[ai_categorization] failed:", error);
-      }
-      break;
-    }
-  }
-
-  const fallbackUpdated = await fallbackCategorizeUncategorizedTransactions(Math.max(expectedTransactions, 10));
-
-  return { updated: updated + fallbackUpdated, passes, fallbackUpdated };
+  return { updated: fallbackUpdated, passes: 0, fallbackUpdated };
 }

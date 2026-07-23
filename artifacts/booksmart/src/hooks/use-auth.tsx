@@ -90,8 +90,44 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     };
   }, []);
 
+  const setAppUserProfile = (
+    authUuid: string,
+    appUser: {
+      id: number;
+      email?: string | null;
+      role?: string | null;
+      first_name?: string | null;
+      middle_name?: string | null;
+      last_name?: string | null;
+      phone_number?: string | null;
+      token_balance?: number | null;
+      img_url?: string | null;
+      verification_status?: string | null;
+    },
+  ) => {
+    const parts = [appUser.first_name, appUser.middle_name, appUser.last_name]
+      .filter(Boolean)
+      .join(" ");
+
+    setProfile({
+      id: authUuid,
+      numericId: appUser.id,
+      email: appUser.email ?? "",
+      full_name: (parts || appUser.email) ?? "",
+      role: (appUser.role as UserProfile["role"]) ?? "user",
+      token_balance: appUser.token_balance ?? 0,
+      phone: appUser.phone_number ?? undefined,
+      img_url: appUser.img_url ?? null,
+      verification_status: appUser.verification_status ?? null,
+    });
+  };
+
   const fetchProfile = async (authUuid: string) => {
     try {
+      const { data: { user: authUser } } = await supabase.auth.getUser();
+      const meta = authUser?.user_metadata ?? {};
+      const authEmail = authUser?.email ?? "";
+
       // 1. Try public.users (Flutter schema) — integer id + auth_id UUID
       //    Columns: id, auth_id, email, role, first_name, middle_name,
       //             last_name, phone_number, img_url, token_balance
@@ -102,26 +138,45 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
         .single();
 
       if (!appUserError && appUser) {
-        const parts = [appUser.first_name, appUser.middle_name, appUser.last_name]
-          .filter(Boolean)
-          .join(" ");
-        setProfile({
-          id: authUuid,
-          numericId: appUser.id as number,
-          email: appUser.email ?? "",
-          full_name: (parts || appUser.email) ?? "",
-          role: (appUser.role as UserProfile["role"]) ?? "user",
-          token_balance: appUser.token_balance ?? 0,
-          phone: appUser.phone_number,
-          img_url: appUser.img_url,
-          verification_status: appUser.verification_status ?? null,
-        });
+        setAppUserProfile(authUuid, appUser as Parameters<typeof setAppUserProfile>[1]);
         return;
       }
 
       // Log the error so we can debug RLS / column issues without silently swallowing
       if (appUserError) {
         console.warn("fetchProfile: users table lookup failed:", appUserError.message, appUserError.code);
+      }
+
+      if (authEmail) {
+        const { data: emailUsers, error: emailLookupError } = await supabase
+          .from("users")
+          .select("id, auth_id, email, role, first_name, middle_name, last_name, phone_number, token_balance, img_url, verification_status")
+          .ilike("email", authEmail)
+          .order("id", { ascending: true })
+          .limit(2);
+
+        if (!emailLookupError && emailUsers?.length) {
+          const existingUser = emailUsers.find((row) => !row.auth_id || row.auth_id === authUuid) ?? emailUsers[0];
+
+          if (!existingUser.auth_id) {
+            const { error: linkError } = await supabase
+              .from("users")
+              .update({ auth_id: authUuid })
+              .eq("id", existingUser.id)
+              .is("auth_id", null);
+
+            if (linkError) {
+              console.warn("fetchProfile: auth_id backfill by email failed:", linkError.message, linkError.code);
+            }
+          }
+
+          setAppUserProfile(authUuid, existingUser as Parameters<typeof setAppUserProfile>[1]);
+          return;
+        }
+
+        if (emailLookupError) {
+          console.warn("fetchProfile: users email lookup failed:", emailLookupError.message, emailLookupError.code);
+        }
       }
 
       // 2. Try profiles table (alternative schema)
@@ -145,8 +200,6 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       // mirroring `createUserRow()` from the old Flutter app, so numericId
       // (and therefore the org lookup) resolves on this same load instead
       // of silently staying null.
-      const { data: { user: authUser } } = await supabase.auth.getUser();
-      const meta = authUser?.user_metadata ?? {};
       const fullName: string = meta.full_name ?? meta.name ?? "";
       const [firstName, ...rest] = fullName.split(" ").filter(Boolean);
 

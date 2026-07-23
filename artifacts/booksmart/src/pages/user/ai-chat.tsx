@@ -22,7 +22,7 @@ export default function AiChat() {
     {
       role: "assistant",
       content:
-        "Hello! I'm your BookSmart AI assistant. I can help you analyze transactions, suggest tax deductions, or answer general accounting questions. How can I help you today?",
+        "Hello! I'm your BookSmart AI assistant. I can use your active business data to summarize transactions, explain deductions, review financial reports, and answer accounting questions. How can I help you today?",
     },
   ]);
   const [loading, setLoading] = useState(false);
@@ -96,7 +96,7 @@ export default function AiChat() {
           </Badge>
         </h1>
         <p className="text-muted-foreground">
-          Instant answers to your financial questions based on your data.
+          Instant answers using your active business, transactions, documents, and financial summaries.
         </p>
       </div>
 

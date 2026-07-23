@@ -16,7 +16,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription,
 } from "@/components/ui/dialog";
 import {
   Sheet, SheetContent, SheetHeader, SheetTitle,
@@ -34,6 +34,8 @@ import {
   AlertTriangle, Package, Wallet, Tag, ChevronDown, ChevronUp, Check,
 } from "lucide-react";
 
+const PLAID_CATEGORIZATION_BATCH_LIMIT = 100;
+
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type Transaction = {
@@ -44,6 +46,24 @@ type Transaction = {
 
 type Category = { id: number; name: string };
 type SubCategory = { id: number; name: string; category_id: number };
+type PlaidItemRow = {
+  id: number;
+  institution_name: string | null;
+  status: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+};
+type PlaidAccountRow = {
+  id: number;
+  plaid_item_id: number;
+  name: string | null;
+  official_name: string | null;
+  mask: string | null;
+  type: string | null;
+  subtype: string | null;
+  updated_at: string | null;
+};
+type ConnectedBank = PlaidItemRow & { accounts: PlaidAccountRow[] };
 
 type Period = "7d" | "30d" | "3m" | "12m" | "yearly" | "all" | "custom";
 type Tab = "dashboard" | "transactions" | "pl" | "bs" | "cf";
@@ -64,6 +84,79 @@ function fmtTrendTick(v: number) {
   if (Math.abs(v) >= 1_000) return `$${Math.round(v / 1_000)}K`;
   return `$${v}`;
 }
+
+type PdfJsDocument = {
+  numPages: number;
+  getPage: (pageNumber: number) => Promise<{
+    getViewport: (options: { scale: number }) => { width: number; height: number };
+    render: (options: { canvasContext: CanvasRenderingContext2D; viewport: { width: number; height: number } }) => {
+      promise: Promise<void>;
+    };
+  }>;
+};
+
+async function renderPdfPagesToPngFiles(file: File): Promise<File[]> {
+  const loadPdfJs = new Function("url", "return import(url)") as (url: string) => Promise<unknown>;
+  const pdfjs = await loadPdfJs("https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.min.mjs") as {
+    GlobalWorkerOptions: { workerSrc: string };
+    getDocument: (options: { data: Uint8Array }) => { promise: Promise<PdfJsDocument> };
+  };
+  pdfjs.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.worker.min.mjs";
+
+  const pdf = await pdfjs.getDocument({ data: new Uint8Array(await file.arrayBuffer()) }).promise;
+  const baseName = file.name.replace(/\.pdf$/i, "");
+  const pages: File[] = [];
+
+  for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
+    const page = await pdf.getPage(pageNumber);
+    const viewport = page.getViewport({ scale: 2 });
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.ceil(viewport.width);
+    canvas.height = Math.ceil(viewport.height);
+    const context = canvas.getContext("2d");
+    if (!context) throw new Error("Could not prepare PDF page renderer.");
+
+    await page.render({ canvasContext: context, viewport }).promise;
+    const blob = await new Promise<Blob>((resolve, reject) => {
+      canvas.toBlob((nextBlob) => {
+        if (nextBlob) resolve(nextBlob);
+        else reject(new Error("Could not render PDF page image."));
+      }, "image/png");
+    });
+    pages.push(new window.File([blob], `${baseName}_p${pageNumber}.png`, { type: "image/png" }));
+  }
+
+  return pages;
+}
+
+async function uploadTransactionPdfPages(file: File, token: string): Promise<string[]> {
+  const pageFiles = await renderPdfPagesToPngFiles(file);
+  const pagePaths: string[] = [];
+
+  for (const pageFile of pageFiles) {
+    const formData = new FormData();
+    formData.append("file", pageFile);
+    formData.append("originalName", pageFile.name);
+    formData.append("category", "Transactions");
+
+    const uploadRes = await fetch("/api/document-upload", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+      body: formData,
+    });
+
+    if (!uploadRes.ok) {
+      const errBody = await uploadRes.json().catch(() => ({})) as { message?: string };
+      throw new Error(`PDF page upload failed: ${errBody.message ?? uploadRes.status}`);
+    }
+
+    const { storagePath } = await uploadRes.json() as { storagePath: string };
+    pagePaths.push(storagePath);
+  }
+
+  return pagePaths;
+}
+
 function getNiceTrendScale(rows: Array<Record<string, unknown>>, keys: string[]) {
   const maxValue = rows.reduce((max, row) => {
     const rowMax = keys.reduce((innerMax, key) => {
@@ -1451,6 +1544,9 @@ export default function Reports() {
   const [smartCleanOpen, setSmartCleanOpen] = useState(false);
   const [smartCleanPreview, setSmartCleanPreview] = useState<Array<{ id: number; title: string; amount: number }> | null>(null);
   const [smartCleanRunning, setSmartCleanRunning] = useState(false);
+  const [showAccountsDialog, setShowAccountsDialog] = useState(false);
+  const [deletePlaidTarget, setDeletePlaidTarget] = useState<ConnectedBank | null>(null);
+  const [deletePlaidRunning, setDeletePlaidRunning] = useState(false);
   const [plaidConnecting, setPlaidConnecting] = useState(false);
   const [plaidSyncing, setPlaidSyncing] = useState(false);
 
@@ -1947,6 +2043,7 @@ Respond with ONLY valid JSON, no explanation:
             });
             const exchangeJson = await exchangeRes.json() as { item_id?: number; message?: string; error?: string };
             if (!exchangeRes.ok) throw new Error(exchangeJson.message ?? exchangeJson.error ?? "Could not connect bank");
+            queryClient.invalidateQueries({ queryKey: ["plaid_accounts"] });
 
             const syncRes = await fetch("/api/plaid/sync", {
               method: "POST",
@@ -1957,11 +2054,22 @@ Respond with ONLY valid JSON, no explanation:
             if (!syncRes.ok) throw new Error(syncJson.message ?? syncJson.error ?? "Could not sync bank transactions");
 
             const changed = (syncJson.added ?? 0) + (syncJson.modified ?? 0);
-            if (changed > 0) await categorizeUncategorizedTransactions(Math.min(Math.max(changed, 10), 50));
+            let categorized = 0;
+            const passes = Math.max(1, Math.ceil(Math.max(changed, 1) / PLAID_CATEGORIZATION_BATCH_LIMIT));
+            for (let i = 0; i < passes; i += 1) {
+              const categorization = await categorizeUncategorizedTransactions(
+                Math.min(Math.max(changed, 30), PLAID_CATEGORIZATION_BATCH_LIMIT),
+                orgId
+              );
+              categorized += categorization.updated;
+              if (categorization.updated === 0) break;
+            }
             invalidateTransactionReports();
+            queryClient.invalidateQueries({ queryKey: ["tx_deductions"] });
+            queryClient.invalidateQueries({ queryKey: ["plaid_accounts"] });
             toast({
               title: "Bank connected",
-              description: `Synced ${syncJson.added ?? 0} new transaction${(syncJson.added ?? 0) === 1 ? "" : "s"}.`,
+              description: `Synced ${syncJson.added ?? 0} new transaction${(syncJson.added ?? 0) === 1 ? "" : "s"}. Categorized ${categorized}.`,
             });
           } catch (err) {
             toast({ title: "Bank sync failed", description: String(err), variant: "destructive" });
@@ -1983,6 +2091,86 @@ Respond with ONLY valid JSON, no explanation:
   }
 
   // ── Current period transactions ─────────────────────────────────────────────
+  const { data: connectedBanks = [], isLoading: accountsLoading } = useQuery<ConnectedBank[]>({
+    queryKey: ["plaid_accounts", numericId, orgId],
+    enabled: showAccountsDialog && !!numericId && !!orgId,
+    staleTime: 30 * 1000,
+    queryFn: async () => {
+      const { data: items, error: itemsError } = await supabase
+        .from("plaid_items")
+        .select("id, institution_name, status, created_at, updated_at")
+        .eq("org_id", orgId!)
+        .eq("status", "active")
+        .order("updated_at", { ascending: false });
+      if (itemsError) throw itemsError;
+
+      const itemRows = (items ?? []) as PlaidItemRow[];
+      const itemIds = itemRows.map(item => item.id);
+      if (itemIds.length === 0) return [];
+
+      const { data: accounts, error: accountsError } = await supabase
+        .from("plaid_accounts")
+        .select("id, plaid_item_id, name, official_name, mask, type, subtype, updated_at")
+        .in("plaid_item_id", itemIds)
+        .order("name", { ascending: true });
+      if (accountsError) throw accountsError;
+
+      const accountsByItem = new Map<number, PlaidAccountRow[]>();
+      for (const account of (accounts ?? []) as PlaidAccountRow[]) {
+        const existing = accountsByItem.get(account.plaid_item_id) ?? [];
+        existing.push(account);
+        accountsByItem.set(account.plaid_item_id, existing);
+      }
+
+      return itemRows.map(item => ({
+        ...item,
+        accounts: accountsByItem.get(item.id) ?? [],
+      }));
+    },
+  });
+
+  async function handleDeletePlaidItem() {
+    if (!deletePlaidTarget || !orgId) return;
+    setDeletePlaidRunning(true);
+    try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const jwt = sessionData.session?.access_token;
+      if (!jwt) throw new Error("Not authenticated");
+
+      const res = await fetch(`/api/plaid/items/${deletePlaidTarget.id}?org_id=${encodeURIComponent(String(orgId))}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${jwt}` },
+      });
+      const json = await res.json() as {
+        deleted_transactions?: number;
+        plaid_remove_warning?: string | null;
+        message?: string;
+        error?: string;
+      };
+      if (!res.ok) throw new Error(json.message ?? json.error ?? "Could not delete connected bank");
+
+      setDeletePlaidTarget(null);
+      invalidateTransactionReports();
+      queryClient.invalidateQueries({ queryKey: ["tx_deductions"] });
+      queryClient.invalidateQueries({ queryKey: ["plaid_accounts"] });
+      toast({
+        title: "Bank disconnected",
+        description: `Deleted ${json.deleted_transactions ?? 0} synced transaction${(json.deleted_transactions ?? 0) === 1 ? "" : "s"}.`,
+      });
+      if (json.plaid_remove_warning) {
+        toast({
+          title: "Plaid removal warning",
+          description: "The local bank connection was removed, but Plaid returned a warning while removing the remote item.",
+          variant: "destructive",
+        });
+      }
+    } catch (err) {
+      toast({ title: "Could not disconnect bank", description: String(err), variant: "destructive" });
+    } finally {
+      setDeletePlaidRunning(false);
+    }
+  }
+
   const txPeriod = tab === "pl" ? plPeriod : period;
   const { start, end } = getPeriodRange(txPeriod);
   const { data: txs = [], isLoading } = useQuery<Transaction[]>({
@@ -2390,7 +2578,7 @@ Respond with ONLY valid JSON, no explanation:
     const delays = [8000, 20000, 45000];
     delays.forEach(delay => {
       window.setTimeout(async () => {
-        const categorization = await categorizeUncategorizedTransactions(30);
+        const categorization = await categorizeUncategorizedTransactions(30, orgId);
         if (categorization.updated > 0) {
           queryClient.invalidateQueries({ queryKey: ["tx_month", orgId] });
           queryClient.invalidateQueries({ queryKey: ["tx_recent", orgId] });
@@ -2543,6 +2731,8 @@ Respond with ONLY valid JSON, no explanation:
 
         let extractedText: string | null = null;
         let isScanned = mimeType.startsWith("image/");
+        let statementDocumentPath = storagePath;
+        let statementMimeType = mimeType;
 
         if (mimeType === "application/pdf") {
           const fileData = await new Promise<string>((resolve, reject) => {
@@ -2566,11 +2756,27 @@ Respond with ONLY valid JSON, no explanation:
             });
             if (textRes.ok) {
               const payload = await textRes.json() as { text?: string; isScanned?: boolean };
-              extractedText = payload.text || null;
-              isScanned = payload.isScanned ?? false;
+              const text = payload.text?.trim() ?? "";
+              extractedText = text.length >= 50 ? text : null;
+              isScanned = extractedText === null ? true : (payload.isScanned ?? false);
+            } else {
+              isScanned = true;
             }
           } catch (err) {
             console.warn("[upload] extract-text failed, continuing with n8n OCR path:", err);
+            isScanned = true;
+          }
+        }
+
+        if (mimeType === "application/pdf" && isScanned) {
+          try {
+            const pagePaths = await uploadTransactionPdfPages(uploadPickedFile, token);
+            if (pagePaths.length > 0) {
+              statementDocumentPath = pagePaths.length > 1 ? JSON.stringify(pagePaths) : pagePaths[0];
+              statementMimeType = "image/png";
+            }
+          } catch (err) {
+            console.warn("[upload] scanned PDF page rendering failed, using original PDF path:", err);
           }
         }
 
@@ -2580,10 +2786,10 @@ Respond with ONLY valid JSON, no explanation:
             user_id: numericId,
             org_id: orgId,
             document_id: docData.id,
-            document_path: storagePath,
-            mime_type: mimeType,
+            document_path: statementDocumentPath,
+            mime_type: statementMimeType,
             is_scanned: isScanned,
-            extracted_text: extractedText,
+            extracted_text: isScanned ? null : extractedText,
             status: "processing",
           })
           .select("id")
@@ -2591,79 +2797,14 @@ Respond with ONLY valid JSON, no explanation:
 
         if (importError) throw new Error(importError.message);
 
-        setScanningImportId((importData as { id: number }).id);
+        const newImportId = (importData as { id: number }).id;
+        setScanningImportId(newImportId);
         toast({
           title: "Transaction import started",
           description: "n8n will extract transactions from this file.",
         });
         scheduleUploadCategorization();
         return;
-        /*
-
-        toast({
-          title: "Document uploaded!",
-          description: "AI is scanning your bank statement for transactions… this takes about 15–30 seconds.",
-        });
-
-        // Read file as base64 for the API call
-        const fileData = await new Promise<string>((resolve, reject) => {
-          const reader = new FileReader();
-          reader.onload = () => {
-            const result = reader.result as string;
-            resolve(result.includes(",") ? result.split(",")[1] : result);
-          };
-          reader.onerror = () => reject(new Error("Failed to read file"));
-          reader.readAsDataURL(uploadPickedFile);
-        });
-
-        // Get session JWT
-        const { data: sessionData } = await supabase.auth.getSession();
-        const jwt = sessionData.session?.access_token;
-        if (!jwt) throw new Error("Not authenticated");
-
-        // Call /api/scan-statement directly — no statement_imports row needed
-        fetch("/api/scan-statement", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${jwt}`,
-          },
-          body: JSON.stringify({ fileData, mimeType, documentId: docData.id, org_id: orgId }),
-        })
-          .then((r) => r.json())
-          .then(async (result: unknown) => {
-            setScanningImportId(null);
-            const count = (result as { count?: number })?.count ?? 0;
-            if (count > 0) {
-              const categorization = await categorizeUncategorizedTransactions(count);
-              toast({
-                title: `${count} transactions added!`,
-                description: categorization.updated > 0
-                  ? `${categorization.updated} transaction${categorization.updated === 1 ? "" : "s"} categorized automatically.`
-                  : "Your income & expense totals have been updated on the dashboard.",
-              });
-              queryClient.invalidateQueries({ queryKey: ["tx_month", orgId] });
-              queryClient.invalidateQueries({ queryKey: ["tx_recent", orgId] });
-              queryClient.invalidateQueries({ queryKey: ["tx_count", orgId] });
-              queryClient.invalidateQueries({ queryKey: ["tx_all_full", orgId] });
-              queryClient.invalidateQueries({ queryKey: ["tx_all_balance", orgId] });
-            } else {
-              toast({
-                title: "Scan complete",
-                description: "No transactions were extracted. The document may be a summary or unsupported format.",
-                variant: "destructive",
-              });
-            }
-          })
-          .catch(() => {
-            setScanningImportId(null);
-            toast({
-              title: "Scan failed",
-              description: "Could not extract transactions from the document. Try a different format.",
-              variant: "destructive",
-            });
-          });
-        */
       } else {
         toast({ title: "Document uploaded successfully!" });
       }
@@ -3254,18 +3395,15 @@ Respond with ONLY valid JSON, no explanation:
                   { label: "Transactions", action: () => setTab("transactions") },
                   { label: "Dun & Bradstreet", action: () => navigate("/user") },
                   { label: "Reports", action: () => navigate("/user/tax") },
-                  { label: "Accounts", action: handleConnectBank, disabled: plaidConnecting || plaidSyncing },
+                  { label: "Accounts", action: () => setShowAccountsDialog(true) },
                 ].map((item, i) => (
                   <button
                     key={item.label}
                     onClick={item.action}
-                    disabled={item.disabled}
                     className="py-4 text-xs font-semibold text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
                     style={{ borderLeft: i > 0 ? "1px solid rgba(18,52,105,0.6)" : undefined }}
                   >
-                    {item.label === "Accounts" && (plaidConnecting || plaidSyncing)
-                      ? plaidSyncing ? "Syncing..." : "Connecting..."
-                      : item.label}
+                    {item.label}
                   </button>
                 ))}
               </div>
@@ -4128,6 +4266,129 @@ Respond with ONLY valid JSON, no explanation:
       )}
 
       {/* ── Export Dialog — matches Flutter _PdfExportDialog exactly ── */}
+      <Dialog open={showAccountsDialog} onOpenChange={setShowAccountsDialog}>
+        <DialogContent className="sm:max-w-2xl bg-card border-border/60">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-base">
+              <Wallet className="h-4 w-4 text-primary" />
+              Connected Bank Accounts
+            </DialogTitle>
+            <DialogDescription>
+              Banks connected through Plaid for the active business.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="max-h-[58vh] overflow-y-auto pr-1">
+            {accountsLoading ? (
+              <div className="flex items-center justify-center py-12 text-muted-foreground">
+                <Loader2 className="h-5 w-5 animate-spin mr-2" />
+                Loading connected accounts...
+              </div>
+            ) : connectedBanks.length === 0 ? (
+              <div className="rounded-xl border border-border/60 bg-secondary/20 px-5 py-10 text-center">
+                <Wallet className="mx-auto h-10 w-10 text-muted-foreground mb-3" />
+                <p className="text-sm font-semibold text-foreground">No bank accounts connected yet.</p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Connect a bank to sync Plaid transactions into this business.
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {connectedBanks.map(bank => (
+                  <div key={bank.id} className="rounded-xl border border-border/60 bg-secondary/20 p-4">
+                    <div className="flex items-start justify-between gap-3 mb-3">
+                      <div>
+                        <p className="text-sm font-semibold text-foreground">{bank.institution_name || "Connected Bank"}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {bank.updated_at
+                            ? `Last updated ${new Date(bank.updated_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`
+                            : "Connected through Plaid"}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="rounded-full border border-emerald-400/40 bg-emerald-500/10 px-2.5 py-1 text-[11px] font-semibold text-emerald-400">
+                          {bank.status || "active"}
+                        </span>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          className="h-8 border-destructive/40 px-2 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                          onClick={() => setDeletePlaidTarget(bank)}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </Button>
+                      </div>
+                    </div>
+
+                    {bank.accounts.length === 0 ? (
+                      <p className="rounded-lg border border-border/40 px-3 py-2 text-xs text-muted-foreground">
+                        This bank is connected, but no accounts were returned yet.
+                      </p>
+                    ) : (
+                      <div className="space-y-2">
+                        {bank.accounts.map(account => (
+                          <div key={account.id} className="flex items-center gap-3 rounded-lg border border-border/40 bg-background/25 px-3 py-2.5">
+                            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                              <Wallet className="h-4 w-4" />
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <p className="truncate text-sm font-medium text-foreground">
+                                {account.name || account.official_name || "Bank Account"}
+                              </p>
+                              <p className="truncate text-xs text-muted-foreground">
+                                {[account.type, account.subtype, account.mask ? `ending ${account.mask}` : null].filter(Boolean).join(" • ") || "Plaid account"}
+                              </p>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => setShowAccountsDialog(false)}>Close</Button>
+            <Button
+              onClick={() => {
+                setShowAccountsDialog(false);
+                void handleConnectBank();
+              }}
+              disabled={plaidConnecting || plaidSyncing}
+            >
+              {plaidConnecting || plaidSyncing ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Wallet className="h-4 w-4 mr-2" />}
+              {connectedBanks.length === 0 ? "Connect Bank" : "Connect Another Bank"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!deletePlaidTarget} onOpenChange={v => { if (!v && !deletePlaidRunning) setDeletePlaidTarget(null); }}>
+        <DialogContent className="sm:max-w-sm bg-card border-border/60">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-base text-destructive">
+              <Trash2 className="h-4 w-4" />
+              Disconnect bank?
+            </DialogTitle>
+            <DialogDescription>
+              This will remove {deletePlaidTarget?.institution_name || "this bank"} and delete all transactions synced from its accounts. Uploaded and manual transactions will remain.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2">
+            <Button variant="outline" disabled={deletePlaidRunning} onClick={() => setDeletePlaidTarget(null)}>
+              Cancel
+            </Button>
+            <Button variant="destructive" disabled={deletePlaidRunning} onClick={handleDeletePlaidItem}>
+              {deletePlaidRunning ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-2" /> : <Trash2 className="h-3.5 w-3.5 mr-2" />}
+              Delete bank & transactions
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={showExport} onOpenChange={setShowExport}>
         {/*
           Flutter: Dialog shape=RoundedRectangleBorder(r=16), width=520, padding=20
@@ -4195,17 +4456,14 @@ Respond with ONLY valid JSON, no explanation:
                 {/* Flutter: date tiles row — BS gets "As Of Date" + period count dropdown */}
                 {isBs ? (
                   <div className="flex gap-3 items-start">
-                    {/* As Of Date tile */}
-                    <label className="flex-1 relative cursor-pointer">
-                      {/* Flutter: InkWell r=16, Container padding h=16/v=14, border grey.shade400 r=16 */}
-                      <div className="px-4 py-[14px] rounded-2xl border border-gray-400/70 hover:border-primary/60 transition-colors select-none">
-                        <p className="text-[12px] text-foreground/60 leading-none">As Of Date</p>
-                        <div className="h-1" />
-                        {/* Flutter: Text(value, fontWeight:w600) */}
-                        <p className="text-[14px] font-semibold text-foreground">{fmtTile(exportEnd)}</p>
-                      </div>
-                      <input type="date" value={exportEnd} onChange={e => setExportEnd(e.target.value)}
-                        className="absolute inset-0 opacity-0 cursor-pointer" />
+                    <label className="flex-1">
+                      <span className="block text-[12px] text-foreground/60 mb-1.5">As Of Date</span>
+                      <input
+                        type="date"
+                        value={exportEnd}
+                        onChange={e => setExportEnd(e.target.value)}
+                        className="w-full rounded-2xl border border-gray-400/70 bg-muted/40 px-4 py-[13px] text-[14px] font-semibold text-foreground outline-none transition-colors hover:border-primary/60 focus:border-primary focus:ring-2 focus:ring-primary/20"
+                      />
                     </label>
                     {/* Number of periods */}
                     <div className="flex-1">
@@ -4224,23 +4482,23 @@ Respond with ONLY valid JSON, no explanation:
                 ) : (
                   /* Flutter: Row with two Expanded date tiles, SizedBox(w:12) gap */
                   <div className="flex gap-3">
-                    <label className="flex-1 relative cursor-pointer">
-                      <div className="px-4 py-[14px] rounded-2xl border border-gray-400/70 hover:border-primary/60 transition-colors select-none">
-                        <p className="text-[12px] text-foreground/60 leading-none">Start Date</p>
-                        <div className="h-1" />
-                        <p className="text-[14px] font-semibold text-foreground">{fmtTile(exportStart)}</p>
-                      </div>
-                      <input type="date" value={exportStart} onChange={e => setExportStart(e.target.value)}
-                        className="absolute inset-0 opacity-0 cursor-pointer" />
+                    <label className="flex-1">
+                      <span className="block text-[12px] text-foreground/60 mb-1.5">Start Date</span>
+                      <input
+                        type="date"
+                        value={exportStart}
+                        onChange={e => setExportStart(e.target.value)}
+                        className="w-full rounded-2xl border border-gray-400/70 bg-muted/40 px-4 py-[13px] text-[14px] font-semibold text-foreground outline-none transition-colors hover:border-primary/60 focus:border-primary focus:ring-2 focus:ring-primary/20"
+                      />
                     </label>
-                    <label className="flex-1 relative cursor-pointer">
-                      <div className="px-4 py-[14px] rounded-2xl border border-gray-400/70 hover:border-primary/60 transition-colors select-none">
-                        <p className="text-[12px] text-foreground/60 leading-none">End Date</p>
-                        <div className="h-1" />
-                        <p className="text-[14px] font-semibold text-foreground">{fmtTile(exportEnd)}</p>
-                      </div>
-                      <input type="date" value={exportEnd} onChange={e => setExportEnd(e.target.value)}
-                        className="absolute inset-0 opacity-0 cursor-pointer" />
+                    <label className="flex-1">
+                      <span className="block text-[12px] text-foreground/60 mb-1.5">End Date</span>
+                      <input
+                        type="date"
+                        value={exportEnd}
+                        onChange={e => setExportEnd(e.target.value)}
+                        className="w-full rounded-2xl border border-gray-400/70 bg-muted/40 px-4 py-[13px] text-[14px] font-semibold text-foreground outline-none transition-colors hover:border-primary/60 focus:border-primary focus:ring-2 focus:ring-primary/20"
+                      />
                     </label>
                   </div>
                 )}
