@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/hooks/use-auth";
 import { supabase } from "@/lib/supabase";
 import { checkAddTransaction } from "@/lib/plan-limits";
-import { categorizeUncategorizedTransactions } from "@/lib/ai-categorization";
+import { categorizeTransaction } from "@/lib/ai-categorization";
 import { pickActiveOrganization, useActiveOrganizationId } from "@/lib/active-organization";
 import { useToast } from "@/hooks/use-toast";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -109,22 +109,26 @@ export default function BulkReview() {
 
       await checkAddTransaction();
 
-      const { error: insertErr } = await supabase.from("transactions").insert({
-        title: tx.title,
-        amount: signedAmount,
-        date_time: tx.date_time,
-        description: tx.description || tx.title,
-        org_id: targetOrgId,
-        user_id: numericId,
-        type: "Business",
-        deductible: tx.transaction_type === "debit",
-        is_ai_verified: false,
-        ...(catId ? { category_id: catId } : {}),
-        ...(tx.document_id !== null ? { file_path: String(tx.document_id) } : {}),
-      });
+      const { data: insertedTransaction, error: insertErr } = await supabase
+        .from("transactions")
+        .insert({
+          title: tx.title,
+          amount: signedAmount,
+          date_time: tx.date_time,
+          description: tx.description || tx.title,
+          org_id: targetOrgId,
+          user_id: numericId,
+          type: "Business",
+          deductible: tx.transaction_type === "debit",
+          is_ai_verified: false,
+          ...(catId ? { category_id: catId } : {}),
+          ...(tx.document_id !== null ? { file_path: String(tx.document_id) } : {}),
+        })
+        .select("id")
+        .single();
       if (insertErr) throw new Error(`Insert failed: ${insertErr.message}`);
 
-      await categorizeUncategorizedTransactions(1);
+      await categorizeTransaction(insertedTransaction.id, targetOrgId);
 
       const { error: updateErr } = await supabase
         .from("pending_transactions")

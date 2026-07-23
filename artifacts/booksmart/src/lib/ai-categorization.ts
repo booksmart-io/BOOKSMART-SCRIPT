@@ -205,7 +205,11 @@ Return:
   return updated;
 }
 
-async function fallbackCategorizeUncategorizedTransactions(limit: number, orgId?: number | null) {
+async function fallbackCategorizeUncategorizedTransactions(
+  limit: number,
+  orgId?: number | null,
+  transactionId?: number
+) {
   try {
     const { data: authData } = await supabase.auth.getUser();
     const authUserId = authData.user?.id;
@@ -232,6 +236,9 @@ async function fallbackCategorizeUncategorizedTransactions(limit: number, orgId?
 
     if (orgId) {
       transactionsQuery = transactionsQuery.eq("org_id", orgId);
+    }
+    if (transactionId !== undefined) {
+      transactionsQuery = transactionsQuery.eq("id", transactionId);
     }
 
     const rulesPromise = numericUserId
@@ -297,6 +304,12 @@ async function fallbackCategorizeUncategorizedTransactions(limit: number, orgId?
 
 export async function categorizeUncategorizedTransactions(expectedTransactions = 10, orgId?: number | null) {
   const fallbackUpdated = await fallbackCategorizeUncategorizedTransactions(Math.max(expectedTransactions, 10), orgId);
+
+  return { updated: fallbackUpdated, passes: 0, fallbackUpdated };
+}
+
+export async function categorizeTransaction(transactionId: number, orgId?: number | null) {
+  const fallbackUpdated = await fallbackCategorizeUncategorizedTransactions(1, orgId, transactionId);
 
   return { updated: fallbackUpdated, passes: 0, fallbackUpdated };
 }

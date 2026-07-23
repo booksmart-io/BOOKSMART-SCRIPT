@@ -324,31 +324,34 @@ router.post("/openai-chat", requireAuth, async (req, res) => {
     return;
   }
 
-  // Plan-based monthly AI question limit
   const authUserId = req.supabaseUserId!;
   const admin = getAdminClient();
-  let tier: Awaited<ReturnType<typeof getUserTier>>;
-  try {
-    tier = await getUserTier(admin, authUserId);
-    const limit = PLAN_LIMITS[tier].aiQuestionsPerMonth;
-    const used = await countAiQuestionsThisMonth(admin, authUserId);
-    if (used >= limit) {
-      res.status(403).json({
-        error: "limit_reached",
-        limit,
-        used,
-        tier,
-        message: `You've reached your ${tier} plan's monthly AI question limit (${limit}). Upgrade your plan for more.`,
-      });
+  const categorizationTask = isCategorizationTask(latestUserText(chatMessages));
+
+  // Categorization is part of transaction processing, not a user AI-chat question.
+  if (!categorizationTask) {
+    try {
+      const tier = await getUserTier(admin, authUserId);
+      const limit = PLAN_LIMITS[tier].aiQuestionsPerMonth;
+      const used = await countAiQuestionsThisMonth(admin, authUserId);
+      if (used >= limit) {
+        res.status(403).json({
+          error: "limit_reached",
+          limit,
+          used,
+          tier,
+          message: `You've reached your ${tier} plan's monthly AI question limit (${limit}). Upgrade your plan for more.`,
+        });
+        return;
+      }
+    } catch (e) {
+      res.status(502).json({ error: "plan_limits_error", message: String(e) });
       return;
     }
-  } catch (e) {
-    res.status(502).json({ error: "plan_limits_error", message: String(e) });
-    return;
   }
 
   let augmentedMessages = messages;
-  if (!isCategorizationTask(latestUserText(chatMessages))) {
+  if (!categorizationTask) {
     try {
       const dataContext = await buildBookSmartDataContext(admin, authUserId);
       augmentedMessages = [
@@ -397,7 +400,7 @@ router.post("/openai-chat", requireAuth, async (req, res) => {
     const text = await upstream.text();
     const ct = upstream.headers.get("content-type") || "application/json";
 
-    if (upstream.ok) {
+    if (upstream.ok && !categorizationTask) {
       try {
         const { data: userRow } = await admin
           .from("users")

@@ -1541,6 +1541,7 @@ export default function Reports() {
   const [expandedCatIds, setExpandedCatIds] = useState<Set<number>>(new Set());
   const [aiCatLoading, setAiCatLoading] = useState(false);
   const [aiCatSuggested, setAiCatSuggested] = useState(false);
+  const [bulkCategorizing, setBulkCategorizing] = useState(false);
   const [smartCleanOpen, setSmartCleanOpen] = useState(false);
   const [smartCleanPreview, setSmartCleanPreview] = useState<Array<{ id: number; title: string; amount: number }> | null>(null);
   const [smartCleanRunning, setSmartCleanRunning] = useState(false);
@@ -1711,6 +1712,30 @@ export default function Reports() {
       ["tx_count", orgId],
     ];
     keys.forEach(k => queryClient.invalidateQueries({ queryKey: k }));
+  }
+
+  async function handleBulkCategorize() {
+    if (!orgId || bulkCategorizing) return;
+    setBulkCategorizing(true);
+    try {
+      const result = await categorizeUncategorizedTransactions(100, orgId);
+      invalidateTransactionReports();
+      queryClient.invalidateQueries({ queryKey: ["tx_deductions"] });
+      toast({
+        title: result.updated > 0 ? "AI categorization complete" : "No transactions were categorized",
+        description: result.updated > 0
+          ? `Categorized ${result.updated} transaction${result.updated === 1 ? "" : "s"}.`
+          : "No eligible uncategorized transactions were updated.",
+      });
+    } catch (err) {
+      toast({
+        title: "AI categorization failed",
+        description: err instanceof Error ? err.message : String(err),
+        variant: "destructive",
+      });
+    } finally {
+      setBulkCategorizing(false);
+    }
   }
 
   // ── Real-time transaction updates ───────────────────────────────────────────
@@ -5104,12 +5129,13 @@ Respond with ONLY valid JSON, no explanation:
           {/* Flutter bottom action bar */}
           <div className="fixed bottom-0 left-0 right-0 flex z-30 overflow-hidden md:left-[var(--sidebar-width)]" style={{ height: 56 }}>
             <button
+              disabled={bulkCategorizing}
               className="flex-1 flex items-center justify-center gap-2 font-bold text-sm text-black transition-opacity hover:opacity-90"
               style={{ background: "#FFC72B" }}
-              onClick={handleSmartCleanOpen}
+              onClick={() => void handleBulkCategorize()}
             >
-              <Sparkles className="h-4 w-4" />
-              AI Categorization
+              {bulkCategorizing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+              {bulkCategorizing ? "Categorizing…" : "AI Categorization"}
             </button>
             <button
               className="flex-1 flex items-center justify-center gap-2 font-bold text-sm text-black transition-opacity hover:opacity-90"

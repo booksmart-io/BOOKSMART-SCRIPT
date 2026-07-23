@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import { supabase } from "@/lib/supabase";
 import { checkAddTransaction } from "@/lib/plan-limits";
-import { categorizeUncategorizedTransactions } from "@/lib/ai-categorization";
+import { categorizeTransaction } from "@/lib/ai-categorization";
 import { pickActiveOrganization, useActiveOrganizationId } from "@/lib/active-organization";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/hooks/use-auth";
@@ -352,6 +352,78 @@ async function fileToBase64(file: File): Promise<string> {
   });
 }
 
+type PdfJsDocument = {
+  numPages: number;
+  getPage: (pageNumber: number) => Promise<{
+    getViewport: (options: { scale: number }) => { width: number; height: number };
+    render: (options: { canvasContext: CanvasRenderingContext2D; viewport: { width: number; height: number } }) => {
+      promise: Promise<void>;
+    };
+  }>;
+};
+
+async function renderPdfPagesToPngFiles(file: File): Promise<File[]> {
+  const loadPdfJs = new Function("url", "return import(url)") as (url: string) => Promise<unknown>;
+  const pdfjs = await loadPdfJs("https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.min.mjs") as {
+    GlobalWorkerOptions: { workerSrc: string };
+    getDocument: (options: { data: Uint8Array }) => { promise: Promise<PdfJsDocument> };
+  };
+  pdfjs.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.worker.min.mjs";
+
+  const pdf = await pdfjs.getDocument({ data: new Uint8Array(await file.arrayBuffer()) }).promise;
+  const baseName = file.name.replace(/\.pdf$/i, "");
+  const pages: File[] = [];
+
+  for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
+    const page = await pdf.getPage(pageNumber);
+    const viewport = page.getViewport({ scale: 2 });
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.ceil(viewport.width);
+    canvas.height = Math.ceil(viewport.height);
+    const context = canvas.getContext("2d");
+    if (!context) throw new Error("Could not prepare PDF page renderer.");
+
+    await page.render({ canvasContext: context, viewport }).promise;
+    const blob = await new Promise<Blob>((resolve, reject) => {
+      canvas.toBlob((nextBlob) => {
+        if (nextBlob) resolve(nextBlob);
+        else reject(new Error("Could not render PDF page image."));
+      }, "image/png");
+    });
+    pages.push(new window.File([blob], `${baseName}_p${pageNumber}.png`, { type: "image/png" }));
+  }
+
+  return pages;
+}
+
+async function uploadTransactionPdfPages(file: File, token: string): Promise<string[]> {
+  const pageFiles = await renderPdfPagesToPngFiles(file);
+  const pagePaths: string[] = [];
+
+  for (const pageFile of pageFiles) {
+    const formData = new FormData();
+    formData.append("file", pageFile);
+    formData.append("originalName", pageFile.name);
+    formData.append("category", "Transactions");
+
+    const uploadRes = await fetch("/api/document-upload", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+      body: formData,
+    });
+
+    if (!uploadRes.ok) {
+      const errBody = await uploadRes.json().catch(() => ({})) as { message?: string };
+      throw new Error(`PDF page upload failed: ${errBody.message ?? uploadRes.status}`);
+    }
+
+    const { storagePath } = await uploadRes.json() as { storagePath: string };
+    pagePaths.push(storagePath);
+  }
+
+  return pagePaths;
+}
+
 async function callExtractDocument(
   file: File,
   mime: string,
@@ -442,6 +514,8 @@ type PendingTx = {
   running_balance: number | null;
   is_duplicate: boolean;
   status: string;
+  category_id?: number | null;
+  sub_category_id?: number | null;
 };
 
 function StatementReviewDialog({
@@ -462,31 +536,89 @@ function StatementReviewDialog({
   const [importStatus, setImportStatus] = useState<"processing" | "completed" | "failed">("processing");
   const [errorMsg, setErrorMsg] = useState("");
   const [rows, setRows] = useState<PendingTx[]>([]);
+  const [detectedPendingRows, setDetectedPendingRows] = useState(0);
   const [loadingRows, setLoadingRows] = useState(false);
   const [approvingId, setApprovingId] = useState<number | null>(null);
   const [rejectingId, setRejectingId] = useState<number | null>(null);
   const [importDocId, setImportDocId] = useState<number | null>(null);
   const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pollCountRef = useRef(0);
+  const completedEmptyPollsRef = useRef(0);
+  const pollStartedAtRef = useRef(0);
+  const maxPolls = 120;
+  const maxPollMs = 120000;
+  const pollIntervalMs = 3000;
 
   const fetchRows = async () => {
     setLoadingRows(true);
     try {
-      const [{ data: txData }, { data: importData }] = await Promise.all([
-        supabase
+      const { data: importData } = await supabase
+        .from("statement_imports")
+        .select("document_id, document_path, org_id, created_at")
+        .eq("id", importId)
+        .maybeSingle();
+      const importRecord = importData as {
+        document_id: number | null;
+        document_path: string | null;
+        org_id: number | null;
+        created_at: string | null;
+      } | null;
+      setImportDocId(importRecord?.document_id ?? null);
+
+      const { data: primaryTxData, error: txError } = await supabase
+        .from("pending_transactions")
+        .select("*")
+        .eq("import_id", importId)
+        .eq("status", "pending")
+        .order("date_time", { ascending: true });
+
+      if (txError) {
+        throw txError;
+      }
+
+      let txData = primaryTxData;
+      if ((txData?.length ?? 0) === 0 && importRecord?.document_path) {
+        const { data: pathTxData, error: pathTxError } = await supabase
           .from("pending_transactions")
           .select("*")
-          .eq("import_id", importId)
+          .eq("document_path", importRecord.document_path)
           .eq("status", "pending")
-          .order("date_time", { ascending: true }),
-        supabase
-          .from("statement_imports")
-          .select("document_id")
-          .eq("id", importId)
-          .maybeSingle(),
-      ]);
-      setRows((txData as PendingTx[]) ?? []);
-      setImportDocId((importData as { document_id: number } | null)?.document_id ?? null);
+          .order("date_time", { ascending: true });
+        if (pathTxError) {
+          console.warn("[statement-review] document_path fallback failed:", pathTxError);
+        } else if ((pathTxData?.length ?? 0) > 0) {
+          txData = pathTxData;
+        }
+      }
+
+      if ((txData?.length ?? 0) === 0 && importRecord?.created_at) {
+        const since = new Date(new Date(importRecord.created_at).getTime() - 2 * 60_000).toISOString();
+        let recentQuery = supabase
+          .from("pending_transactions")
+          .select("*")
+          .eq("user_id", numericUserId)
+          .eq("status", "pending")
+          .gte("created_at", since)
+          .order("created_at", { ascending: true });
+
+        if (importRecord.org_id !== null) {
+          recentQuery = recentQuery.or(`org_id.eq.${importRecord.org_id},org_id.is.null`);
+        }
+
+        const { data: recentTxData, error: recentTxError } = await recentQuery;
+        if (recentTxError) {
+          console.warn("[statement-review] recent pending fallback failed:", recentTxError);
+        } else if ((recentTxData?.length ?? 0) > 0) {
+          txData = recentTxData;
+        }
+      }
+
+      const nextRows = ((txData as PendingTx[]) ?? [])
+        .filter((row) => !["approved", "rejected"].includes((row.status ?? "").toLowerCase()));
+      setDetectedPendingRows(nextRows.length);
+      setRows(nextRows);
+
+      return nextRows.length;
     } finally {
       setLoadingRows(false);
     }
@@ -495,39 +627,136 @@ function StatementReviewDialog({
   useEffect(() => {
     if (!open) return;
     pollCountRef.current = 0;
+    completedEmptyPollsRef.current = 0;
+    pollStartedAtRef.current = Date.now();
     setImportStatus("processing");
     setErrorMsg("");
     setRows([]);
+    setDetectedPendingRows(0);
 
     const poll = async () => {
       pollCountRef.current += 1;
-      if (pollCountRef.current > 30) {
+      if (pollCountRef.current > maxPolls || Date.now() - pollStartedAtRef.current > maxPollMs) {
         setImportStatus("failed");
-        setErrorMsg("Processing timed out. Please try again.");
+        setErrorMsg(`Processing timed out for import #${importId}. n8n did not create pending transactions that this app can read.`);
         return;
       }
       try {
-        const { data } = await supabase
+        const { data: importData } = await supabase
           .from("statement_imports")
-          .select("status, error_message")
+          .select("status, error_message, document_path, org_id, created_at")
           .eq("id", importId)
           .single();
-        const st = (data?.status ?? "processing") as typeof importStatus;
-        if (st === "completed") {
-          setImportStatus("completed");
+        const importRecord = importData as {
+          status?: string | null;
+          error_message?: string | null;
+          document_path?: string | null;
+          org_id?: number | null;
+          created_at?: string | null;
+        } | null;
+        const st = (importRecord?.status ?? "processing") as typeof importStatus;
+
+        const { count: pendingMarkerCount, error: markerError } = await supabase
+          .from("pending_transactions")
+          .select("id", { count: "exact", head: true })
+          .eq("import_id", importId)
+          .eq("status", "pending");
+
+        if (markerError) {
+          console.warn("[statement-review] pending marker check failed:", markerError);
+        } else if ((pendingMarkerCount ?? 0) > 0) {
+          setDetectedPendingRows(pendingMarkerCount ?? 0);
           await fetchRows();
-        } else if (st === "failed") {
-          setImportStatus("failed");
-          setErrorMsg(data?.error_message ?? "Import failed");
-        } else {
-          pollRef.current = setTimeout(poll, 3000);
+          if (st === "completed") {
+            setImportStatus("completed");
+          } else {
+            pollRef.current = setTimeout(poll, pollIntervalMs);
+          }
+          return;
         }
-      } catch {
-        pollRef.current = setTimeout(poll, 3000);
+
+        if (importRecord?.document_path) {
+          const { count: pathMarkerCount, error: pathMarkerError } = await supabase
+            .from("pending_transactions")
+            .select("id", { count: "exact", head: true })
+            .eq("document_path", importRecord.document_path)
+            .eq("status", "pending");
+          if (pathMarkerError) {
+            console.warn("[statement-review] pending document_path marker failed:", pathMarkerError);
+          } else if ((pathMarkerCount ?? 0) > 0) {
+            setDetectedPendingRows(pathMarkerCount ?? 0);
+            await fetchRows();
+            if (st === "completed") {
+              setImportStatus("completed");
+            } else {
+              pollRef.current = setTimeout(poll, pollIntervalMs);
+            }
+            return;
+          }
+        }
+
+        if (importRecord?.created_at) {
+          const since = new Date(new Date(importRecord.created_at).getTime() - 2 * 60_000).toISOString();
+          let recentMarkerQuery = supabase
+            .from("pending_transactions")
+            .select("id", { count: "exact", head: true })
+            .eq("user_id", numericUserId)
+            .eq("status", "pending")
+            .gte("created_at", since);
+
+          if (importRecord.org_id !== null && importRecord.org_id !== undefined) {
+            recentMarkerQuery = recentMarkerQuery.or(`org_id.eq.${importRecord.org_id},org_id.is.null`);
+          }
+
+          const { count: recentMarkerCount, error: recentMarkerError } = await recentMarkerQuery;
+          if (recentMarkerError) {
+            console.warn("[statement-review] recent pending marker failed:", recentMarkerError);
+          } else if ((recentMarkerCount ?? 0) > 0) {
+            setDetectedPendingRows(recentMarkerCount ?? 0);
+            await fetchRows();
+            if (st === "completed") {
+              setImportStatus("completed");
+            } else {
+              pollRef.current = setTimeout(poll, pollIntervalMs);
+            }
+            return;
+          }
+        }
+
+        if (st === "failed") {
+          setImportStatus("failed");
+          setErrorMsg(importRecord?.error_message ?? "Import failed");
+          return;
+        }
+
+        const rowCount = await fetchRows();
+        if (rowCount > 0) {
+          if (st === "completed") {
+            setImportStatus("completed");
+          } else {
+            pollRef.current = setTimeout(poll, pollIntervalMs);
+          }
+          return;
+        }
+
+        if (st === "completed") {
+          completedEmptyPollsRef.current += 1;
+          if (completedEmptyPollsRef.current <= 3) {
+            pollRef.current = setTimeout(poll, pollIntervalMs);
+            return;
+          }
+          setImportStatus("failed");
+          setErrorMsg(`n8n marked import #${importId} completed, but no pending transactions were created for review.`);
+        } else {
+          pollRef.current = setTimeout(poll, pollIntervalMs);
+        }
+      } catch (err) {
+        console.warn("[statement-review] poll failed:", err);
+        pollRef.current = setTimeout(poll, pollIntervalMs);
       }
     };
 
-    pollRef.current = setTimeout(poll, 3000);
+    pollRef.current = setTimeout(poll, pollIntervalMs);
     return () => { if (pollRef.current) clearTimeout(pollRef.current); };
   }, [open, importId]);
 
@@ -543,21 +772,27 @@ function StatementReviewDialog({
     try {
       await checkAddTransaction();
       // Supabase JS never throws — always check { error }
-      const { error: insertError } = await supabase.from("transactions").insert({
-        user_id: row.user_id,
-        org_id: row.org_id,
-        title: row.title,
-        amount: row.transaction_type === "debit" ? -Math.abs(row.amount) : Math.abs(row.amount),
-        description: row.description,
-        type: "Business",
-        deductible: true,
-        date_time: row.date_time,
-        is_ai_verified: false,
-        ...(importDocId !== null ? { file_path: String(importDocId) } : {}),
-      });
+      const { data: insertedTransaction, error: insertError } = await supabase
+        .from("transactions")
+        .insert({
+          user_id: row.user_id,
+          org_id: row.org_id,
+          title: row.title,
+          amount: row.transaction_type === "debit" ? -Math.abs(row.amount) : Math.abs(row.amount),
+          description: row.description,
+          type: "Business",
+          deductible: true,
+          date_time: row.date_time,
+          is_ai_verified: false,
+          category_id: row.category_id ?? null,
+          sub_category_id: row.sub_category_id ?? null,
+          ...(importDocId !== null ? { file_path: String(importDocId) } : {}),
+        })
+        .select("id")
+        .single();
       if (insertError) throw new Error(insertError.message);
 
-      await categorizeUncategorizedTransactions(1);
+      await categorizeTransaction(insertedTransaction.id, row.org_id);
 
       const { error: deleteError } = await supabase
         .from("pending_transactions")
@@ -614,28 +849,33 @@ function StatementReviewDialog({
     return type === "debit" ? `-${fmt}` : `+${fmt}`;
   }
 
+  // Rows can arrive in batches while n8n is still processing. Keep the review
+  // actions disabled until the import is complete so the user sees and acts on
+  // the final, complete set of pending transactions.
+  const displayStatus = importStatus;
+
   return (
     <Dialog open={open} onOpenChange={(v) => { if (!v) onClose(); }}>
       <DialogContent className="max-w-2xl max-h-[85vh] flex flex-col">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            {importStatus === "processing" && <Loader2 className="h-5 w-5 animate-spin text-primary" />}
-            {importStatus === "completed" && <CheckCircle2 className="h-5 w-5 text-emerald-400" />}
-            {importStatus === "processing" ? "Processing Statement…" : importStatus === "completed" ? `Review Transactions (${rows.length})` : "Import Failed"}
+            {displayStatus === "processing" && <Loader2 className="h-5 w-5 animate-spin text-primary" />}
+            {displayStatus === "completed" && <CheckCircle2 className="h-5 w-5 text-emerald-400" />}
+            {displayStatus === "processing" ? "Processing Statement…" : displayStatus === "completed" ? `Review Transactions (${rows.length || detectedPendingRows})` : "Import Failed"}
           </DialogTitle>
         </DialogHeader>
 
         <div className="flex-1 overflow-y-auto min-h-0">
-          {importStatus === "processing" && (
+          {displayStatus === "processing" && (
             <div className="flex flex-col items-center gap-4 py-16">
               <Loader2 className="h-12 w-12 animate-spin text-primary" />
               <p className="text-sm text-muted-foreground text-center max-w-xs">
-                Your bank statement is being processed by AI. This usually takes 10–30 seconds.
+                Your bank statement is being processed. This usually takes 10-30 seconds.
               </p>
             </div>
           )}
 
-          {importStatus === "failed" && (
+          {displayStatus === "failed" && (
             <div className="flex flex-col items-center gap-4 py-12 text-destructive">
               <X className="h-10 w-10" />
               <p className="text-sm text-center">{errorMsg || "Import failed. Please try again."}</p>
@@ -643,13 +883,23 @@ function StatementReviewDialog({
             </div>
           )}
 
-          {importStatus === "completed" && (
+          {displayStatus === "completed" && (
             loadingRows ? (
               <div className="flex justify-center py-12"><Loader2 className="h-8 w-8 animate-spin text-primary" /></div>
+            ) : detectedPendingRows > 0 && rows.length === 0 ? (
+              <div className="flex flex-col items-center gap-4 py-12 text-muted-foreground">
+                <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                <p className="text-sm text-center max-w-sm">
+                  Extracted transactions were found. Loading the review list...
+                </p>
+                <Button variant="outline" onClick={() => void fetchRows()}>Refresh Review</Button>
+              </div>
             ) : rows.length === 0 ? (
               <div className="flex flex-col items-center gap-3 py-12 text-muted-foreground">
                 <CheckCircle2 className="h-10 w-10 text-emerald-400" />
-                <p className="text-sm">No transactions found to review.</p>
+                <p className="text-sm text-center max-w-sm">
+                  Processing completed, but no pending transactions were created for review.
+                </p>
                 <Button variant="outline" onClick={() => { onReviewComplete(); onClose(); }}>Done</Button>
               </div>
             ) : (
@@ -688,7 +938,7 @@ function StatementReviewDialog({
           )}
         </div>
 
-        {importStatus === "completed" && rows.length > 0 && (
+        {displayStatus === "completed" && rows.length > 0 && (
           <DialogFooter className="gap-2 pt-3 border-t border-border/50">
             <p className="text-xs text-muted-foreground flex-1">{rows.length} transaction{rows.length !== 1 ? "s" : ""} pending</p>
             <Button variant="outline" size="sm" onClick={rejectAll} className="text-rose-400 border-rose-800 hover:bg-rose-950">
@@ -1090,38 +1340,51 @@ function UploadDialog({ open, onClose, onUploaded, onImportCreated, numericUserI
           setStep("review"); // show review step with error state
         }
       } else if (mime === "application/pdf" || mime.startsWith("image/")) {
-        // Any non-financial-statement category (Transactions + any other) with a
-        // PDF or image → extract text and trigger the statement import pipeline.
-        // Mirrors Flutter: only P&L / BS / CF get AI extraction; everything else
-        // that is a PDF/image goes through the bank-statement/n8n pipeline.
+        // Match the Flutter flow: create a statement_imports row and let n8n
+        // extract pending_transactions for user review.
         const orgId = uploadOrgId ?? null;
         if (orgId === null) {
           throw new Error("No organization found for your account. Please contact support.");
         }
 
-        // Extract raw text from the PDF so n8n can send it to GPT
         let extractedText: string | null = null;
         let isScanned = mime.startsWith("image/");
+        let statementDocumentPath = storagePath;
+        let statementMimeType = mime;
         if (mime === "application/pdf") {
           try {
-            const { data: { session } } = await supabase.auth.getSession();
-            const token = session?.access_token;
-            const base64 = await fileToBase64(pickedFile);
+            const statementBase64 = await fileToBase64(pickedFile);
             const textRes = await fetch("/api/extract-text", {
               method: "POST",
               headers: {
                 "Content-Type": "application/json",
                 ...(token ? { Authorization: `Bearer ${token}` } : {}),
               },
-              body: JSON.stringify({ fileData: base64 }),
+              body: JSON.stringify({ fileData: statementBase64 }),
             });
             if (textRes.ok) {
-              const payload = await textRes.json() as { text: string; isScanned: boolean };
-              extractedText = payload.text || null;
-              isScanned = payload.isScanned;
+              const payload = await textRes.json() as { text?: string; isScanned?: boolean };
+              const text = payload.text?.trim() ?? "";
+              extractedText = text.length >= 50 ? text : null;
+              isScanned = extractedText === null ? true : (payload.isScanned ?? false);
+            } else {
+              isScanned = true;
             }
           } catch (e) {
-            console.warn("[upload] pdf text extraction failed, continuing without text:", e);
+            console.warn("[upload] pdf text extraction failed, continuing with n8n OCR path:", e);
+            isScanned = true;
+          }
+        }
+
+        if (mime === "application/pdf" && isScanned) {
+          try {
+            const pagePaths = await uploadTransactionPdfPages(pickedFile, token);
+            if (pagePaths.length > 0) {
+              statementDocumentPath = pagePaths.length > 1 ? JSON.stringify(pagePaths) : pagePaths[0];
+              statementMimeType = "image/png";
+            }
+          } catch (e) {
+            console.warn("[upload] scanned PDF page rendering failed, using original PDF path:", e);
           }
         }
 
@@ -1131,10 +1394,10 @@ function UploadDialog({ open, onClose, onUploaded, onImportCreated, numericUserI
             user_id: numericUserId,
             org_id: orgId,
             document_id: docId,
-            document_path: storagePath,
-            mime_type: mime,
+            document_path: statementDocumentPath,
+            mime_type: statementMimeType,
             is_scanned: isScanned,
-            extracted_text: extractedText,
+            extracted_text: isScanned ? null : extractedText,
             status: "processing",
           })
           .select("id")
