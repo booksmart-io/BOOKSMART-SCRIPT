@@ -332,16 +332,57 @@ export default function AdminTaxDeductions() {
   const filtered = selectedGroupKey ? rules.filter((r) => String(r.deduction_rule_group_id) === selectedGroupKey) : [];
 
   return (
-    <div className="min-h-[calc(100vh-4rem)] space-y-5 animate-in fade-in slide-in-from-bottom-4 duration-500">
+    <div className="min-h-0 space-y-5 animate-in fade-in slide-in-from-bottom-4 duration-500">
       <div className="flex items-center gap-5">
         <Button variant="ghost" size="icon" className="h-9 w-9 text-foreground" onClick={() => window.history.back()}>
           <ArrowLeft className="h-5 w-5" />
         </Button>
-        <h1 className="text-2xl font-bold tracking-tight">Tax Deduction Rules</h1>
+        <h1 className="min-w-0 text-xl font-bold tracking-tight sm:text-2xl">Tax Deduction Rules</h1>
       </div>
 
-      <div className="grid min-h-[calc(100vh-9rem)] grid-cols-[330px_1px_minmax(0,1fr)] gap-4">
-        <Card className="rounded-lg border-border/60 bg-card/95">
+      <Card className="rounded-lg border-border/60 bg-card/95 lg:hidden">
+        <CardHeader className="pb-3">
+          <div className="flex items-center justify-between gap-3">
+            <CardTitle className="text-lg">Rule Group</CardTitle>
+            <Button variant="ghost" size="icon" className="shrink-0 text-foreground" onClick={invalidate}>
+              <RefreshCw className="h-5 w-5" />
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <Select value={selectedGroupKey} onValueChange={setSelectedGroupId}>
+            <SelectTrigger className="w-full">
+              <SelectValue placeholder="Select a rule group" />
+            </SelectTrigger>
+            <SelectContent>
+              {groups.map((group) => (
+                <SelectItem key={group.id} value={String(group.id)}>
+                  {groupLabel(group)} · {groupDateLabel(group)}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+            <Button variant="outline" onClick={openAddGroup}>
+              <Plus className="h-4 w-4" /> Add Group
+            </Button>
+            <Button variant="outline" onClick={() => selectedGroup && openEditGroup(selectedGroup)} disabled={!selectedGroup}>
+              <Edit className="h-4 w-4" /> Edit Group
+            </Button>
+            <Button
+              variant="outline"
+              className="text-destructive"
+              onClick={() => selectedGroup && setGroupToDelete(selectedGroup)}
+              disabled={!selectedGroup}
+            >
+              <Trash2 className="h-4 w-4" /> Delete Group
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      <div className="grid min-h-0 grid-cols-1 gap-4 lg:grid-cols-[330px_1px_minmax(0,1fr)]">
+        <Card className="hidden rounded-lg border-border/60 bg-card/95 lg:block">
           <CardHeader className="flex flex-row items-center justify-between pb-7">
             <CardTitle className="text-xl">Rule Groups</CardTitle>
             <Button variant="ghost" size="icon" className="h-8 w-8 text-foreground" onClick={invalidate}>
@@ -387,12 +428,12 @@ export default function AdminTaxDeductions() {
           </CardContent>
         </Card>
 
-        <div className="bg-border/80" />
+        <div className="hidden bg-border/80 lg:block" />
 
-        <Card className="relative rounded-lg border-border/60 bg-card/95">
-          <CardHeader className="flex flex-row items-center justify-between pb-8">
-            <CardTitle className="text-xl">Rules for {selectedGroup ? groupLabel(selectedGroup) : "Selected Group"}</CardTitle>
-            <Button className="h-9 rounded-full px-5 font-semibold" onClick={openAdd}>
+        <Card className="relative min-w-0 rounded-lg border-border/60 bg-card/95">
+          <CardHeader className="flex flex-col gap-3 pb-5 sm:flex-row sm:items-center sm:justify-between lg:pb-8">
+            <CardTitle className="min-w-0 text-lg sm:text-xl">Rules for {selectedGroup ? groupLabel(selectedGroup) : "Selected Group"}</CardTitle>
+            <Button className="w-full rounded-full px-5 font-semibold sm:w-auto" onClick={openAdd}>
               <Plus className="h-4 w-4" /> Rule
             </Button>
           </CardHeader>
@@ -444,7 +485,7 @@ export default function AdminTaxDeductions() {
             </div>
           </CardContent>
           <Button
-            className="absolute bottom-0 right-0 h-14 rounded-bl-lg rounded-br-lg rounded-tl-lg rounded-tr-none px-7 text-base font-semibold"
+            className="absolute bottom-0 right-0 hidden h-14 rounded-bl-lg rounded-br-lg rounded-tl-lg rounded-tr-none px-7 text-base font-semibold lg:flex"
             onClick={openAddGroup}
           >
             <Plus className="h-5 w-5" /> Rule Group
@@ -525,7 +566,7 @@ export default function AdminTaxDeductions() {
                 </SelectContent>
               </Select>
             </div>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <div className="space-y-2">
                 <Label>Calculation Type</Label>
                 <Select value={calcType} onValueChange={(v) => setCalcType(v as "percentage" | "fixed")}>

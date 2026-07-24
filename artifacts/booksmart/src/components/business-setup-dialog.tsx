@@ -365,8 +365,8 @@ export default function BusinessSetupDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-4xl max-h-[90vh] overflow-hidden p-0">
-        <DialogHeader className="px-6 py-5 border-b border-border/60">
+      <DialogContent className="flex h-[100dvh] w-screen max-w-none flex-col gap-0 overflow-hidden rounded-none p-0 sm:h-[calc(100dvh-2rem)] sm:max-h-[900px] sm:w-[calc(100vw-2rem)] sm:max-w-4xl sm:rounded-lg">
+        <DialogHeader className="shrink-0 border-b border-border/60 px-4 py-4 sm:px-6 sm:py-5">
           <DialogTitle>Add Business</DialogTitle>
           <DialogDescription>Set up the business profile first. After this, BookSmart will start the survey.</DialogDescription>
           <div className="pt-4">
@@ -389,7 +389,7 @@ export default function BusinessSetupDialog({
           </div>
         </DialogHeader>
 
-        <div className="max-h-[58vh] overflow-y-auto px-6 py-5">
+        <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-6 sm:py-5">
           <div className="mb-5 flex items-center gap-3">
             <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10 text-primary">
               <CurrentIcon className="h-5 w-5" />
@@ -401,7 +401,7 @@ export default function BusinessSetupDialog({
           </div>
 
           {step === 0 && (
-            <div className="grid gap-4 md:grid-cols-2">
+            <div className="grid min-w-0 gap-4 lg:grid-cols-2">
               <Field label="Legal business name *"><Input value={form.legalName} onChange={(e) => update("legalName", e.target.value)} placeholder="Acme LLC" /></Field>
               <Field label="Entity type *"><SelectField value={form.entityType} onChange={(v) => update("entityType", v)} options={ENTITY_TYPES} placeholder="Select entity" /></Field>
               <Field label="Industry *"><SelectField value={form.industry} onChange={(v) => { update("industry", v); update("naics", NAICS_BY_INDUSTRY[v] ?? ""); }} options={INDUSTRIES} placeholder="Select industry" /></Field>
@@ -414,12 +414,12 @@ export default function BusinessSetupDialog({
               <Field label="Business website"><Input value={form.website} onChange={(e) => update("website", e.target.value)} placeholder="https://acme.com" /></Field>
               <Field label="Business email"><Input type="email" value={form.businessEmail} onChange={(e) => update("businessEmail", e.target.value)} /></Field>
               <Field label="Business phone"><Input value={form.businessPhone} onChange={(e) => update("businessPhone", e.target.value)} /></Field>
-              <div className="md:col-span-2"><Field label="Products or services"><Textarea value={form.description} onChange={(e) => update("description", e.target.value)} placeholder="Describe what this business sells or provides." /></Field></div>
+              <div className="min-w-0 lg:col-span-2"><Field label="Products or services"><Textarea value={form.description} onChange={(e) => update("description", e.target.value)} placeholder="Describe what this business sells or provides." /></Field></div>
             </div>
           )}
 
           {step === 1 && (
-            <div className="grid gap-4 md:grid-cols-2">
+            <div className="grid min-w-0 gap-4 lg:grid-cols-2">
               <Field label="Street"><Input value={form.street} onChange={(e) => update("street", e.target.value)} /></Field>
               <Field label="Suite"><Input value={form.suite} onChange={(e) => update("suite", e.target.value)} /></Field>
               <Field label="City"><Input value={form.city} onChange={(e) => update("city", e.target.value)} /></Field>
@@ -431,12 +431,12 @@ export default function BusinessSetupDialog({
               <Field label="Owner full name"><Input value={form.ownerName} onChange={(e) => update("ownerName", e.target.value)} /></Field>
               <Field label="Owner title"><Input value={form.ownerTitle} onChange={(e) => update("ownerTitle", e.target.value)} /></Field>
               <Field label="Ownership percentage"><Input type="number" min="0" max="100" value={form.ownershipPercent} onChange={(e) => update("ownershipPercent", e.target.value)} /></Field>
-              <div className="md:col-span-2"><Field label="Additional owners"><Textarea value={form.additionalOwners} onChange={(e) => update("additionalOwners", e.target.value)} placeholder="Name, email, ownership %, role" /></Field></div>
+              <div className="min-w-0 lg:col-span-2"><Field label="Additional owners"><Textarea value={form.additionalOwners} onChange={(e) => update("additionalOwners", e.target.value)} placeholder="Name, email, ownership %, role" /></Field></div>
             </div>
           )}
 
           {step === 2 && (
-            <div className="grid gap-4 md:grid-cols-2">
+            <div className="grid min-w-0 gap-4 lg:grid-cols-2">
               <Field label="EIN / Tax ID *"><Input value={form.einTin} onChange={(e) => update("einTin", e.target.value)} placeholder="12-3456789" /></Field>
               <Field label="Federal tax classification *"><SelectField value={form.federalTaxClass} onChange={(v) => update("federalTaxClass", v)} options={["Sole Proprietor", "Single Member LLC", "Partnership", "S Corporation", "C Corporation", "Nonprofit"]} placeholder="Select class" /></Field>
               <Field label="State of incorporation"><SelectField value={form.stateIncorporation} onChange={(v) => update("stateIncorporation", v)} options={states.map((s) => ({ value: s.name, label: s.name }))} placeholder="Select state" /></Field>
@@ -458,7 +458,7 @@ export default function BusinessSetupDialog({
           {step === 3 && (
             <div className="space-y-5">
               <MultiSection title="Business operations" options={BUSINESS_OPERATIONS} selected={form.operations} onToggle={(v) => toggleList("operations", v)} />
-              <div className="grid gap-4 md:grid-cols-2">
+              <div className="grid min-w-0 gap-4 lg:grid-cols-2">
                 <Field label="Employee type"><SelectField value={form.employeeType} onChange={(v) => update("employeeType", v)} options={EMPLOYEE_TYPES} placeholder="Select employee type" /></Field>
                 <Field label="Approximate annual revenue"><SelectField value={form.annualRevenue} onChange={(v) => update("annualRevenue", v)} options={REVENUE_RANGES} placeholder="Select range" /></Field>
                 <Field label="Average monthly revenue"><Input type="number" min="0" value={form.monthlyRevenue} onChange={(e) => update("monthlyRevenue", e.target.value)} /></Field>
@@ -469,7 +469,7 @@ export default function BusinessSetupDialog({
               </div>
               <MultiSection title="Payment platforms" options={PAYMENT_PLATFORMS} selected={form.paymentPlatforms} onToggle={(v) => toggleList("paymentPlatforms", v)} />
               <MultiSection title="Business goals" options={BUSINESS_GOALS} selected={form.goals} onToggle={(v) => toggleList("goals", v)} />
-              <div className="grid gap-4 md:grid-cols-2">
+              <div className="grid min-w-0 gap-4 lg:grid-cols-2">
                 <Field label="Applying for funding?"><SelectField value={form.applyingFunding} onChange={(v) => update("applyingFunding", v)} options={["yes", "no", "maybe"]} /></Field>
                 <Field label="Desired funding amount"><Input type="number" min="0" value={form.desiredFundingAmount} onChange={(e) => update("desiredFundingAmount", e.target.value)} /></Field>
                 <Field label="Expected timeline"><Input value={form.fundingTimeline} onChange={(e) => update("fundingTimeline", e.target.value)} placeholder="3-6 months" /></Field>
@@ -491,14 +491,14 @@ export default function BusinessSetupDialog({
           )}
         </div>
 
-        <DialogFooter className="border-t border-border/60 px-6 py-4">
-          <Button variant="outline" onClick={() => (step === 0 ? onOpenChange(false) : setStep((current) => current - 1))} disabled={saving}>
+        <DialogFooter className="shrink-0 flex-col-reverse gap-2 border-t border-border/60 px-4 py-3 sm:flex-row sm:px-6 sm:py-4">
+          <Button variant="outline" onClick={() => (step === 0 ? onOpenChange(false) : setStep((current) => current - 1))} disabled={saving} className="w-full sm:w-auto">
             {step === 0 ? "Cancel" : <><ChevronLeft className="mr-2 h-4 w-4" /> Back</>}
           </Button>
           {step < STEPS.length - 1 ? (
-            <Button onClick={next}>Next <ChevronRight className="ml-2 h-4 w-4" /></Button>
+            <Button onClick={next} className="w-full sm:w-auto">Next <ChevronRight className="ml-2 h-4 w-4" /></Button>
           ) : (
-            <Button onClick={save} disabled={saving}>
+            <Button onClick={save} disabled={saving} className="w-full sm:w-auto">
               {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               Save Business & Start Survey
             </Button>
@@ -511,7 +511,7 @@ export default function BusinessSetupDialog({
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div className="space-y-2">
+    <div className="min-w-0 space-y-2">
       <Label>{label}</Label>
       {children}
     </div>
@@ -531,7 +531,7 @@ function SelectField({
 }) {
   return (
     <Select value={value} onValueChange={onChange}>
-      <SelectTrigger><SelectValue placeholder={placeholder} /></SelectTrigger>
+      <SelectTrigger className="min-w-0"><SelectValue placeholder={placeholder} /></SelectTrigger>
       <SelectContent className="max-h-72">
         {options.map((option) => {
           const value = typeof option === "string" ? option : option.value;
@@ -556,7 +556,7 @@ function MultiSection({ title, options, selected, onToggle }: { title: string; o
   return (
     <div className="md:col-span-2">
       <Label>{title}</Label>
-      <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+      <div className="mt-2 grid min-w-0 gap-2 sm:grid-cols-2 xl:grid-cols-3">
         {options.map((option) => (
           <CheckRow key={option} label={option} checked={selected.includes(option)} onChange={() => onToggle(option)} />
         ))}

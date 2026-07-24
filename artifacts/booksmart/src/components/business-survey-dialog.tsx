@@ -156,7 +156,7 @@ function ChoicePill({
       type="button"
       onClick={onToggle}
       className={cn(
-        "flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold border transition-all",
+        "flex min-h-11 min-w-0 items-center gap-2 rounded-lg border px-3 py-2 text-left text-xs font-semibold transition-all",
         selected
           ? "bg-[#2F8A24] text-white border-[#60C14F] shadow-[0_0_18px_rgba(96,193,79,0.18)]"
           : "bg-[#07182c] text-[#D7E6FF] border-[#1c3c66] hover:border-[#60C14F]/70"
@@ -182,7 +182,7 @@ function OptionRow({
       type="button"
       onClick={onToggle}
       className={cn(
-        "w-full flex items-center gap-3 rounded-lg border px-4 py-3 text-left transition-all",
+        "flex min-h-11 w-full min-w-0 items-center gap-3 rounded-lg border px-4 py-3 text-left transition-all",
         selected
           ? "border-[#60C14F] bg-[#2F8A24] shadow-[0_0_18px_rgba(96,193,79,0.18)]"
           : "border-[#1c3c66] bg-[#07182c] hover:border-[#60C14F]/70"
@@ -196,7 +196,7 @@ function OptionRow({
       >
         {selected && <Check className="h-3 w-3 text-white" />}
       </span>
-      <span className={cn("text-sm font-medium", selected ? "text-white" : "text-[#EAF2FF]")}>
+      <span className={cn("min-w-0 break-words text-sm font-medium", selected ? "text-white" : "text-[#EAF2FF]")}>
         {label}
       </span>
     </button>
@@ -298,7 +298,7 @@ function SurveyQuestionCard({
   children: React.ReactNode;
 }) {
   return (
-    <div className="rounded-2xl border border-white/85 bg-[#0d2a4f] p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]">
+    <div className="min-w-0 rounded-2xl border border-white/85 bg-[#0d2a4f] p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.05)] sm:p-4">
       <div className="flex items-start gap-3">
         <div className="h-12 w-12 rounded-2xl bg-[#FFC72B]/15 text-[#FFC72B] flex items-center justify-center shrink-0 overflow-hidden">
           {image
@@ -306,14 +306,14 @@ function SurveyQuestionCard({
             : <Icon className="h-6 w-6" aria-hidden="true" />}
         </div>
         <div className="min-w-0">
-          <h4 className="text-[17px] font-bold leading-tight text-white">{title}</h4>
-          {description && <p className="mt-1 text-[12px] font-semibold text-white">{description}</p>}
+          <h4 className="break-words text-[17px] font-bold leading-tight text-white">{title}</h4>
+          {description && <p className="mt-1 break-words text-[12px] font-semibold text-white">{description}</p>}
         </div>
       </div>
       {example && (
         <div className="mt-4 flex items-center gap-2 rounded-xl bg-[#9a8b41] px-3 py-2 text-[12px] text-[#06172b]">
           <Lightbulb className="h-4 w-4 shrink-0" />
-          <span>{example}</span>
+          <span className="min-w-0 break-words">{example}</span>
         </div>
       )}
       <div className="mt-4">{children}</div>
@@ -338,7 +338,7 @@ function InlineChoices({
           type="button"
           onClick={() => onChange(option)}
           className={cn(
-            "rounded-full border px-4 py-2 text-sm font-bold transition-all",
+            "min-h-11 min-w-0 break-words rounded-full border px-4 py-2 text-sm font-bold transition-all",
             selected === option
               ? "border-[#FFC72B] bg-[#FFC72B] text-white"
               : "border-white/90 bg-transparent text-white hover:border-[#FFC72B]"
@@ -365,7 +365,7 @@ function CompactSelect({
 }) {
   return (
     <Select value={value} onValueChange={onChange}>
-      <SelectTrigger className="h-11 border-[#274a77] bg-[#07182c] text-white">
+      <SelectTrigger className="h-11 min-w-0 border-[#274a77] bg-[#07182c] text-white">
         <SelectValue placeholder={placeholder} />
       </SelectTrigger>
       <SelectContent className="max-h-72">
@@ -1061,7 +1061,7 @@ export default function BusinessSurveyDialog({ orgId, open, onOpenChange, initia
       render: () => (
         <div className="space-y-2">
           {selectedDebtKeys.map(({ key, label }) => (
-            <div key={key} className="grid grid-cols-[1fr_120px] gap-2 items-center">
+            <div key={key} className="grid min-w-0 grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_120px] sm:items-center">
               <span className="text-xs text-[#D7E6FF]">{label}</span>
               <div className="relative">
                 <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs text-[#D7E6FF]">$</span>
@@ -1377,18 +1377,18 @@ export default function BusinessSurveyDialog({ orgId, open, onOpenChange, initia
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="h-[100dvh] w-screen max-w-none rounded-none p-0 overflow-hidden border-white/80 bg-[#06172b] gap-0 text-[#EAF2FF] sm:h-auto sm:max-h-[92vh] sm:w-full sm:max-w-[760px] sm:rounded-2xl">
-        <div className="border-b border-white/20 px-4 py-4">
+      <DialogContent className="flex h-[100dvh] w-screen max-w-none flex-col gap-0 overflow-hidden rounded-none border-white/80 bg-[#06172b] p-0 text-[#EAF2FF] sm:h-[calc(100dvh-2rem)] sm:max-h-[900px] sm:w-[calc(100vw-2rem)] sm:max-w-[760px] sm:rounded-2xl">
+        <div className="shrink-0 border-b border-white/20 px-4 py-3 sm:py-4">
           <h2 className="text-lg font-bold text-white">Business Survey</h2>
         </div>
-        <div className="min-h-0 flex-1 overflow-y-auto bg-[#0d2a4f] p-4 sm:max-h-[78vh] sm:p-6">
+        <div className="min-h-0 flex-1 overflow-y-auto bg-[#0d2a4f] p-3 sm:p-6">
           {current ? (
-            <div className="flex min-h-[560px] flex-col">
+            <div className="flex min-w-0 flex-col">
               <div className="flex items-center gap-3">
                 <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-[#FFC72B]/15 text-[#FFC72B]">
                   {CurrentIcon && <CurrentIcon className="h-7 w-7" aria-hidden="true" />}
                 </div>
-                <h3 className="text-2xl font-bold text-white">{current.title}</h3>
+                <h3 className="min-w-0 break-words text-xl font-bold text-white sm:text-2xl">{current.title}</h3>
               </div>
               <div className="mt-2 flex items-center gap-2 font-bold text-[#FFC72B]">
                 <Flag className="h-4 w-4 fill-[#FFC72B]" />
@@ -1400,7 +1400,7 @@ export default function BusinessSurveyDialog({ orgId, open, onOpenChange, initia
                 {current.render()}
               </div>
 
-              <div className="mt-auto pt-7">
+              <div className="pt-7">
                 <div className="text-xs text-white mb-2">{progressPct}% complete</div>
                 <div className="h-2 rounded-full bg-[#1c3c66] overflow-hidden">
                   <div
@@ -1426,20 +1426,20 @@ export default function BusinessSurveyDialog({ orgId, open, onOpenChange, initia
           )}
         </div>
 
-        <div className="sticky bottom-0 flex items-center justify-between border-t border-[#18375e] bg-[#031327] px-3 py-3 sm:px-5 sm:py-4">
-          <Button size="sm" variant="ghost" onClick={goBack} className="gap-1 text-[#D7E6FF] hover:text-white hover:bg-[#102c52] px-2">
+        <div className="shrink-0 grid grid-cols-2 gap-2 border-t border-[#18375e] bg-[#031327] px-3 py-3 sm:flex sm:items-center sm:justify-between sm:px-5 sm:py-4">
+          <Button size="sm" variant="ghost" onClick={goBack} className="min-h-11 w-full gap-1 px-2 text-[#D7E6FF] hover:bg-[#102c52] hover:text-white sm:min-h-10 sm:w-auto">
             {step === 0 ? "Cancel" : <><ChevronLeft className="h-4 w-4" /> Back</>}
           </Button>
-          <div className="flex flex-wrap justify-end gap-2">
+          <div className="contents sm:flex sm:flex-wrap sm:justify-end sm:gap-2">
             {current && (
-              <Button size="sm" variant="outline" onClick={skipAndAdvance} disabled={saving} className="border-[#274a77] bg-transparent text-[#D7E6FF] hover:bg-[#102c52] hover:text-white px-2">Skip unanswered</Button>
+              <Button size="sm" variant="outline" onClick={skipAndAdvance} disabled={saving} className="min-h-11 w-full border-[#274a77] bg-transparent px-2 text-[#D7E6FF] hover:bg-[#102c52] hover:text-white sm:min-h-10 sm:w-auto">Skip unanswered</Button>
             )}
             {current && (
-              <Button size="sm" variant="ghost" onClick={() => saveCurrent(true)} disabled={saving} className="text-[#D7E6FF] hover:text-white hover:bg-[#102c52]">
+              <Button size="sm" variant="ghost" onClick={() => saveCurrent(true)} disabled={saving} className="col-span-2 min-h-11 w-full whitespace-normal text-[#D7E6FF] hover:bg-[#102c52] hover:text-white sm:min-h-10 sm:w-auto">
                 Save &amp; Continue Later
               </Button>
             )}
-            <Button size="sm" onClick={current ? saveAndAdvance : closeCompletedSurvey} disabled={saving} className="gap-1.5 bg-[#FFC72B] text-[#031327] hover:bg-[#ffd95e] px-3">
+            <Button size="sm" onClick={current ? saveAndAdvance : closeCompletedSurvey} disabled={saving} className="col-span-2 min-h-11 w-full gap-1.5 bg-[#FFC72B] px-3 text-[#031327] hover:bg-[#ffd95e] sm:min-h-10 sm:w-auto">
               {saving && <Loader2 className="h-4 w-4 animate-spin" />}
               {current ? (step === TOTAL_STEPS - 1 ? "Finish" : "Continue") : "Done"}
             </Button>

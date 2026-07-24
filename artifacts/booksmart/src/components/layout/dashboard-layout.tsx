@@ -89,6 +89,10 @@ export function DashboardLayout({ children, role }: DashboardLayoutProps) {
 
   const items = navConfig[role].main;
   const bottomItems = navConfig[role].bottom;
+  const usesFullWidthContent =
+    location === "/user/reports" ||
+    location === "/cpa/clients" ||
+    location === "/admin/tax-deductions";
 
   const isActive = (url: string) =>
     url === "/user" || url === "/cpa" || url === "/admin"
@@ -294,7 +298,7 @@ export function DashboardLayout({ children, role }: DashboardLayoutProps) {
 
               {/* Bell */}
               <Link href={role === "user" ? "/user/chat" : role === "cpa" ? "/cpa/chat" : "/admin/chat"}>
-                <Button variant="ghost" size="icon" className="h-8 w-8 rounded-full text-muted-foreground hover:text-primary relative">
+                <Button variant="ghost" size="icon" className="rounded-full text-muted-foreground hover:text-primary relative">
                   <Bell className="h-[18px] w-[18px]" />
                   {unreadCount > 0 && (
                     <span className="absolute top-0.5 right-0.5 min-w-[14px] h-[14px] px-0.5 rounded-full bg-rose-500 text-white text-[9px] font-bold flex items-center justify-center leading-none">
@@ -309,7 +313,7 @@ export function DashboardLayout({ children, role }: DashboardLayoutProps) {
                 variant="ghost"
                 size="icon"
                 onClick={() => setTheme(isDark ? "light" : "dark")}
-                className="h-8 w-8 rounded-full text-muted-foreground hover:text-primary"
+                className="rounded-full text-muted-foreground hover:text-primary"
               >
                 {isDark ? <Sun className="h-[18px] w-[18px]" /> : <Moon className="h-[18px] w-[18px]" />}
               </Button>
@@ -332,14 +336,23 @@ export function DashboardLayout({ children, role }: DashboardLayoutProps) {
           </header>
 
           {/* Page content */}
-          <div className="flex-1 overflow-auto p-3 pb-20 md:p-4">
-            <div className="w-full min-w-0">
+          <div className="min-h-0 flex-1 overflow-auto px-3 pb-20 pt-3 sm:px-4 sm:pt-4 lg:px-6 lg:pt-6 2xl:px-7 2xl:pt-7">
+            <div
+              className={`mx-auto w-full min-w-0 ${
+                usesFullWidthContent ? "max-w-none" : "max-w-[1536px]"
+              }`}
+            >
               {children}
             </div>
           </div>
         </main>
 
-        {role === "user" && <SubscriptionUpgradePrompt userId={profile?.numericId ?? null} />}
+        {role === "user" &&
+          location.startsWith("/user") &&
+          location !== "/user/profile" &&
+          location !== "/user/subscription" && (
+            <SubscriptionUpgradePrompt userId={profile?.numericId ?? null} />
+          )}
       </div>
     </SidebarProvider>
   );

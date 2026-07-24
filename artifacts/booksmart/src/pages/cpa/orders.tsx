@@ -250,7 +250,7 @@ export default function CpaOrders() {
 
   // ── Render ────────────────────────────────────────────────────────────────
   return (
-    <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+    <div className="min-w-0 space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Active Orders</h1>
@@ -259,18 +259,18 @@ export default function CpaOrders() {
       </div>
 
       {/* Filters */}
-      <div className="flex gap-3">
-        <div className="relative flex-1 max-w-xs">
+      <div className="flex min-w-0 flex-col gap-3 sm:flex-row">
+        <div className="relative min-w-0 flex-1 sm:max-w-xs">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <Input
             placeholder="Search orders..."
-            className="pl-9 h-9"
+            className="h-11 pl-9 sm:h-9"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
         </div>
         <Select value={statusFilter} onValueChange={setStatusFilter}>
-          <SelectTrigger className="w-36 h-9">
+          <SelectTrigger className="h-11 w-full sm:h-9 sm:w-36">
             <SelectValue placeholder="Filter" />
           </SelectTrigger>
           <SelectContent>
@@ -309,7 +309,7 @@ export default function CpaOrders() {
                 }}
               >
                 <CardContent className="py-4 px-4">
-                  <div className="flex items-center gap-3">
+                  <div className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 sm:flex">
                     {/* Avatar */}
                     <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center shrink-0 text-sm font-semibold text-primary">
                       {client ? initials(client) : "#"}
@@ -317,8 +317,8 @@ export default function CpaOrders() {
 
                     {/* Info */}
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 mb-0.5">
-                        <p className="text-sm font-semibold truncate">{order.title}</p>
+                      <div className="flex min-w-0 items-center gap-2 mb-0.5">
+                        <p className="min-w-0 break-words text-sm font-semibold sm:truncate">{order.title}</p>
                         <span className="text-xs text-muted-foreground shrink-0">#{order.id}</span>
                       </div>
                       <p className="text-xs text-muted-foreground">
@@ -329,24 +329,24 @@ export default function CpaOrders() {
                     </div>
 
                     {/* Amount */}
-                    <span className="text-sm font-semibold text-primary shrink-0">
+                    <span className="col-start-2 whitespace-nowrap text-sm font-semibold text-primary sm:col-auto sm:shrink-0">
                       {fmtCurrency(order.amount ?? 0)}
                     </span>
 
                     {/* Status badge */}
                     <Badge
                       variant="outline"
-                      className={`capitalize text-xs shrink-0 ${statusColor(order.status)}`}
+                      className={`col-start-2 w-fit capitalize text-xs sm:col-auto sm:shrink-0 ${statusColor(order.status)}`}
                     >
                       {order.status}
                     </Badge>
 
                     {/* Actions */}
-                    <div className="flex items-center gap-1 shrink-0">
+                    <div className="col-start-3 row-span-3 row-start-1 flex shrink-0 items-center gap-1">
                       <Button
                         variant="ghost"
                         size="icon"
-                        className="h-8 w-8 text-muted-foreground hover:text-primary"
+                        className="h-11 w-11 text-muted-foreground hover:text-primary sm:h-10 sm:w-10"
                         title="Chat with client"
                         onClick={(e) => {
                           e.stopPropagation();
@@ -434,7 +434,7 @@ export default function CpaOrders() {
               )}
 
               {/* Edit fields */}
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div>
                   <div className="text-xs text-muted-foreground mb-1">Fee Amount ($)</div>
                   <Input

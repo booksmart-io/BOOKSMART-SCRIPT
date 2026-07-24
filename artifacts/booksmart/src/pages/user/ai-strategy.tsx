@@ -748,8 +748,8 @@ Rules:
           <div className="py-6 flex flex-col items-center border-b border-border" style={{ background: "linear-gradient(180deg, hsl(var(--muted)), hsl(var(--background)))" }}>
             <p className="text-sm font-semibold text-foreground mb-4">Deduction Optimization Level</p>
             {/* SVG Semi-circle gauge */}
-            <div className="relative">
-              <svg width="180" height="100" viewBox="0 0 180 100">
+            <div className="relative w-full max-w-[180px]">
+              <svg className="h-auto w-full" viewBox="0 0 180 100">
                 {/* Track */}
                 <path d="M 15 90 A 75 75 0 0 1 165 90" fill="none" stroke="hsl(var(--border))" strokeWidth="14" strokeLinecap="round" />
                 {/* Score arc */}
@@ -1072,7 +1072,49 @@ Rules:
                     No transactions available in this period.
                   </div>
                 ) : (
-                  <div className="overflow-x-auto rounded-xl border border-border" style={{ background: "hsl(var(--card))" }}>
+                  <>
+                  <div className="space-y-3 sm:hidden">
+                    {tableGroups.map(group => {
+                      const isOpen = expandedGroup === group.label;
+                      return (
+                        <div key={group.label} className="min-w-0 overflow-hidden rounded-xl border border-border" style={{ background: "hsl(var(--card))" }}>
+                          <button
+                            onClick={() => setExpandedGroup(isOpen ? null : group.label)}
+                            className="flex min-h-11 w-full min-w-0 items-start justify-between gap-3 p-3 text-left"
+                          >
+                            <div className="min-w-0">
+                              <div className="flex min-w-0 items-center gap-2">
+                                <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: group.color }} />
+                                <span className="min-w-0 break-words text-sm font-semibold text-foreground">{group.label}</span>
+                              </div>
+                              <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
+                                <span className="text-muted-foreground">Activity</span><span className="text-right font-medium">{fmt(group.totalAmt)}</span>
+                                <span className="text-muted-foreground">Eligible deduction</span><span className="text-right font-medium">{group.dedAmt > 0 ? fmt(group.dedAmt) : "—"}</span>
+                                <span className="text-muted-foreground">Deduction rate</span><span className="text-right">{group.deductionRate > 0 ? `${group.deductionRate.toFixed(1)}%` : "—"}</span>
+                                <span className="text-muted-foreground">Transactions</span><span className="text-right">{group.count}</span>
+                              </div>
+                            </div>
+                            <ChevronDown className={`mt-0.5 h-4 w-4 shrink-0 text-muted-foreground transition-transform ${isOpen ? "rotate-180" : ""}`} />
+                          </button>
+                          {isOpen && (
+                            <div className="space-y-2 border-t border-border/50 p-3" style={{ background: "hsl(var(--background))" }}>
+                              {group.txs.map(t => (
+                                <div key={t.id} className="min-w-0 rounded-lg border border-border/50 p-3 text-xs">
+                                  <p className="break-words font-medium text-foreground">{t.title}</p>
+                                  <p className="mt-1 text-muted-foreground">{new Date(t.date_time).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}</p>
+                                  <div className="mt-2 flex items-center justify-between gap-3">
+                                    <span>{fmt(Math.abs(t.amount))}</span>
+                                    <span className="font-semibold text-[#22c55e]">{t.deductible && deductionAmountForTx(t) > 0 ? fmt(deductionAmountForTx(t)) : "—"}</span>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <div className="hidden overflow-x-auto rounded-xl border border-border sm:block" style={{ background: "hsl(var(--card))" }}>
                     <div className="min-w-[760px]">
                     {/* Table header */}
                     <div className="grid text-[10px] text-muted-foreground font-semibold uppercase tracking-wider px-4 py-2.5 border-b border-border/60"
@@ -1141,6 +1183,7 @@ Rules:
                     })}
                     </div>
                   </div>
+                  </>
                 )}
               </div>
             </>

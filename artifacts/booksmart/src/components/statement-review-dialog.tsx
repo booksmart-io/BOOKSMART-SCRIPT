@@ -83,19 +83,20 @@ export function StatementReviewDialog({
   const warnings = [...serverWarnings, ...validation.map(v => `${v.message}; difference ${v.difference?.toFixed(2)} (tolerance ${v.tolerance.toFixed(2)}).`)];
   return (
     <Dialog open={open}>
-      <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto" onEscapeKeyDown={e => e.preventDefault()} onInteractOutside={e => e.preventDefault()}>
-        <DialogHeader><DialogTitle className="flex gap-2 items-center"><FileText className="h-5 w-5" />Review Financial Statement</DialogTitle></DialogHeader>
+      <DialogContent className="flex h-[100dvh] w-screen max-w-none flex-col gap-0 overflow-hidden rounded-none p-0 sm:h-[calc(100dvh-2rem)] sm:max-h-[900px] sm:w-[calc(100vw-2rem)] sm:max-w-3xl sm:rounded-lg" onEscapeKeyDown={e => e.preventDefault()} onInteractOutside={e => e.preventDefault()}>
+        <DialogHeader className="shrink-0 border-b px-4 py-4 sm:px-6"><DialogTitle className="flex min-w-0 items-center gap-2 pr-8"><FileText className="h-5 w-5 shrink-0" /><span className="break-words">Review Financial Statement</span></DialogTitle></DialogHeader>
+        <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-4 sm:px-6">
         <p className="text-xs text-muted-foreground">Processed by the configured AI provider. Review and correct every value before confirmation.</p>
-        <div className="grid sm:grid-cols-3 gap-3">
+        <div className="grid gap-3 lg:grid-cols-3">
           <div><Label>Entity</Label><Input value={draft.metadata.entity_name ?? ""} onChange={e => setDraft(p => ({ ...p, metadata: { ...p.metadata, entity_name: e.target.value || null } }))} /></div>
           <div><Label>Currency</Label><Input maxLength={3} value={draft.metadata.currency} onChange={e => setDraft(p => ({ ...p, metadata: { ...p.metadata, currency: e.target.value.toUpperCase() } }))} /></div>
           <div><Label>Scale</Label><Select value={draft.metadata.scale} onValueChange={scale => setDraft(p => ({ ...p, metadata: { ...p.metadata, scale: scale as StatementDraft["metadata"]["scale"] } }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="ones">Ones</SelectItem><SelectItem value="thousands">Thousands</SelectItem><SelectItem value="millions">Millions</SelectItem></SelectContent></Select></div>
         </div>
-        <div className="grid sm:grid-cols-2 gap-2">
+        <div className="grid gap-2 md:grid-cols-2">
           {Object.entries(draft.values).map(([field, value]) => {
             const evidence = draft.evidence.find(e => e.field === field);
             return <div key={field} className="rounded-md border p-2">
-              <Label className="flex justify-between"><span>{LABELS[field] ?? field}</span>{edited.has(field) && <span className="text-amber-500 text-[10px]">User edited</span>}</Label>
+              <Label className="flex min-w-0 flex-wrap justify-between gap-1"><span className="break-words">{LABELS[field] ?? field}</span>{edited.has(field) && <span className="shrink-0 text-[10px] text-amber-500">User edited</span>}</Label>
               <Input type="number" step="0.01" value={value ?? ""} onChange={e => updateValue(field, e.target.value)} />
               {evidence && <p className="text-[10px] text-muted-foreground mt-1">{evidence.page ? `Page ${evidence.page} · ` : ""}{evidence.location ?? evidence.excerpt}</p>}
             </div>;
@@ -103,12 +104,13 @@ export function StatementReviewDialog({
         </div>
         {warnings.length > 0 && <div className="rounded-md border border-amber-500/40 p-3 space-y-2"><p className="text-sm font-semibold flex gap-2"><AlertTriangle className="h-4 w-4" />Warnings</p>{warnings.map((w, i) => <p key={i} className="text-xs">{w}</p>)}<label className="flex items-center gap-2 text-xs"><Checkbox checked={acknowledge} onCheckedChange={v => setAcknowledge(v === true)} />I reviewed and acknowledge these warnings.</label></div>}
         <div><Label>Reporting decision</Label><Select value={decision} onValueChange={v => setDecision(v as typeof decision)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="keep_booksmart">Keep BookSmart values (no transactions)</SelectItem><SelectItem value="use_uploaded">Use uploaded statement (create summarized transactions)</SelectItem><SelectItem value="investigate">Investigate differences (no transactions)</SelectItem><SelectItem value="review_later">Review later (no transactions)</SelectItem><SelectItem value="propose_adjustments">Create draft proposed adjustments (no transactions)</SelectItem></SelectContent></Select></div>
-        {error && <p className="text-sm text-destructive">{error}</p>}
-        <DialogFooter className="gap-2 flex-wrap">
-          <Button variant="destructive" disabled={saving} onClick={onDeleteUpload}>Delete Upload</Button>
-          <Button variant="outline" disabled={saving} onClick={async () => { await saveStatementReview({ id: statementId, organizationId, statement: draft, action: "abandon" }); onDone(); }}>Cancel</Button>
-          <Button variant="outline" disabled={saving} onClick={() => save("save_draft")}>Save Draft</Button>
-          <Button disabled={saving || (warnings.length > 0 && !acknowledge)} onClick={() => save("confirm")}><CheckCircle2 className="h-4 w-4 mr-1" />Confirm</Button>
+        {error && <p className="break-words text-sm text-destructive">{error}</p>}
+        </div>
+        <DialogFooter className="shrink-0 grid grid-cols-2 gap-2 border-t px-4 py-3 sm:flex sm:flex-wrap sm:px-6">
+          <Button variant="destructive" disabled={saving} onClick={onDeleteUpload} className="w-full sm:w-auto">Delete Upload</Button>
+          <Button variant="outline" disabled={saving} onClick={async () => { await saveStatementReview({ id: statementId, organizationId, statement: draft, action: "abandon" }); onDone(); }} className="w-full sm:w-auto">Cancel</Button>
+          <Button variant="outline" disabled={saving} onClick={() => save("save_draft")} className="w-full sm:w-auto">Save Draft</Button>
+          <Button disabled={saving || (warnings.length > 0 && !acknowledge)} onClick={() => save("confirm")} className="w-full sm:w-auto"><CheckCircle2 className="h-4 w-4 mr-1" />Confirm</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

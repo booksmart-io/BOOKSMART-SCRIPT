@@ -5,7 +5,7 @@ import { Card } from "@/components/ui/card";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Search, Send, Loader2, MessageSquare, Paperclip, Download, X, FileText, FileSpreadsheet } from "lucide-react";
+import { ArrowLeft, Search, Send, Loader2, MessageSquare, Paperclip, Download, X, FileText, FileSpreadsheet } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/hooks/use-auth";
 import { formatDistanceToNow } from "date-fns";
@@ -98,7 +98,7 @@ function MessageBubble({ msg, isMe, peerInitial, myInitial }: {
   const attachment = msg.type !== "text" ? parseAttachment(msg.content) : null;
 
   return (
-    <div className={`flex gap-2 max-w-[80%] ${isMe ? "ml-auto flex-row-reverse" : ""}`}>
+    <div className={`flex min-w-0 max-w-[90%] gap-2 sm:max-w-[80%] ${isMe ? "ml-auto flex-row-reverse" : ""}`}>
       <Avatar className="h-7 w-7 mt-auto shrink-0">
         <AvatarFallback className={`text-xs font-bold ${isMe ? "bg-primary text-primary-foreground" : "bg-primary/10 text-primary"}`}>
           {isMe ? myInitial : peerInitial}
@@ -139,7 +139,7 @@ function MessageBubble({ msg, isMe, peerInitial, myInitial }: {
         </div>
       ) : (
         /* Text message */
-        <div className={`p-3 rounded-2xl text-sm whitespace-pre-wrap break-words ${isMe ? "bg-primary/90 text-primary-foreground rounded-br-sm" : "bg-secondary/20 rounded-bl-sm"}`}>
+        <div className={`min-w-0 max-w-full p-3 rounded-2xl text-sm whitespace-pre-wrap [overflow-wrap:anywhere] ${isMe ? "bg-primary/90 text-primary-foreground rounded-br-sm" : "bg-secondary/20 rounded-bl-sm"}`}>
           {msg.content}
           <div className={`text-[10px] mt-1 ${isMe ? "text-primary-foreground/60 text-right" : "text-muted-foreground"}`}>
             {new Date(msg.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
@@ -162,6 +162,7 @@ export default function Chat() {
   const cpaNaturalId = params.get("cpa_id") ? Number(params.get("cpa_id")) : null;
 
   const [activeChatId, setActiveChatId] = useState<number | null>(null);
+  const [mobileListOpen, setMobileListOpen] = useState(true);
   const [messageText, setMessageText] = useState("");
   const [search, setSearch] = useState("");
   const [userMap, setUserMap] = useState<Record<number, UserProfile>>({});
@@ -215,6 +216,7 @@ export default function Chat() {
     );
     if (existing) {
       setActiveChatId(existing.id);
+      setMobileListOpen(false);
     } else {
       supabase.from("chats").insert({
         sender_id: numericId, receiver_id: cpaNaturalId,
@@ -223,6 +225,7 @@ export default function Chat() {
         if (!error && data) {
           qc.invalidateQueries({ queryKey: ["chats", numericId] });
           setActiveChatId(data.id);
+          setMobileListOpen(false);
         }
       });
     }
@@ -408,9 +411,9 @@ export default function Chat() {
   // ── Render ────────────────────────────────────────────────────────────────
 
   return (
-    <div className="h-[calc(100vh-8rem)] flex gap-4 animate-in fade-in slide-in-from-bottom-4 duration-500">
+    <div className="flex h-full min-h-0 min-w-0 gap-4 animate-in fade-in slide-in-from-bottom-4 duration-500">
       {/* ── Sidebar ── */}
-      <Card className="w-80 flex-shrink-0 flex flex-col border-border/50 hidden md:flex">
+      <Card className={`${mobileListOpen ? "flex" : "hidden"} min-h-0 w-full flex-col border-border/50 lg:flex lg:w-[288px] lg:flex-shrink-0`}>
         <div className="p-4 border-b border-border/30">
           <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
@@ -432,7 +435,10 @@ export default function Chat() {
               const other = userMap[otherId];
               const isActive = chat.id === activeChatId;
               return (
-                <div key={chat.id} onClick={() => setActiveChatId(chat.id)}
+                <div key={chat.id} onClick={() => {
+                  setActiveChatId(chat.id);
+                  setMobileListOpen(false);
+                }}
                   className={`p-4 border-b border-border/20 cursor-pointer hover:bg-secondary/10 transition-colors ${isActive ? "bg-secondary/20" : ""}`}>
                   <div className="flex items-center gap-3">
                     <Avatar className="h-10 w-10 shrink-0">
@@ -458,7 +464,7 @@ export default function Chat() {
       </Card>
 
       {/* ── Main Chat Area ── */}
-      <Card className="flex-1 flex flex-col border-border/50 min-w-0">
+      <Card className={`${mobileListOpen ? "hidden" : "flex"} min-h-0 min-w-0 flex-1 flex-col overflow-hidden border-border/50 lg:flex`}>
         {!activeChat ? (
           <div className="flex-1 flex flex-col items-center justify-center gap-3 text-muted-foreground">
             <MessageSquare className="h-12 w-12 opacity-20" />
@@ -467,12 +473,21 @@ export default function Chat() {
         ) : (
           <>
             {/* Header */}
-            <div className="p-4 border-b border-border/30 flex items-center gap-3 shrink-0">
+            <div className="flex shrink-0 items-center gap-3 border-b border-border/30 p-3 sm:p-4">
+              <Button
+                variant="ghost"
+                size="icon"
+                className="shrink-0 lg:hidden"
+                onClick={() => setMobileListOpen(true)}
+                aria-label="Back to conversations"
+              >
+                <ArrowLeft className="h-5 w-5" />
+              </Button>
               <Avatar className="h-10 w-10">
                 <AvatarFallback className="bg-primary/10 text-primary font-bold">{peerInitial}</AvatarFallback>
               </Avatar>
-              <div>
-                <h3 className="font-semibold leading-tight">
+              <div className="min-w-0">
+                <h3 className="truncate font-semibold leading-tight">
                   {activePeer ? fullName(activePeer) : `User #${activeChat.receiver_id}`}
                 </h3>
                 <p className="text-xs text-muted-foreground">{activePeer?.role === "cpa" ? "CPA" : activePeer?.role ?? ""}</p>
@@ -480,7 +495,7 @@ export default function Chat() {
             </div>
 
             {/* Messages */}
-            <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-background/50">
+            <div className="min-h-0 flex-1 overflow-y-auto p-3 space-y-3 bg-background/50 sm:p-4">
               {msgsLoading ? (
                 <div className="flex items-center justify-center h-24">
                   <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
@@ -522,7 +537,7 @@ export default function Chat() {
             )}
 
             {/* Input */}
-            <div className="p-4 border-t border-border/30 bg-card shrink-0">
+            <div className="shrink-0 border-t border-border/30 bg-card p-3 sm:p-4">
               <input
                 ref={fileInputRef}
                 type="file"
@@ -530,7 +545,7 @@ export default function Chat() {
                 accept="image/*,.pdf,.xls,.xlsx,.csv"
                 onChange={handleFileChange}
               />
-              <div className="flex items-center gap-2">
+              <div className="flex min-w-0 items-center gap-2">
                 <Button
                   variant="ghost"
                   size="icon"
@@ -545,7 +560,7 @@ export default function Chat() {
                   placeholder="Type a message..."
                   value={messageText}
                   onChange={e => setMessageText(e.target.value)}
-                  className="flex-1 bg-secondary/20 border-transparent focus-visible:ring-1"
+                  className="min-w-0 flex-1 bg-secondary/20 border-transparent focus-visible:ring-1"
                   onKeyDown={e => {
                     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); }
                   }}

@@ -4702,10 +4702,10 @@ Respond with ONLY valid JSON, no explanation:
 
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
-    <div className="space-y-0 animate-in fade-in slide-in-from-bottom-4 duration-500 -mt-2">
+    <div className="-mt-2 min-w-0 space-y-0 animate-in fade-in slide-in-from-bottom-4 duration-500">
       {/* ── Flutter-style Tab Bar ── */}
       <div
-        className="flex items-stretch -mx-6 px-0 mb-6"
+        className="-mx-3 mb-6 flex items-stretch overflow-x-auto px-0 sm:-mx-6"
         style={{
           height: 58,
           borderBottom: "1px solid rgba(18,52,105,0.6)",
@@ -4716,6 +4716,7 @@ Respond with ONLY valid JSON, no explanation:
           <button
             key={key}
             onClick={() => setTab(key)}
+            className="min-h-11 min-w-[112px] px-3 sm:min-w-0"
             style={{
               flex: 1,
               borderBottom:
@@ -6189,10 +6190,10 @@ Respond with ONLY valid JSON, no explanation:
                             vs previous month
                           </span>
                           {k.tooltip && (
-                            <div className="relative group">
+                            <div className="group relative" tabIndex={0}>
                               <Info className="h-3 w-3 text-muted-foreground hover:text-foreground cursor-help" />
                               <div
-                                className="absolute bottom-full right-0 mb-2 z-50 hidden group-hover:block w-52 rounded-lg border border-border p-3 shadow-2xl"
+                                className="absolute bottom-full right-0 z-50 mb-2 hidden w-52 max-w-[calc(100vw-2rem)] rounded-lg border border-border p-3 shadow-2xl group-focus-within:block group-hover:block"
                                 style={{ background: "hsl(var(--muted))" }}
                               >
                                 {k.tooltip.split("\n").map((line, i) => (
@@ -6279,10 +6280,10 @@ Respond with ONLY valid JSON, no explanation:
                             <p className="text-[11px] text-muted-foreground font-medium">
                               {m.label}
                             </p>
-                            <div className="relative group flex-shrink-0">
+                            <div className="group relative flex-shrink-0" tabIndex={0}>
                               <Info className="h-3.5 w-3.5 text-muted-foreground hover:text-foreground cursor-help" />
                               <div
-                                className="absolute bottom-full right-0 mb-2 z-50 hidden group-hover:block w-52 rounded-lg border border-border p-3 shadow-2xl"
+                                className="absolute bottom-full right-0 z-50 mb-2 hidden w-52 max-w-[calc(100vw-2rem)] rounded-lg border border-border p-3 shadow-2xl group-focus-within:block group-hover:block"
                                 style={{ background: "hsl(var(--muted))" }}
                               >
                                 {m.tip.split("\n").map((line, i) => (
@@ -6759,10 +6760,10 @@ Respond with ONLY valid JSON, no explanation:
                     {k.label}
                   </p>
                   {k.tip && (
-                    <div className="relative group">
+                    <div className="group relative" tabIndex={0}>
                       <Info className="h-3.5 w-3.5 text-muted-foreground hover:text-foreground cursor-help" />
                       <div
-                        className="absolute right-0 top-full mt-1.5 z-50 hidden group-hover:block w-52 rounded-lg border border-border p-3 shadow-2xl"
+                        className="absolute right-0 top-full z-50 mt-1.5 hidden w-52 max-w-[calc(100vw-2rem)] rounded-lg border border-border p-3 shadow-2xl group-focus-within:block group-hover:block"
                         style={{ background: "hsl(var(--muted))" }}
                       >
                         {k.tip.split("\n").map((line, i) => (
@@ -8131,7 +8132,7 @@ Respond with ONLY valid JSON, no explanation:
 
       {/* ── Transactions tab ── */}
       {tab === "transactions" && (
-        <div className="space-y-3">
+        <div className="space-y-3 pb-20">
           {/* Search bar — matches Flutter TransactionListScreen */}
           <div className="flex justify-end">
             <Button
@@ -8406,7 +8407,7 @@ Respond with ONLY valid JSON, no explanation:
                           {/* Tags row */}
                           <div className="flex items-center justify-between mt-2">
                             <button
-                              className="text-muted-foreground hover:text-rose-400 transition-colors opacity-0 group-hover:opacity-100 p-0.5"
+                              className="min-h-11 min-w-11 p-2 text-muted-foreground transition-colors hover:text-rose-400 md:min-h-0 md:min-w-0 md:opacity-0 md:group-hover:opacity-100"
                               title="Delete"
                               onClick={(e) => {
                                 e.stopPropagation();
@@ -8440,8 +8441,7 @@ Respond with ONLY valid JSON, no explanation:
 
           {/* Flutter bottom action bar */}
           <div
-            className="fixed bottom-0 left-0 right-0 flex z-30 overflow-hidden md:left-[var(--sidebar-width)]"
-            style={{ height: 56 }}
+            className="fixed bottom-0 left-0 right-0 z-30 flex min-h-14 overflow-hidden pb-[env(safe-area-inset-bottom)] lg:left-[var(--sidebar-width)]"
           >
             <button
               disabled={bulkCategorizing}

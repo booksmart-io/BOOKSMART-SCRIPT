@@ -214,7 +214,7 @@ export default function Organizations() {
   });
 
   return (
-    <div className="space-y-5 animate-in fade-in slide-in-from-bottom-4 duration-500">
+    <div className="min-w-0 space-y-5 animate-in fade-in slide-in-from-bottom-4 duration-500">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Organizations</h1>
@@ -244,19 +244,19 @@ export default function Organizations() {
       ) : (
         <div className="rounded-xl border border-border/50 overflow-hidden divide-y divide-border/40">
           {orgs.map((org) => (
-            <div key={org.id} className="flex items-center gap-3 px-4 py-3 hover:bg-muted/30 transition-colors">
+            <div key={org.id} className="grid min-w-0 gap-3 px-3 py-3 transition-colors hover:bg-muted/30 sm:grid-cols-[auto_minmax(0,1fr)_auto] sm:items-center sm:px-4">
               <div className="h-9 w-9 bg-primary/10 rounded-lg flex items-center justify-center shrink-0">
                 <Building2 className="h-5 w-5 text-primary" />
               </div>
               <div className="flex-1 min-w-0">
-                <p className="font-medium text-sm truncate">{org.name}</p>
-                <p className="text-xs text-muted-foreground truncate">{org.ein_tin || "No EIN/TIN"}</p>
+                <p className="break-words text-sm font-medium">{org.name}</p>
+                <p className="break-words text-xs text-muted-foreground">{org.ein_tin || "No EIN/TIN"}</p>
               </div>
-              <div className="flex items-center gap-1 shrink-0">
+              <div className="col-span-2 flex min-w-0 flex-wrap items-center justify-end gap-1 sm:col-span-1 sm:shrink-0">
                 <Button
                   variant={activeOrgId === org.id ? "secondary" : "outline"}
                   size="sm"
-                  className="h-8 gap-1"
+                  className="min-h-11 flex-1 gap-1 sm:min-h-10 sm:flex-none"
                   onClick={() => switchOrganization(org)}
                   disabled={activeOrgId === org.id}
                 >
@@ -266,7 +266,7 @@ export default function Organizations() {
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="h-8 w-8 text-muted-foreground hover:text-primary hover:bg-primary/10"
+                  className="h-11 w-11 text-muted-foreground hover:bg-primary/10 hover:text-primary sm:h-10 sm:w-10"
                   title="Business Survey"
                   onClick={() => openSurvey(org.id)}
                 >
@@ -275,7 +275,7 @@ export default function Organizations() {
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="h-8 w-8 text-muted-foreground hover:text-foreground hover:bg-muted"
+                  className="h-11 w-11 text-muted-foreground hover:bg-muted hover:text-foreground sm:h-10 sm:w-10"
                   title="Edit Organization"
                   onClick={() => openEditDialog(org)}
                 >
@@ -284,7 +284,7 @@ export default function Organizations() {
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="h-8 w-8 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
+                  className="h-11 w-11 text-muted-foreground hover:bg-destructive/10 hover:text-destructive sm:h-10 sm:w-10"
                   title="Delete Organization"
                   onClick={() => setDeleteTarget(org)}
                 >
@@ -297,7 +297,7 @@ export default function Organizations() {
       )}
 
       {/* Floating add button */}
-      <div className="fixed bottom-6 right-6 z-40">
+      <div className="fixed bottom-4 right-4 z-40 sm:bottom-6 sm:right-6">
         <Button
           size="icon"
           className="h-14 w-14 rounded-full shadow-lg shadow-primary/30"
@@ -310,16 +310,16 @@ export default function Organizations() {
 
       {/* Add / Edit dialog */}
       <Dialog open={formOpen} onOpenChange={setFormOpen}>
-        <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
-          <DialogHeader>
+        <DialogContent className="flex h-[100dvh] w-screen max-w-none flex-col gap-0 overflow-hidden rounded-none p-0 sm:h-[calc(100dvh-2rem)] sm:max-h-[760px] sm:w-[calc(100vw-2rem)] sm:max-w-lg sm:rounded-lg">
+          <DialogHeader className="shrink-0 border-b px-4 py-4 sm:px-6">
             <DialogTitle>{editingOrg ? "Edit Business" : "Add a Business"}</DialogTitle>
             <DialogDescription>
               This entity is used to track your transactions, reports, and tax strategies.
             </DialogDescription>
           </DialogHeader>
-          <div className="space-y-4 py-2">
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2 col-span-2">
+          <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-6">
+            <div className="grid min-w-0 grid-cols-1 gap-4 sm:grid-cols-2">
+              <div className="min-w-0 space-y-2 sm:col-span-2">
                 <Label htmlFor="org-name">Business Name *</Label>
                 <Input id="org-name" value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} placeholder="Acme LLC" />
               </div>
@@ -349,7 +349,7 @@ export default function Organizations() {
                   </SelectContent>
                 </Select>
               </div>
-              <div className="space-y-2 col-span-2">
+              <div className="min-w-0 space-y-2 sm:col-span-2">
                 <Label htmlFor="org-street">Street Address</Label>
                 <Input id="org-street" value={form.street} onChange={(e) => setForm((f) => ({ ...f, street: e.target.value }))} placeholder="123 Main St" />
               </div>
@@ -369,15 +369,15 @@ export default function Organizations() {
                 <Label htmlFor="org-email">Business Email</Label>
                 <Input id="org-email" type="email" value={form.email} onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))} placeholder="hello@acme.com" />
               </div>
-              <div className="space-y-2 col-span-2">
+              <div className="min-w-0 space-y-2 sm:col-span-2">
                 <Label htmlFor="org-website">Website (optional)</Label>
                 <Input id="org-website" value={form.website} onChange={(e) => setForm((f) => ({ ...f, website: e.target.value }))} placeholder="https://acme.com" />
               </div>
             </div>
           </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setFormOpen(false)}>Cancel</Button>
-            <Button onClick={() => saveMutation.mutate()} disabled={saveMutation.isPending} className="gap-2">
+          <DialogFooter className="shrink-0 border-t px-4 py-3 sm:px-6">
+            <Button variant="outline" onClick={() => setFormOpen(false)} className="w-full sm:w-auto">Cancel</Button>
+            <Button onClick={() => saveMutation.mutate()} disabled={saveMutation.isPending} className="w-full gap-2 sm:w-auto">
               {saveMutation.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
               {editingOrg ? "Save Changes" : "Add Business"}
             </Button>

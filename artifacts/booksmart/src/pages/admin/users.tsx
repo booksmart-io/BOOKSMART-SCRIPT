@@ -127,7 +127,7 @@ export default function AdminUsers() {
   };
 
   return (
-    <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+    <div className="min-w-0 space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
       <div>
         <h1 className="text-3xl font-bold tracking-tight">User Management</h1>
         <p className="text-muted-foreground">View and manage all platform accounts, plans, and token balances.</p>
@@ -150,13 +150,13 @@ export default function AdminUsers() {
             </div>
           </div>
 
-          <div className="border rounded-md border-border/50">
-            <Table>
+          <div className="min-w-0 rounded-md border border-border/50">
+            <Table className="min-w-[600px]">
               <TableHeader className="bg-secondary/20">
                 <TableRow>
                   <TableHead>User</TableHead>
                   <TableHead>Role</TableHead>
-                  <TableHead>Joined</TableHead>
+                  <TableHead className="hidden lg:table-cell">Joined</TableHead>
                   <TableHead>Plan</TableHead>
                   <TableHead>Tokens</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
@@ -180,20 +180,20 @@ export default function AdminUsers() {
                   </TableRow>
                 ) : filtered.map((u) => (
                   <TableRow key={u.id}>
-                    <TableCell>
+                    <TableCell className="min-w-0">
                       <div className="font-medium">
                         {u.firstName || u.lastName
                           ? `${u.firstName ?? ""} ${u.lastName ?? ""}`.trim()
                           : <span className="text-muted-foreground italic">No name</span>}
                       </div>
-                      <div className="text-xs text-muted-foreground">{u.email}</div>
+                      <div className="max-w-[240px] break-all text-xs text-muted-foreground lg:truncate">{u.email}</div>
                     </TableCell>
                     <TableCell>
                       <Badge variant="outline" className={`capitalize ${roleColor[u.role] ?? ""}`}>
                         {u.role}
                       </Badge>
                     </TableCell>
-                    <TableCell className="text-muted-foreground text-sm">{formatDate(u.createdAt)}</TableCell>
+                    <TableCell className="hidden text-sm text-muted-foreground lg:table-cell">{formatDate(u.createdAt)}</TableCell>
                     <TableCell>
                       <Badge variant="outline" className={`capitalize ${tierColor[u.tier] ?? ""}`}>
                         {u.tier}
@@ -201,7 +201,7 @@ export default function AdminUsers() {
                     </TableCell>
                     <TableCell className="font-medium text-primary">{u.tokenBalance ?? 0}</TableCell>
                     <TableCell className="text-right">
-                      <Button size="sm" variant="outline" className="gap-1.5" onClick={() => openEdit(u)}>
+                      <Button size="sm" variant="outline" className="min-h-10 gap-1.5" onClick={() => openEdit(u)}>
                         <Settings2 className="h-3.5 w-3.5" /> Manage
                       </Button>
                     </TableCell>

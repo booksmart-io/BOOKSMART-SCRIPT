@@ -106,14 +106,14 @@ export default function BusinessDocumentUpload({ onExtracted, onManual }: Props)
   };
 
   return (
-    <div className="space-y-5 rounded-xl border border-border/70 bg-card/35 p-5">
+    <div className="min-w-0 space-y-5 rounded-xl border border-border/70 bg-card/35 p-3 sm:p-5">
       <div className="flex items-start gap-3">
         <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
           <FileText className="h-5 w-5" />
         </div>
-        <div>
-          <h3 className="font-semibold">Upload an official registration PDF</h3>
-          <p className="mt-1 text-sm text-muted-foreground">
+        <div className="min-w-0">
+          <h3 className="break-words font-semibold">Upload an official registration PDF</h3>
+          <p className="mt-1 break-words text-sm text-muted-foreground">
             The document is processed for this extraction only and is not saved to BookSmart document storage.
           </p>
         </div>
@@ -132,27 +132,27 @@ export default function BusinessDocumentUpload({ onExtracted, onManual }: Props)
         className="flex min-h-32 w-full flex-col items-center justify-center rounded-lg border border-dashed border-primary/50 bg-background/40 px-4 text-center transition-colors hover:border-primary"
       >
         <Upload className="mb-2 h-6 w-6 text-primary" />
-        <span className="font-medium">{file ? file.name : "Choose PDF"}</span>
+        <span className="max-w-full break-all font-medium sm:break-words">{file ? file.name : "Choose PDF"}</span>
         <span className="mt-1 text-xs text-muted-foreground">PDF only, up to 10 MB</span>
       </button>
 
       {error && (
-        <div className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
+        <div className="break-words rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
           {error}
         </div>
       )}
 
-      <div className="flex flex-wrap justify-end gap-3">
-        <Button type="button" variant="ghost" onClick={onManual} disabled={extracting}>
+      <div className="flex flex-col-reverse gap-3 sm:flex-row sm:flex-wrap sm:justify-end">
+        <Button type="button" variant="ghost" onClick={onManual} disabled={extracting} className="w-full whitespace-normal sm:w-auto">
           Enter Details Manually
         </Button>
         {error && (
-          <Button type="button" variant="outline" onClick={() => inputRef.current?.click()} disabled={extracting}>
+          <Button type="button" variant="outline" onClick={() => inputRef.current?.click()} disabled={extracting} className="w-full whitespace-normal sm:w-auto">
             <RefreshCw className="mr-2 h-4 w-4" />
             Try Another Document
           </Button>
         )}
-        <Button type="button" onClick={extract} disabled={!file || extracting}>
+        <Button type="button" onClick={extract} disabled={!file || extracting} className="w-full whitespace-normal sm:w-auto">
           {extracting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <FileText className="mr-2 h-4 w-4" />}
           {extracting ? "Extracting..." : "Extract Business Information"}
         </Button>

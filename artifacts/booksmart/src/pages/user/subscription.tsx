@@ -217,9 +217,9 @@ export default function Subscription() {
   }
 
   return (
-    <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500 max-w-6xl mx-auto">
+    <div className="mx-auto max-w-6xl space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500 sm:space-y-8">
       <div className="text-center space-y-2">
-        <h1 className="text-3xl font-bold tracking-tight">Upgrade Your Command Center</h1>
+        <h1 className="text-2xl font-bold tracking-tight sm:text-3xl">Upgrade Your Command Center</h1>
         <p className="text-muted-foreground max-w-2xl mx-auto">
           Choose the plan that fits your business needs. Upgrade anytime to unlock AI insights and priority CPA matching.
         </p>
@@ -227,7 +227,7 @@ export default function Subscription() {
 
       {cancellationPending && (
         <div className="flex flex-col gap-4 rounded-lg border border-amber-500/40 bg-amber-500/10 p-5 sm:flex-row sm:items-center sm:justify-between">
-          <div>
+          <div className="min-w-0">
             <p className="font-bold text-amber-200">Downgrade scheduled</p>
             <p className="mt-1 text-sm text-muted-foreground">
               Your {currentTier === "pro" ? "Pro" : "Plus"} plan remains active
@@ -248,8 +248,8 @@ export default function Subscription() {
         </div>
       )}
 
-      <div className="grid md:grid-cols-3 gap-8 mt-8">
-        <Card className="border-border/50 flex flex-col">
+      <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 sm:gap-6 xl:mt-8 xl:grid-cols-3">
+        <Card className="flex min-w-0 flex-col border-border/50">
           <CardHeader>
             <CardTitle className="text-2xl">Free</CardTitle>
             <CardDescription>Essential tools for tracking finances.</CardDescription>
@@ -265,7 +265,7 @@ export default function Subscription() {
                   <div className="h-5 w-5 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
                     <Check className="h-3 w-3 text-primary" />
                   </div>
-                  {feature}
+                  <span className="min-w-0 break-words">{feature}</span>
                 </li>
               ))}
             </ul>
@@ -286,7 +286,7 @@ export default function Subscription() {
           </CardFooter>
         </Card>
 
-        <Card className="border-border/50 flex flex-col">
+        <Card className="flex min-w-0 flex-col border-border/50">
           <CardHeader>
             <CardTitle className="text-2xl">Plus</CardTitle>
             <CardDescription>Tax optimization for growing businesses.</CardDescription>
@@ -307,7 +307,7 @@ export default function Subscription() {
                   <div className="h-5 w-5 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
                     <Check className="h-3 w-3 text-primary" />
                   </div>
-                  {feature}
+                  <span className="min-w-0 break-words">{feature}</span>
                 </li>
               ))}
             </ul>
@@ -324,7 +324,7 @@ export default function Subscription() {
           </CardFooter>
         </Card>
 
-        <Card className="border-primary/50 bg-primary/5 shadow-xl shadow-primary/5 flex flex-col relative overflow-hidden">
+        <Card className="relative flex min-w-0 flex-col overflow-hidden border-primary/50 bg-primary/5 shadow-xl shadow-primary/5 sm:col-span-2 xl:col-span-1">
           <div className="absolute top-0 right-0 bg-primary text-primary-foreground text-xs font-bold px-3 py-1 rounded-bl-lg uppercase tracking-wider">
             Popular
           </div>
@@ -348,7 +348,7 @@ export default function Subscription() {
                   <div className="h-5 w-5 rounded-full bg-primary flex items-center justify-center shrink-0">
                     <Check className="h-3 w-3 text-primary-foreground" />
                   </div>
-                  <span className={i === 0 ? "font-semibold" : ""}>{feature}</span>
+                  <span className={`min-w-0 break-words ${i === 0 ? "font-semibold" : ""}`}>{feature}</span>
                 </li>
               ))}
             </ul>

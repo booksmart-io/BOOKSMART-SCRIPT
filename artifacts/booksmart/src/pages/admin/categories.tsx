@@ -137,17 +137,17 @@ export default function AdminCategories() {
   const isLoading = loadingCats || loadingSubs;
 
   return (
-    <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+    <div className="min-w-0 space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Categories</h1>
           <p className="text-muted-foreground">Manage parent categories and sub-categories available to all users.</p>
         </div>
-        <div className="flex gap-2">
-          <Button variant="outline" className="gap-2" onClick={() => openAddSub()}>
+        <div className="flex w-full flex-col gap-2 min-[390px]:flex-row sm:w-auto">
+          <Button variant="outline" className="w-full gap-2 min-[390px]:w-auto" onClick={() => openAddSub()}>
             <Plus className="h-4 w-4" /> Add Sub-category
           </Button>
-          <Button className="gap-2" onClick={openAddCat}>
+          <Button className="w-full gap-2 min-[390px]:w-auto" onClick={openAddCat}>
             <Plus className="h-4 w-4" /> Add Category
           </Button>
         </div>
@@ -161,13 +161,13 @@ export default function AdminCategories() {
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="border rounded-md border-border/50">
-            <Table>
+          <div className="min-w-0 rounded-md border border-border/50">
+            <Table className="min-w-[360px]">
               <TableHeader className="bg-secondary/20">
                 <TableRow>
                   <TableHead className="w-8"></TableHead>
                   <TableHead>Name</TableHead>
-                  <TableHead>Sub-categories</TableHead>
+                  <TableHead className="hidden sm:table-cell">Sub-categories</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
@@ -192,16 +192,16 @@ export default function AdminCategories() {
                           ? <ChevronDown className="h-4 w-4" />
                           : <ChevronRight className="h-4 w-4" />}
                       </TableCell>
-                      <TableCell className="font-semibold">{cat.name}</TableCell>
-                      <TableCell>
+                      <TableCell className="max-w-[180px] break-words font-semibold">{cat.name}</TableCell>
+                      <TableCell className="hidden sm:table-cell">
                         <Badge variant="secondary">{subs.length} sub-categories</Badge>
                       </TableCell>
                       <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
                         <div className="flex justify-end gap-2">
-                          <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-foreground" onClick={() => openEditCat(cat)}>
+                          <Button variant="ghost" size="icon" className="h-11 w-11 text-muted-foreground hover:text-foreground sm:h-10 sm:w-10" onClick={() => openEditCat(cat)}>
                             <Edit className="h-4 w-4" />
                           </Button>
-                          <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive hover:bg-destructive/10 hover:text-destructive" onClick={() => setToDeleteCat(cat)}>
+                          <Button variant="ghost" size="icon" className="h-11 w-11 text-destructive hover:bg-destructive/10 hover:text-destructive sm:h-10 sm:w-10" onClick={() => setToDeleteCat(cat)}>
                             <Trash2 className="h-4 w-4" />
                           </Button>
                         </div>
@@ -210,15 +210,15 @@ export default function AdminCategories() {
                     ...(isOpen ? [
                       ...subs.map((sub) => (
                         <TableRow key={`sub-${sub.id}`} className="bg-secondary/5">
-                          <TableCell></TableCell>
+                          <TableCell className="hidden sm:table-cell"></TableCell>
                           <TableCell className="pl-8 text-sm text-muted-foreground">↳ {sub.name}</TableCell>
                           <TableCell></TableCell>
                           <TableCell className="text-right">
                             <div className="flex justify-end gap-2">
-                              <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-foreground" onClick={() => openEditSub(sub)}>
+                              <Button variant="ghost" size="icon" className="h-11 w-11 text-muted-foreground hover:text-foreground sm:h-10 sm:w-10" onClick={() => openEditSub(sub)}>
                                 <Edit className="h-3.5 w-3.5" />
                               </Button>
-                              <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:bg-destructive/10 hover:text-destructive" onClick={() => setToDeleteSub(sub)}>
+                              <Button variant="ghost" size="icon" className="h-11 w-11 text-destructive hover:bg-destructive/10 hover:text-destructive sm:h-10 sm:w-10" onClick={() => setToDeleteSub(sub)}>
                                 <Trash2 className="h-3.5 w-3.5" />
                               </Button>
                             </div>
@@ -227,7 +227,7 @@ export default function AdminCategories() {
                       )),
                       <TableRow key={`add-sub-${cat.id}`} className="bg-secondary/5">
                         <TableCell colSpan={4} className="pl-8 py-2">
-                          <Button variant="ghost" size="sm" className="h-7 text-primary gap-1.5 text-xs" onClick={() => openAddSub(cat.id)}>
+                          <Button variant="ghost" size="sm" className="min-h-11 max-w-full gap-1.5 whitespace-normal text-left text-xs text-primary" onClick={() => openAddSub(cat.id)}>
                             <Plus className="h-3 w-3" /> Add sub-category to {cat.name}
                           </Button>
                         </TableCell>

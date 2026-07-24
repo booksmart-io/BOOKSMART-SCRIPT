@@ -137,7 +137,7 @@ export function ProfileAvatarUploader({
   const displayedUrl = previewUrl ?? currentUrl;
 
   return (
-    <div className="flex flex-col items-center gap-3">
+    <div className="flex min-w-0 flex-col items-center gap-3">
       <div className="relative">
         <Avatar className={cn("h-28 w-28 bg-white text-muted-foreground", avatarClassName)}>
           {displayedUrl && <AvatarImage src={displayedUrl} alt="Profile photo" className="object-cover" />}
@@ -170,18 +170,18 @@ export function ProfileAvatarUploader({
         }}
       />
 
-      <div className="flex items-center gap-2">
-        <Button type="button" variant="outline" size="sm" onClick={choosePhoto} disabled={busy}>
+      <div className="flex w-full flex-col items-stretch gap-2 min-[360px]:w-auto min-[360px]:flex-row min-[360px]:items-center">
+        <Button type="button" variant="outline" size="sm" onClick={choosePhoto} disabled={busy} className="min-h-11">
           {currentUrl ? "Change photo" : "Add photo"}
         </Button>
         {currentUrl && (
-          <Button type="button" variant="ghost" size="sm" onClick={() => void removePhoto()} disabled={busy} className="text-destructive hover:text-destructive">
+          <Button type="button" variant="ghost" size="sm" onClick={() => void removePhoto()} disabled={busy} className="min-h-11 text-destructive hover:text-destructive">
             <Trash2 className="mr-1.5 h-4 w-4" />
             Remove photo
           </Button>
         )}
       </div>
-      {error && <p className="max-w-xs text-center text-xs text-destructive" role="alert">{error}</p>}
+      {error && <p className="max-w-full break-words text-center text-xs text-destructive sm:max-w-xs" role="alert">{error}</p>}
       <p className="sr-only" aria-live="polite">{busy ? "Updating profile photo" : ""}</p>
     </div>
   );

@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
 import { supabase } from "@/lib/supabase";
+import { SUBSCRIPTION_UPGRADE_REQUEST_EVENT } from "@/lib/subscription-upgrade-prompt";
 
 type PlanKey = "plus" | "pro";
 type PlanTier = "free" | "plus" | "pro";
@@ -77,6 +78,7 @@ async function fetchStatus() {
 
 export function SubscriptionUpgradePrompt({ userId }: { userId?: number | null }) {
   const [location] = useLocation();
+  const [requested, setRequested] = useState(false);
   const [open, setOpen] = useState(false);
   const [loadingPlan, setLoadingPlan] = useState<PlanKey | null>(null);
   const checkoutInFlight = useRef(false);
@@ -89,7 +91,7 @@ export function SubscriptionUpgradePrompt({ userId }: { userId?: number | null }
   const { data: status, isLoading } = useQuery({
     queryKey: ["stripe_status", "upgrade_prompt", userId],
     queryFn: fetchStatus,
-    enabled: Boolean(userId) && location.startsWith("/user") && location !== "/user/subscription",
+    enabled: Boolean(userId),
     staleTime: 60_000,
   });
 
@@ -103,15 +105,25 @@ export function SubscriptionUpgradePrompt({ userId }: { userId?: number | null }
   }, []);
 
   useEffect(() => {
+    const requestUpgrade = () => setRequested(true);
+    window.addEventListener(SUBSCRIPTION_UPGRADE_REQUEST_EVENT, requestUpgrade);
+    return () => window.removeEventListener(SUBSCRIPTION_UPGRADE_REQUEST_EVENT, requestUpgrade);
+  }, []);
+
+  useEffect(() => {
+    setRequested(false);
+    setOpen(false);
+  }, [location]);
+
+  useEffect(() => {
     if (isLoading || !userId || currentTier !== "free") return;
-    if (location === "/user/subscription") return;
-    if (window.sessionStorage.getItem(storageKey) === "1") return;
-    const timer = window.setTimeout(() => setOpen(true), 500);
-    return () => window.clearTimeout(timer);
-  }, [currentTier, isLoading, location, storageKey, userId]);
+    if (!requested && window.sessionStorage.getItem(storageKey) === "1") return;
+    setOpen(true);
+  }, [currentTier, isLoading, requested, storageKey, userId]);
 
   function dismiss() {
     window.sessionStorage.setItem(storageKey, "1");
+    setRequested(false);
     setOpen(false);
   }
 
@@ -161,13 +173,13 @@ export function SubscriptionUpgradePrompt({ userId }: { userId?: number | null }
 
   return (
     <Dialog open={open} onOpenChange={(next) => (next ? setOpen(true) : dismiss())}>
-      <DialogContent className="max-h-[90vh] max-w-5xl overflow-y-auto border-border/70 bg-background p-0">
-        <DialogHeader className="border-b border-border/60 px-7 py-6">
+      <DialogContent className="max-h-[calc(100dvh-1.5rem)] max-w-5xl overflow-y-auto border-border/70 bg-background p-0">
+        <DialogHeader className="border-b border-border/60 px-4 py-4 sm:px-7 sm:py-6">
           <div className="flex items-start justify-between gap-4 pr-8">
-            <div>
+            <div className="min-w-0">
               <Badge variant="outline" className="mb-3 border-primary/60 text-primary">Current Plan: Free</Badge>
-              <DialogTitle className="text-2xl font-bold">Upgrade BookSmart</DialogTitle>
-              <DialogDescription className="mt-2 text-base">
+              <DialogTitle className="break-words text-xl font-bold sm:text-2xl">Upgrade BookSmart</DialogTitle>
+              <DialogDescription className="mt-2 text-sm sm:text-base">
                 Add more bank connections, AI usage, financial exports, and CPA workflow tools.
               </DialogDescription>
             </div>
@@ -178,14 +190,14 @@ export function SubscriptionUpgradePrompt({ userId }: { userId?: number | null }
           </div>
         </DialogHeader>
 
-        <div className="space-y-4 px-7 py-6">
+        <div className="space-y-4 px-4 py-4 sm:px-7 sm:py-6">
           {(["pro", "plus"] as PlanKey[]).map((planKey) => {
             const plan = PLAN_DETAILS[planKey];
             const isLoadingPlan = loadingPlan === planKey;
             return (
               <div
                 key={planKey}
-                className={`grid gap-5 rounded-lg border p-5 md:grid-cols-[1.1fr_1.5fr_220px] md:items-center ${
+                className={`grid min-w-0 gap-4 rounded-lg border p-4 sm:p-5 xl:grid-cols-[minmax(0,1.1fr)_minmax(0,1.5fr)_220px] xl:items-center xl:gap-5 ${
                   planKey === "pro" ? "border-primary/60 bg-primary/5" : "border-border/70 bg-card/70"
                 }`}
               >
@@ -197,7 +209,7 @@ export function SubscriptionUpgradePrompt({ userId }: { userId?: number | null }
                     </div>
                   )}
                   <div>
-                    <h3 className="text-2xl font-bold">{plan.name}</h3>
+                    <h3 className="break-words text-2xl font-bold">{plan.name}</h3>
                     <p className="mt-1 text-sm text-muted-foreground">{plan.tagline}</p>
                   </div>
                 </div>
@@ -206,7 +218,7 @@ export function SubscriptionUpgradePrompt({ userId }: { userId?: number | null }
                   {PLAN_FEATURES[planKey].map((feature) => (
                     <li key={feature} className="flex gap-2 leading-relaxed">
                       <Check className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
-                      <span>{feature}</span>
+                      <span className="min-w-0 break-words">{feature}</span>
                     </li>
                   ))}
                 </ul>
@@ -226,12 +238,12 @@ export function SubscriptionUpgradePrompt({ userId }: { userId?: number | null }
             );
           })}
 
-          <div className="flex items-center justify-between gap-3 pt-2">
-            <Button variant="ghost" onClick={dismiss} className="gap-2 text-muted-foreground">
+          <div className="flex flex-col-reverse gap-2 pt-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
+            <Button variant="ghost" onClick={dismiss} className="w-full gap-2 text-muted-foreground sm:w-auto">
               <X className="h-4 w-4" />
               Skip for now
             </Button>
-            <Button variant="outline" onClick={() => { dismiss(); window.location.href = "/user/subscription"; }}>
+            <Button className="w-full sm:w-auto" variant="outline" onClick={() => { dismiss(); window.location.href = "/user/subscription"; }}>
               Compare all plans
             </Button>
           </div>

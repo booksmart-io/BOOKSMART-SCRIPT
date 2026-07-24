@@ -174,7 +174,7 @@ export default function RulesManagement() {
 
   // ── UI ─────────────────────────────────────────────────────────
   return (
-    <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+    <div className="min-w-0 space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
 
       {/* Header */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
@@ -184,7 +184,7 @@ export default function RulesManagement() {
             Automate your bookkeeping — transactions matching a keyword get tagged automatically.
           </p>
         </div>
-        <Button className="gap-2" onClick={openAdd} disabled={!user?.id}>
+        <Button className="w-full gap-2 sm:w-auto" onClick={openAdd} disabled={!user?.id}>
           <Plus className="h-4 w-4" /> Add Rule
         </Button>
       </div>
@@ -218,15 +218,15 @@ export default function RulesManagement() {
               className={`border-border/50 transition-opacity ${rule.status ? "" : "opacity-50"}`}
             >
               <CardContent className="p-4">
-                <div className="flex items-start gap-3">
+                <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-start">
                   {/* Rule info — click to edit */}
                   <button
                     onClick={() => openEdit(rule)}
                     className="flex-1 text-left min-w-0 hover:opacity-70 transition-opacity"
                   >
-                    <p className="text-sm font-semibold">
+                    <p className="break-words text-sm font-semibold">
                       If memo contains{" "}
-                      <code className="bg-secondary/50 px-1.5 py-0.5 rounded text-xs font-mono">
+                      <code className="break-all rounded bg-secondary/50 px-1.5 py-0.5 font-mono text-xs">
                         {rule.memo}
                       </code>
                     </p>
@@ -243,7 +243,7 @@ export default function RulesManagement() {
                   </button>
 
                   {/* Actions */}
-                  <div className="flex items-center gap-2 shrink-0">
+                  <div className="flex shrink-0 items-center justify-end gap-2">
                     {/* Toggle active/inactive — matches Flutter toggleRule */}
                     <Switch
                       checked={rule.status}
@@ -253,14 +253,14 @@ export default function RulesManagement() {
                     />
                     <Button
                       variant="ghost" size="icon"
-                      className="h-8 w-8 text-muted-foreground hover:text-foreground"
+                      className="h-11 w-11 text-muted-foreground hover:text-foreground sm:h-10 sm:w-10"
                       onClick={() => openEdit(rule)}
                     >
                       <Edit className="h-4 w-4" />
                     </Button>
                     <Button
                       variant="ghost" size="icon"
-                      className="h-8 w-8 text-destructive hover:bg-destructive/10"
+                      className="h-11 w-11 text-destructive hover:bg-destructive/10 sm:h-10 sm:w-10"
                       onClick={() => setToDelete(rule)}
                     >
                       <Trash2 className="h-4 w-4" />
@@ -327,12 +327,13 @@ export default function RulesManagement() {
             )}
           </div>
           <DialogFooter className="gap-2">
-            <Button variant="outline" onClick={closeForm} disabled={saveMutation.isPending}>
+            <Button variant="outline" onClick={closeForm} disabled={saveMutation.isPending} className="w-full sm:w-auto">
               Cancel
             </Button>
             <Button
               onClick={handleSave}
               disabled={!memo.trim() || !catId || saveMutation.isPending}
+              className="w-full sm:w-auto"
             >
               {saveMutation.isPending && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
               {editing ? "Update Rule" : "Save Rule"}

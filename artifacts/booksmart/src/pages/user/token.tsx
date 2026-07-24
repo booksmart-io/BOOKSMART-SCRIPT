@@ -325,16 +325,16 @@ export default function Token() {
   }
 
   return (
-    <div className="min-h-full bg-background px-3 py-5 text-foreground sm:px-6 sm:py-7">
-      <div className="grid min-w-0 gap-8 xl:grid-cols-[minmax(0,1fr)_414px]">
-        <main className="space-y-8">
-          <section className="grid gap-4 rounded-lg border border-border bg-card p-6 text-card-foreground md:grid-cols-[auto_minmax(0,1fr)_auto] md:items-center">
-            <div className="flex h-20 w-20 items-center justify-center rounded-full bg-primary/15 text-primary">
-              <Coins className="h-12 w-12" />
+    <div className="min-h-0 bg-background text-foreground">
+      <div className="grid min-w-0 gap-5 sm:gap-6 2xl:grid-cols-[minmax(0,1fr)_minmax(340px,380px)] 2xl:gap-8">
+        <main className="min-w-0 space-y-6 sm:space-y-8">
+          <section className="grid min-w-0 gap-4 rounded-lg border border-border bg-card p-4 text-card-foreground sm:p-6 xl:grid-cols-[auto_minmax(0,1fr)_minmax(260px,auto)] xl:items-center">
+            <div className="flex h-16 w-16 items-center justify-center rounded-full bg-primary/15 text-primary sm:h-20 sm:w-20">
+              <Coins className="h-9 w-9 sm:h-12 sm:w-12" />
             </div>
             <div className="min-w-0">
               <p className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">Token Wallet</p>
-              <h1 className="mt-1 text-3xl font-extrabold">{formatTokens(tokenBalance)} Tokens</h1>
+              <h1 className="mt-1 break-words text-2xl font-extrabold sm:text-3xl">{formatTokens(tokenBalance)} Tokens</h1>
               <p className="mt-1 text-sm font-medium text-muted-foreground">
                 {tier.toUpperCase()} plan · {formatTokens(monthlySpend)} tokens spent this month
               </p>
@@ -363,7 +363,7 @@ export default function Token() {
                 const meta = CATEGORY_COPY[category] ?? CATEGORY_COPY.reports;
                 const Icon = meta.icon;
                 return (
-                  <div key={category} className="rounded-lg border border-border bg-card p-5 text-card-foreground shadow-sm">
+                  <div key={category} className="min-w-0 rounded-lg border border-border bg-card p-4 text-card-foreground shadow-sm sm:p-5">
                     <div className="mb-4 flex items-start gap-3">
                       <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
                         <Icon className="h-6 w-6" />
@@ -375,7 +375,7 @@ export default function Token() {
                     </div>
                     <div className="space-y-3">
                       {items.map((item) => (
-                        <div key={item.key} className="flex items-center justify-between gap-4 rounded-lg bg-background/60 px-3 py-2">
+                        <div key={item.key} className="flex min-w-0 flex-wrap items-center justify-between gap-2 rounded-lg bg-background/60 px-3 py-2 sm:flex-nowrap sm:gap-4">
                           <div className="min-w-0">
                             <p className="truncate text-sm font-bold">{item.label}</p>
                             <p className="text-xs text-muted-foreground">
@@ -399,7 +399,7 @@ export default function Token() {
               <h2 className="text-2xl font-extrabold">Current Plan Usage</h2>
               <p className="text-sm font-medium text-muted-foreground">Live monthly usage from your current subscription limits.</p>
             </div>
-            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
               {usageRows(planUsage).map((row) => {
                 const pct = percent(row.used, row.limit);
                 return (
@@ -425,8 +425,8 @@ export default function Token() {
           </section>
         </main>
 
-        <aside className="space-y-6 xl:sticky xl:top-6 xl:self-start">
-          <section className="rounded-lg border border-border bg-card p-6 text-card-foreground">
+        <aside className="min-w-0 space-y-5 sm:space-y-6 2xl:sticky 2xl:top-6 2xl:self-start">
+          <section className="rounded-lg border border-border bg-card p-4 text-card-foreground sm:p-6">
             <h2 className="mb-6 text-2xl font-extrabold">Buy Tokens</h2>
             <div className="space-y-4">
               {packages.map((pkg) => {
@@ -442,12 +442,12 @@ export default function Token() {
                         : "border-border/60 bg-background/35 hover:border-primary/50 hover:bg-muted/60"
                     }`}
                   >
-                    <div className="flex items-center justify-between gap-4">
-                      <div>
+                    <div className="flex min-w-0 flex-wrap items-center justify-between gap-3 sm:flex-nowrap sm:gap-4">
+                      <div className="min-w-0">
                         <div className="text-lg font-extrabold">{pkg.tokens.toLocaleString()} Tokens</div>
                         <div className="mt-1 text-sm font-semibold text-muted-foreground">{pkg.name}</div>
                       </div>
-                      <div className="text-lg font-extrabold text-primary">{money(pkg.unitAmount)}</div>
+                      <div className="shrink-0 text-lg font-extrabold text-primary">{money(pkg.unitAmount)}</div>
                     </div>
                   </button>
                 );
@@ -467,7 +467,7 @@ export default function Token() {
             </Button>
           </section>
 
-          <section className="rounded-lg border border-border bg-card p-6 text-card-foreground">
+          <section className="rounded-lg border border-border bg-card p-4 text-card-foreground sm:p-6">
             <div className="mb-6 flex items-center justify-between gap-3">
               <h2 className="text-2xl font-extrabold">Token Activity</h2>
               {history.length > 6 && (
@@ -493,7 +493,7 @@ export default function Token() {
                         <p className="text-xs text-muted-foreground">Balance: {formatTokens(tx.balance_after)}</p>
                       )}
                     </div>
-                    <div className={`font-extrabold ${tx.amount >= 0 ? "text-emerald-500" : "text-rose-500"}`}>
+                    <div className={`max-w-[90px] text-right font-extrabold [overflow-wrap:anywhere] ${tx.amount >= 0 ? "text-emerald-500" : "text-rose-500"}`}>
                       {tx.amount >= 0 ? "+" : ""}
                       {tx.amount}
                     </div>
@@ -503,7 +503,7 @@ export default function Token() {
             )}
           </section>
 
-          <section className="rounded-lg border border-border bg-card p-6 text-card-foreground">
+          <section className="rounded-lg border border-border bg-card p-4 text-card-foreground sm:p-6">
             <h2 className="mb-4 text-xl font-extrabold">Included With Plan</h2>
             <div className="space-y-3 text-sm font-medium">
               <div className="flex items-center justify-between gap-3">

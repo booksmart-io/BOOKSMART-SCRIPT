@@ -241,15 +241,15 @@ export default function CpaProfile() {
   const initials = `${firstName[0] ?? ""}${lastName[0] ?? ""}`.toUpperCase() || "C";
 
   return (
-    <div className="min-h-[calc(100vh-4rem)] animate-in fade-in slide-in-from-bottom-4 duration-500">
-      <div className="mb-10 flex items-center gap-5">
+    <div className="min-w-0 animate-in fade-in slide-in-from-bottom-4 duration-500">
+      <div className="mb-7 flex min-w-0 items-center gap-3 sm:mb-10 sm:gap-5">
         <Button variant="ghost" size="icon" className="h-9 w-9 text-foreground" onClick={() => setLocation("/cpa")}>
           <ArrowLeft className="h-6 w-6" />
         </Button>
-        <h1 className="text-2xl font-bold tracking-tight">CPA Profile Setup</h1>
+        <h1 className="min-w-0 break-words text-xl font-bold tracking-tight sm:text-2xl">CPA Profile Setup</h1>
       </div>
 
-      <p className="mb-12 text-base font-semibold text-foreground">Complete your CPA profile to join our network</p>
+      <p className="mb-8 break-words text-base font-semibold text-foreground sm:mb-12">Complete your CPA profile to join our network</p>
 
       {isLoading ? (
         <div className="flex justify-center py-20">
@@ -261,7 +261,7 @@ export default function CpaProfile() {
             <div className="space-y-8 pt-3">
               <ProfileAvatarUploader currentUrl={cpaRow?.img_url} initials={initials} emptyInitials={["C"]} />
 
-              <div className="grid gap-4 lg:grid-cols-3">
+              <div className="grid min-w-0 gap-4 sm:grid-cols-2 xl:grid-cols-3">
                 <Field label="First Name *" value={firstName} onChange={setFirstName} hideLabel />
                 <Field label="Middle Name" value={middleName} onChange={setMiddleName} hideLabel />
                 <Field label="Last Name *" value={lastName} onChange={setLastName} hideLabel />
@@ -270,7 +270,7 @@ export default function CpaProfile() {
               <Field label="Phone Number" value={phone} onChange={setPhone} hideLabel />
 
               <div className="flex justify-end">
-                <Button type="button" onClick={continueStep}>Next Step</Button>
+                <Button type="button" onClick={continueStep} className="w-full sm:w-auto">Next Step</Button>
               </div>
             </div>
           </CpaSection>
@@ -309,7 +309,7 @@ export default function CpaProfile() {
                 selected={stateFocuses}
                 onChange={setStateFocuses}
               />
-              <div className="flex justify-end gap-3 pt-1">
+              <div className="flex flex-col-reverse gap-3 pt-1 sm:flex-row sm:justify-end">
                 <Button type="button" variant="outline" onClick={() => setStep(0)}>Back</Button>
                 <Button type="button" onClick={continueStep}>Next Step</Button>
               </div>
@@ -343,7 +343,7 @@ export default function CpaProfile() {
               </div>
 
               <div className="border-t border-foreground/70 pt-10">
-                <label className="flex cursor-pointer items-start gap-5 pl-5">
+                <label className="flex cursor-pointer items-start gap-3 sm:gap-5 sm:pl-5">
                   <Checkbox checked={termsAgreed} onCheckedChange={(checked) => setTermsAgreed(checked === true)} className="mt-1 h-5 w-5" />
                   <span className="text-base font-medium text-foreground">
                     I certify that all information provided is accurate and complete. I agree to the CPA Network Terms of Service and Privacy Policy.
@@ -351,7 +351,7 @@ export default function CpaProfile() {
                 </label>
               </div>
 
-              <div className="flex justify-end gap-3 pt-5">
+              <div className="flex flex-col-reverse gap-3 pt-5 sm:flex-row sm:justify-end">
                 <Button type="button" variant="outline" onClick={() => setStep(1)}>Back</Button>
                 <Button type="button" onClick={continueStep} disabled={saveMutation.isPending || uploadingDocument !== null}>
                   {saveMutation.isPending ? "Saving..." : uploadingDocument ? "Uploading..." : "Submit for Review"}
@@ -384,7 +384,7 @@ function Field({
 }) {
   const id = label.toLowerCase().replace(/[^a-z0-9]+/g, "-");
   return (
-    <div className="space-y-2">
+    <div className="min-w-0 space-y-2">
       <Label htmlFor={id} className={hideLabel ? "sr-only" : ""}>{label}</Label>
       <Input
         id={id}
@@ -393,7 +393,7 @@ function Field({
         value={value}
         placeholder={placeholder ?? label}
         onChange={(event) => onChange(event.target.value)}
-        className="h-12 bg-card text-base"
+        className="h-12 min-w-0 bg-card text-base"
       />
     </div>
   );
@@ -415,7 +415,7 @@ function CpaSection({
   last?: boolean;
 }) {
   return (
-    <div className="grid grid-cols-[48px_minmax(0,1fr)] gap-x-5">
+    <div className="grid min-w-0 grid-cols-[36px_minmax(0,1fr)] gap-x-2 sm:grid-cols-[48px_minmax(0,1fr)] sm:gap-x-5">
       <div className="relative flex justify-center">
         {!last && <div className="absolute top-8 h-full w-px bg-primary/80" />}
         <button
@@ -428,15 +428,15 @@ function CpaSection({
           {index + 1}
         </button>
       </div>
-      <section className={`min-w-0 pb-10 ${active ? "min-h-[220px]" : "min-h-[94px]"}`}>
+      <section className="min-w-0 pb-8 sm:pb-10">
         <button
           type="button"
           onClick={onClick}
           className={`mb-6 flex w-full items-center rounded-md text-left transition-colors ${
-            active ? "bg-card/35 px-5 py-5" : "px-0 py-1 hover:text-primary"
+            active ? "bg-card/35 px-3 py-4 sm:px-5 sm:py-5" : "px-0 py-1 hover:text-primary"
           }`}
         >
-          <span className="text-xl font-bold text-foreground">{title}</span>
+          <span className="min-w-0 break-words text-lg font-bold text-foreground sm:text-xl">{title}</span>
         </button>
         {active && <div className="pl-0">{children}</div>}
       </section>
@@ -463,10 +463,10 @@ function DocumentRow({
   const inputId = `${title.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-upload`;
   const fileName = uploaded ? decodeURIComponent(value.split("/").pop() ?? "Uploaded file").replace(/^\d+_cpa-(certification|license)-/, "") : "";
   return (
-    <div className="flex min-h-[64px] items-center gap-4 rounded-lg bg-card px-4">
+    <div className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] gap-3 rounded-lg bg-card px-3 py-3 sm:grid-cols-[auto_minmax(0,1fr)_auto] sm:items-center sm:gap-4 sm:px-4">
       <div className="text-foreground">{icon}</div>
       <div className="min-w-0 flex-1">
-        <p className="text-lg font-medium">{title}</p>
+        <p className="break-words text-base font-medium sm:text-lg">{title}</p>
         <input
           id={inputId}
           type="file"
@@ -478,18 +478,18 @@ function DocumentRow({
             event.currentTarget.value = "";
           }}
         />
-        <div className="mt-1 flex flex-wrap items-center gap-3">
-          <label htmlFor={inputId} className="inline-flex cursor-pointer items-center gap-2 rounded-md border border-border px-3 py-1.5 text-sm font-medium hover:bg-muted">
+        <div className="mt-1 flex min-w-0 flex-col items-start gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:gap-3">
+          <label htmlFor={inputId} className="inline-flex min-h-11 cursor-pointer items-center gap-2 rounded-md border border-border px-3 py-1.5 text-sm font-medium hover:bg-muted">
             {uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
             {uploaded ? "Replace file" : "Choose file"}
           </label>
-          <span className="max-w-xl truncate text-sm text-muted-foreground">
+          <span className="min-w-0 max-w-full break-all text-sm text-muted-foreground sm:break-words">
             {uploading ? "Uploading..." : uploaded ? fileName || "File uploaded" : "PDF, image, or Word document"}
           </span>
         </div>
       </div>
       {uploaded && (
-        <Button type="button" variant="ghost" size="icon" onClick={() => onChange("")} disabled={uploading}>
+        <Button type="button" variant="ghost" size="icon" onClick={() => onChange("")} disabled={uploading} className="col-start-2 h-11 w-11 justify-self-end sm:col-start-3 sm:row-start-1">
           <Trash2 className="h-5 w-5" />
         </Button>
       )}
@@ -525,12 +525,12 @@ function MultiSelectField({
   };
 
   return (
-    <div className="relative space-y-2">
+    <div className="relative min-w-0 space-y-2">
       <Label>{label}</Label>
       <button
         type="button"
         onClick={() => setOpen((value) => !value)}
-        className="flex min-h-10 w-full items-center justify-between rounded-md border border-input bg-background px-3 py-2 text-left text-sm ring-offset-background transition-colors hover:border-primary/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+        className="flex min-h-11 w-full min-w-0 items-center justify-between rounded-md border border-input bg-background px-3 py-2 text-left text-sm ring-offset-background transition-colors hover:border-primary/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
       >
         <div className="flex min-w-0 flex-1 flex-wrap gap-1.5">
           {selected.length === 0 ? (

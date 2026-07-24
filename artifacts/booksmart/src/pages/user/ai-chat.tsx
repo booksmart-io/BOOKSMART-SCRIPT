@@ -84,9 +84,9 @@ export default function AiChat() {
   };
 
   return (
-    <div className="max-w-4xl mx-auto h-[calc(100vh-8rem)] flex flex-col animate-in fade-in slide-in-from-bottom-4 duration-500">
-      <div className="mb-4">
-        <h1 className="text-3xl font-bold tracking-tight flex items-center gap-2">
+    <div className="mx-auto flex h-full min-h-0 min-w-0 max-w-4xl flex-col animate-in fade-in slide-in-from-bottom-4 duration-500">
+      <div className="mb-3 shrink-0 sm:mb-4">
+        <h1 className="flex flex-wrap items-center gap-2 text-2xl font-bold tracking-tight sm:text-3xl">
           AI Tax Assistant{" "}
           <Badge
             variant="secondary"
@@ -100,18 +100,18 @@ export default function AiChat() {
         </p>
       </div>
 
-      <Card className="flex-1 flex flex-col border-border/50 overflow-hidden shadow-lg shadow-primary/5">
+      <Card className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden border-border/50 shadow-lg shadow-primary/5">
         <div className="bg-secondary/10 p-3 border-b border-border/30 flex items-center gap-2 text-sm text-muted-foreground">
           <AlertCircle className="h-4 w-4 shrink-0" />
           AI responses do not constitute professional financial advice. Always
           verify with your CPA.
         </div>
 
-        <div className="flex-1 overflow-y-auto p-4 space-y-6">
+        <div className="min-h-0 flex-1 overflow-y-auto p-3 space-y-4 sm:p-4 sm:space-y-6">
           {messages.map((msg, i) => (
             <div
               key={i}
-              className={`flex gap-4 ${msg.role === "user" ? "flex-row-reverse" : ""}`}
+              className={`flex min-w-0 gap-3 sm:gap-4 ${msg.role === "user" ? "flex-row-reverse" : ""}`}
             >
               <div
                 className={`h-8 w-8 rounded-full flex items-center justify-center shrink-0 ${
@@ -127,7 +127,7 @@ export default function AiChat() {
                 )}
               </div>
               <div
-                className={`p-4 rounded-2xl max-w-[85%] text-sm leading-relaxed whitespace-pre-wrap ${
+                className={`min-w-0 max-w-[85%] rounded-2xl p-3 text-sm leading-relaxed whitespace-pre-wrap [overflow-wrap:anywhere] sm:p-4 ${
                   msg.role === "user"
                     ? "bg-secondary/50 text-foreground rounded-tr-sm"
                     : "bg-card border border-border/50 shadow-sm rounded-tl-sm"
@@ -165,13 +165,13 @@ export default function AiChat() {
           <div ref={bottomRef} />
         </div>
 
-        <div className="p-4 bg-card border-t border-border/30">
-          <div className="flex items-center gap-2">
+        <div className="shrink-0 border-t border-border/30 bg-card p-3 sm:p-4">
+          <div className="flex min-w-0 items-center gap-2">
             <Input
               placeholder="Ask about your taxes, transactions, or deductions..."
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              className="flex-1 bg-background border-border/50 focus-visible:ring-primary"
+              className="min-w-0 flex-1 bg-background border-border/50 focus-visible:ring-primary"
               onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && handleSend()}
             />
             <Button

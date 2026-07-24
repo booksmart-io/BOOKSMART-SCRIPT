@@ -168,7 +168,7 @@ export default function Orders() {
   const STATUS_OPTIONS = ["all", "pending", "active", "completed", "cancelled"];
 
   return (
-    <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+    <div className="min-w-0 space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
       {/* Header */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div>
@@ -206,12 +206,12 @@ export default function Orders() {
         </CardHeader>
         <CardContent>
           {/* Search row */}
-          <div className="flex justify-between items-center mb-4 gap-3">
-            <div className="relative w-64">
+          <div className="mb-4 flex min-w-0 items-center gap-3">
+            <div className="relative min-w-0 flex-1 sm:max-w-64">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input
                 placeholder="Search orders…"
-                className="pl-9 h-9"
+                className="h-11 pl-9 sm:h-9"
                 value={search}
                 onChange={e => setSearch(e.target.value)}
               />
@@ -263,8 +263,8 @@ export default function Orders() {
 
           {/* Table */}
           {!isLoading && !error && filtered.length > 0 && (
-            <div className="border rounded-md border-border/50">
-              <Table>
+            <div className="min-w-0 rounded-md border border-border/50">
+              <Table className="min-w-[760px]">
                 <TableHeader className="bg-secondary/20">
                   <TableRow>
                     <TableHead>Order ID</TableHead>
@@ -299,7 +299,7 @@ export default function Orders() {
                             <Button
                               variant="ghost"
                               size="sm"
-                              className="h-8 px-2 text-muted-foreground hover:text-primary hover:bg-primary/10"
+                              className="h-11 min-w-11 px-2 text-muted-foreground hover:bg-primary/10 hover:text-primary md:h-8"
                               title="Message CPA"
                               onClick={() => chatWithCpa(order.cpa_id)}
                             >
@@ -309,7 +309,7 @@ export default function Orders() {
                           <Button
                             variant="ghost"
                             size="sm"
-                            className="h-8 px-2 text-muted-foreground hover:text-primary hover:bg-primary/10"
+                            className="h-11 min-w-11 px-2 text-muted-foreground hover:bg-primary/10 hover:text-primary md:h-8"
                             onClick={() => setViewOrder(order)}
                           >
                             <Eye className="h-4 w-4" />

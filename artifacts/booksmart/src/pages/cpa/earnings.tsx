@@ -105,7 +105,7 @@ export default function CpaEarnings() {
   const recentCompleted = completed.slice(0, 10);
 
   return (
-    <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+    <div className="min-w-0 space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
       <div>
         <h1 className="text-3xl font-bold tracking-tight">Earnings</h1>
         <p className="text-muted-foreground">Track your income from completed orders.</p>
@@ -121,7 +121,7 @@ export default function CpaEarnings() {
           <CardContent>
             {isLoading ? <Loader2 className="h-5 w-5 animate-spin" /> : (
               <>
-                <div className="text-3xl font-bold">{fmtCurrency(pendingPayout)}</div>
+                <div className="break-words text-2xl font-bold sm:text-3xl">{fmtCurrency(pendingPayout)}</div>
                 <p className="text-xs text-muted-foreground mt-1">
                   {pendingPayoutCount} completed {pendingPayoutCount === 1 ? "order" : "orders"} awaiting payout
                 </p>
@@ -138,7 +138,7 @@ export default function CpaEarnings() {
           <CardContent>
             {isLoading ? <Loader2 className="h-5 w-5 animate-spin" /> : (
               <>
-                <div className="text-3xl font-bold">{fmtCurrency(thisMonthEarnings)}</div>
+                <div className="break-words text-2xl font-bold sm:text-3xl">{fmtCurrency(thisMonthEarnings)}</div>
                 <p className="text-xs text-muted-foreground mt-1">
                   {monthPct !== null
                     ? `${monthPct >= 0 ? "+" : ""}${monthPct}% vs last month`
@@ -157,7 +157,7 @@ export default function CpaEarnings() {
           <CardContent>
             {isLoading ? <Loader2 className="h-5 w-5 animate-spin" /> : (
               <>
-                <div className="text-3xl font-bold">{fmtCurrency(lifetimeEarnings)}</div>
+                <div className="break-words text-2xl font-bold sm:text-3xl">{fmtCurrency(lifetimeEarnings)}</div>
                 <p className="text-xs text-muted-foreground mt-1">
                   from {completed.length} completed {completed.length === 1 ? "order" : "orders"}
                 </p>
@@ -167,7 +167,7 @@ export default function CpaEarnings() {
         </Card>
       </div>
 
-      <div className="grid gap-6 md:grid-cols-2">
+      <div className="grid min-w-0 gap-6 xl:grid-cols-2">
         {/* Monthly breakdown */}
         <Card className="border-border/50">
           <CardHeader>
@@ -182,8 +182,8 @@ export default function CpaEarnings() {
             ) : monthlyRows.length === 0 ? (
               <p className="text-sm text-muted-foreground text-center py-6">No completed orders yet.</p>
             ) : (
-              <div className="border rounded-md border-border/50">
-                <Table>
+              <div className="min-w-0 rounded-md border border-border/50">
+                <Table className="min-w-[360px]">
                   <TableHeader className="bg-secondary/20">
                     <TableRow>
                       <TableHead>Month</TableHead>
@@ -196,7 +196,7 @@ export default function CpaEarnings() {
                       <TableRow key={key}>
                         <TableCell className="font-medium">{monthLabel(key)}</TableCell>
                         <TableCell className="text-center text-muted-foreground">{count}</TableCell>
-                        <TableCell className="text-right font-medium text-emerald-500">{fmtCurrency(earned)}</TableCell>
+                        <TableCell className="whitespace-nowrap text-right font-medium text-emerald-500">{fmtCurrency(earned)}</TableCell>
                       </TableRow>
                     ))}
                   </TableBody>
@@ -220,8 +220,8 @@ export default function CpaEarnings() {
             ) : recentCompleted.length === 0 ? (
               <p className="text-sm text-muted-foreground text-center py-6">No completed orders yet.</p>
             ) : (
-              <div className="border rounded-md border-border/50">
-                <Table>
+              <div className="min-w-0 rounded-md border border-border/50">
+                <Table className="min-w-[430px]">
                   <TableHeader className="bg-secondary/20">
                     <TableRow>
                       <TableHead>Order</TableHead>
@@ -235,7 +235,7 @@ export default function CpaEarnings() {
                       return (
                         <TableRow key={o.id}>
                           <TableCell>
-                            <div className="font-medium text-sm truncate max-w-[140px]">{o.title}</div>
+                            <div className="max-w-[180px] break-words text-sm font-medium">{o.title}</div>
                             <div className="text-xs text-muted-foreground">
                               {new Date(o.created_at).toLocaleDateString()}
                             </div>
@@ -252,7 +252,7 @@ export default function CpaEarnings() {
                               {isPaid ? "paid" : "pending"}
                             </Badge>
                           </TableCell>
-                          <TableCell className="text-right font-medium">{fmtCurrency(cpaPayout(o))}</TableCell>
+                          <TableCell className="whitespace-nowrap text-right font-medium">{fmtCurrency(cpaPayout(o))}</TableCell>
                         </TableRow>
                       );
                     })}

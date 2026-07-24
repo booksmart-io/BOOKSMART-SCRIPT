@@ -3,6 +3,7 @@ import { Link, useLocation } from "wouter";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/hooks/use-auth";
 import { supabase } from "@/lib/supabase";
+import { requestSubscriptionUpgrade } from "@/lib/subscription-upgrade-prompt";
 import { useToast } from "@/hooks/use-toast";
 import { calculateFinancialReport } from "@/lib/financial-engine";
 import { pickActiveOrganization, useActiveOrganizationId } from "@/lib/active-organization";
@@ -120,7 +121,7 @@ function BPSGauge({ score }: { score: number }) {
 
   return (
     <div className="flex flex-col items-center justify-center">
-      <svg className="h-[205px] w-[260px] max-w-full" viewBox="0 0 220 178">
+      <svg className="h-auto w-full max-w-[260px]" viewBox="0 0 220 178">
         <defs>
           <linearGradient id="bpsGradient" x1="28" y1="154" x2="196" y2="30" gradientUnits="userSpaceOnUse">
             <stop offset="0%" stopColor="#ef4444" />
@@ -565,7 +566,7 @@ difficulty must be "Easy", "Medium", or "Hard". savings is a USD number.`;
             Here’s the latest snapshot of your business and setup progress.
           </p>
         </div>
-        <div className="flex items-center gap-4 pr-1 text-[13px] font-semibold">
+        <div className="flex flex-wrap items-center gap-2 pr-1 text-[13px] font-semibold sm:gap-4">
           <span className="flex items-center gap-1.5 rounded-full border border-orange-400/20 bg-orange-400/10 px-3 py-1.5">
             <Flame className="h-[15px] w-[15px] text-orange-500" />
             {streakDays} day streak
@@ -578,21 +579,21 @@ difficulty must be "Easy", "Medium", or "Hard". savings is a USD number.`;
       </div>
 
       {/* 2-column grid: main content + right sidebar */}
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_350px]">
+      <div className="grid min-w-0 gap-4 2xl:grid-cols-[minmax(0,1fr)_350px]">
 
         {/* LEFT / MAIN */}
         <div className="space-y-4 min-w-0">
 
           {/* BPS Card */}
           <Card>
-            <CardContent className="px-5 pt-4 pb-5 min-h-[296px] flex flex-col">
+            <CardContent className="flex flex-col px-4 pb-4 pt-4 sm:px-5 sm:pb-5">
               {/* Card title + streak/XP */}
               <div className="flex items-center justify-between mb-2">
                 <p className="text-[16px] font-bold text-foreground">Business Power Score (BPS)</p>
               </div>
 
               {/* Gauge + right content */}
-              <div className="grid flex-1 items-center gap-5 lg:grid-cols-[300px_minmax(0,1fr)] lg:gap-7">
+              <div className="grid flex-1 items-center gap-4 xl:grid-cols-[minmax(240px,300px)_minmax(0,1fr)] xl:gap-7">
                 <div className="flex items-center justify-center">
                   <BPSGauge score={bpsScore} />
                 </div>
@@ -629,7 +630,7 @@ difficulty must be "Easy", "Medium", or "Hard". savings is a USD number.`;
                   </div>
 
                   {/* Setup progress chip */}
-                  <div className="ml-auto flex items-center justify-between gap-2 bg-[#29415f] border border-white/10 rounded-full px-5 py-2 w-[445px] max-w-full">
+                  <div className="ml-auto flex w-full max-w-[445px] flex-wrap items-center justify-between gap-2 rounded-2xl border border-white/10 bg-[#29415f] px-3 py-2 sm:rounded-full sm:px-5">
                     <span className="text-[12px] text-muted-foreground">Business setup:</span>
                     <span className="text-[13px] font-bold text-primary">{readinessComplete}/{readinessItems.length} complete</span>
                   </div>
@@ -639,7 +640,7 @@ difficulty must be "Easy", "Medium", or "Hard". savings is a USD number.`;
           </Card>
 
           {/* Action Center + AI Insight row */}
-          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+          <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
 
             {/* Today's Missions */}
             <Card>
@@ -653,32 +654,32 @@ difficulty must be "Easy", "Medium", or "Hard". savings is a USD number.`;
                     type="button"
                     onClick={() => setSurveyOpen(true)}
                     disabled={!orgId}
-                    className="flex w-full items-center gap-3 rounded-xl bg-muted/12 px-3 py-2.5 text-left transition-colors hover:bg-muted/20 disabled:cursor-not-allowed disabled:opacity-50"
+                    className="grid w-full grid-cols-[auto_minmax(0,1fr)] items-center gap-x-3 gap-y-1 rounded-xl bg-muted/12 px-3 py-2.5 text-left transition-colors hover:bg-muted/20 disabled:cursor-not-allowed disabled:opacity-50 sm:grid-cols-[auto_minmax(0,1fr)_auto]"
                   >
                     <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg bg-primary/15 text-primary">
                       <ClipboardList className="h-5 w-5" />
                     </div>
                     <div className="min-w-0 flex-1">
-                      <p className="truncate text-[13px] font-semibold">Complete your BookSmart setup</p>
-                      <p className="mt-0.5 truncate text-[11px] text-muted-foreground">
+                      <p className="break-words text-[13px] font-semibold">Complete your BookSmart setup</p>
+                      <p className="mt-0.5 line-clamp-2 text-[11px] text-muted-foreground">
                         {onboarding.surveyComplete ? "Business Survey and Balance Sheet Profile complete" : "Continue your organization-specific survey"}
                       </p>
                     </div>
-                    <span className="whitespace-nowrap text-[12px] font-semibold text-primary">
+                    <span className="col-start-2 text-[12px] font-semibold text-primary sm:col-start-auto">
                       {onboarding.surveyComplete ? "Review Answers" : "Continue Survey"}
                     </span>
                   </button>
                   {actionItems.map(item => (
                     <Link key={item.title} href={item.href}>
-                      <div className="flex items-center gap-3 rounded-xl bg-muted/12 px-3 py-2.5 transition-colors hover:bg-muted/20 cursor-pointer">
+                      <div className="grid cursor-pointer grid-cols-[auto_minmax(0,1fr)] items-center gap-x-3 gap-y-1 rounded-xl bg-muted/12 px-3 py-2.5 transition-colors hover:bg-muted/20 sm:grid-cols-[auto_minmax(0,1fr)_auto]">
                         <div className={`h-9 w-9 flex-shrink-0 rounded-lg flex items-center justify-center ${item.iconBg}`}>
                           {item.icon}
                         </div>
                         <div className="min-w-0 flex-1">
-                          <p className="text-[13px] font-semibold truncate">{item.title}</p>
-                          <p className="text-[11px] text-muted-foreground truncate mt-0.5">{item.detail}</p>
+                          <p className="break-words text-[13px] font-semibold">{item.title}</p>
+                          <p className="mt-0.5 line-clamp-2 text-[11px] text-muted-foreground">{item.detail}</p>
                         </div>
-                        <span className="text-[12px] font-semibold text-primary whitespace-nowrap">{item.cta}</span>
+                        <span className="col-start-2 text-[12px] font-semibold text-primary sm:col-start-auto">{item.cta}</span>
                       </div>
                     </Link>
                   ))}
@@ -699,7 +700,7 @@ difficulty must be "Easy", "Medium", or "Hard". savings is a USD number.`;
                   </div>
                 ) : insightUnlocked && insightData ? (
                   <>
-                    <p className="text-[38px] font-bold text-emerald-400 leading-none mt-1">
+                    <p className="mt-1 max-w-full text-[32px] font-bold leading-none text-emerald-400 [overflow-wrap:anywhere] sm:text-[38px]">
                       {formatMoney(insightData.totalSavings)}
                     </p>
                     <p className="text-[13px] text-white/70">Across {insightData.strategies.length} strategic insights</p>
@@ -721,7 +722,7 @@ difficulty must be "Easy", "Medium", or "Hard". savings is a USD number.`;
                 ) : (
                   <>
                     {/* Teaser dollar amount */}
-                    <p className="text-[38px] font-bold text-emerald-400 leading-none mt-1">
+                    <p className="mt-1 max-w-full text-[32px] font-bold leading-none text-emerald-400 [overflow-wrap:anywhere] sm:text-[38px]">
                       {income > 0 ? formatMoney(Math.round(income * 0.15 / 10) * 10) : "$6,470"}
                     </p>
                     <p className="text-[13px] text-white/70">
@@ -754,7 +755,7 @@ difficulty must be "Easy", "Medium", or "Hard". savings is a USD number.`;
           </div>
 
           {/* Readiness + Plan row */}
-          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+          <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
             <Card>
               <CardContent className="p-0">
                 <div className="px-5 pt-4 pb-3">
@@ -784,8 +785,8 @@ difficulty must be "Easy", "Medium", or "Hard". savings is a USD number.`;
                           : <CircleAlert className="h-4 w-4 text-amber-400" />}
                       </div>
                       <div className="min-w-0 flex-1">
-                        <p className="text-[13px] font-semibold truncate">{item.label}</p>
-                        <p className="text-[11px] text-muted-foreground truncate">{item.detail}</p>
+                        <p className="break-words text-[13px] font-semibold">{item.label}</p>
+                        <p className="line-clamp-2 text-[11px] text-muted-foreground">{item.detail}</p>
                       </div>
                     </div>
                   ))}
@@ -834,17 +835,17 @@ difficulty must be "Easy", "Medium", or "Hard". savings is a USD number.`;
               <div className="pointer-events-none absolute -right-16 -top-20 h-48 w-48 rounded-full bg-primary/10 blur-3xl" />
               <div className="pointer-events-none absolute -bottom-20 -left-16 h-48 w-48 rounded-full bg-blue-500/10 blur-3xl" />
               <CardContent className="relative flex h-full flex-col p-5">
-                <div className="flex items-start justify-between gap-3 border-b border-border/30 pb-4">
-                  <div className="flex items-start gap-3">
+                  <div className="flex flex-wrap items-start justify-between gap-3 border-b border-border/30 pb-4">
+                    <div className="flex min-w-0 items-start gap-3">
                     <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-primary/25 bg-primary/10">
                       <Sparkles className="h-5 w-5 text-primary" />
                     </div>
-                    <div>
+                      <div className="min-w-0">
                       <p className="text-[15px] font-bold">Current Plan</p>
                       <p className="mt-1 text-[12px] text-muted-foreground">Subscription and token access for this account.</p>
                     </div>
                   </div>
-                  <span className="rounded-full border border-primary/35 bg-primary/10 px-3 py-1 text-[12px] font-bold text-primary shadow-[0_0_18px_rgba(250,204,21,0.08)]">{planLabel}</span>
+                  <span className="max-w-full break-words rounded-full border border-primary/35 bg-primary/10 px-3 py-1 text-[12px] font-bold text-primary shadow-[0_0_18px_rgba(250,204,21,0.08)]">{planLabel}</span>
                 </div>
 
                 <div className="mt-4 grid grid-cols-2 gap-3">
@@ -861,7 +862,7 @@ difficulty must be "Easy", "Medium", or "Hard". savings is a USD number.`;
                           <MetricIcon className="h-3.5 w-3.5" />
                         </div>
                       </div>
-                      <p className="mt-2 text-[24px] font-bold leading-none">{value}</p>
+                      <p className="mt-2 text-[24px] font-bold leading-none [overflow-wrap:anywhere]">{value}</p>
                     </div>
                   ))}
                 </div>
@@ -877,9 +878,13 @@ difficulty must be "Easy", "Medium", or "Hard". savings is a USD number.`;
                 </div>
 
                 <div className="mt-auto flex flex-col gap-2 pt-4 sm:flex-row">
-                  <Link href="/user/subscription" className="flex-1">
-                    <Button className="w-full">{planTier === "pro" ? "Manage Plan" : "Upgrade Plan"}</Button>
-                  </Link>
+                  {planTier !== "free" ? (
+                    <Link href="/user/subscription" className="flex-1">
+                      <Button className="w-full">{planTier === "pro" ? "Manage Plan" : "Upgrade Plan"}</Button>
+                    </Link>
+                  ) : (
+                    <Button className="flex-1" onClick={requestSubscriptionUpgrade}>Upgrade Plan</Button>
+                  )}
                   <Link href="/user/token" className="flex-1">
                     <Button variant="outline" className="w-full">Buy Tokens</Button>
                   </Link>
@@ -890,13 +895,13 @@ difficulty must be "Easy", "Medium", or "Hard". savings is a USD number.`;
         </div>
 
         {/* RIGHT SIDEBAR */}
-        <div className="space-y-4">
+        <div className="grid items-start gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:block 2xl:space-y-4">
 
           {/* Dun & Bradstreet Card */}
           <Card>
-            <CardContent className="p-6 min-h-[296px] flex flex-col justify-between">
+            <CardContent className="flex flex-col justify-between p-4 sm:p-5 2xl:p-6">
               {/* Header */}
-              <div className="flex items-center justify-between">
+              <div className="flex flex-wrap items-center justify-between gap-2">
                 <p className="text-[13px] font-bold">Dun &amp; Bradstreet</p>
                 <span className="text-[10px] font-semibold px-2 py-0.5 rounded"
                   style={{ background: "rgba(34,197,94,0.15)", color: "#4ade80", border: "1px solid rgba(34,197,94,0.25)" }}>
@@ -1040,7 +1045,7 @@ difficulty must be "Easy", "Medium", or "Hard". savings is a USD number.`;
                           {new Date(transaction.date_time).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
                         </p>
                       </div>
-                      <span className={`shrink-0 text-[11px] font-bold ${
+                      <span className={`max-w-[45%] shrink-0 text-right text-[11px] font-bold [overflow-wrap:anywhere] ${
                         transaction.amount >= 0 ? "text-emerald-400" : "text-foreground"
                       }`}>
                         {formatMoney(transaction.amount)}

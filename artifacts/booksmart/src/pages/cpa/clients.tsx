@@ -325,27 +325,27 @@ function ClientDetailPanel({ client, orders, onBack }: {
       {/* ── Client Header ── */}
       <div className="shrink-0 bg-card border-b border-border/60">
         {/* Back + actions top row */}
-        <div className="flex items-center justify-between px-5 pt-3 pb-2.5">
-          <button onClick={onBack} className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors">
+        <div className="flex flex-col gap-2 px-3 pb-2.5 pt-3 sm:flex-row sm:items-center sm:justify-between sm:px-5">
+          <button onClick={onBack} className="flex min-h-11 items-center gap-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground lg:min-h-0">
             <ArrowLeft className="h-3.5 w-3.5" />
             Back to My Clients
           </button>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <Button size="sm" className="h-8 gap-2 text-xs bg-indigo-600 hover:bg-indigo-700 text-white border-0"
               onClick={() => navigate("/cpa/chat")}>
-              <MessageSquare className="h-3.5 w-3.5" /> Message Client
+              <MessageSquare className="h-3.5 w-3.5" /> <span className="hidden sm:inline">Message Client</span><span className="sm:hidden">Message</span>
             </Button>
             <Button size="sm" variant="outline" className="h-8 w-8 p-0 border-border/60">
               <MoreHorizontal className="h-3.5 w-3.5" />
             </Button>
             <Button size="sm" variant="outline" className="h-7 gap-1.5 text-xs border-border/60">
-              <Download className="h-3 w-3" /> Download All
+              <Download className="h-3 w-3" /> <span className="hidden sm:inline">Download All</span><span className="sm:hidden">Download</span>
             </Button>
           </div>
         </div>
 
         {/* ── Profile row ── */}
-        <div className="flex items-start gap-4 px-5 pb-3">
+        <div className="flex items-start gap-3 px-3 pb-3 sm:gap-4 sm:px-5">
           <div className="w-[60px] h-[60px] rounded-full bg-indigo-500/20 border-2 border-indigo-400/40 flex items-center justify-center text-indigo-400 font-bold text-xl shrink-0">
             {initials(client)}
           </div>
@@ -361,7 +361,7 @@ function ClientDetailPanel({ client, orders, onBack }: {
             )}
             <div className="flex items-center gap-3 mt-1 flex-wrap">
               <span className="flex items-center gap-1 text-[11px] text-muted-foreground">
-                <Mail className="h-3 w-3" /> {client.email}
+                <Mail className="h-3 w-3 shrink-0" /> <span className="break-all">{client.email}</span>
               </span>
             </div>
             <div className="flex items-center gap-3 mt-1 flex-wrap">
@@ -1105,6 +1105,7 @@ export default function CpaClients() {
   const [search, setSearch] = useState("");
   const [selectedClientId, setSelectedClientId] = useState<number | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [mobileDetailOpen, setMobileDetailOpen] = useState(false);
 
   const { data: orders = [], isLoading: ordersLoading } = useQuery<Order[]>({
     queryKey: ["cpa_all_orders", numericId],
@@ -1161,10 +1162,18 @@ export default function CpaClients() {
   }, [filtered]);
 
   return (
-    <div className="flex h-full overflow-hidden" style={{ height: "calc(100vh - 64px)" }}>
+    <div className="flex h-full min-h-0 min-w-0 overflow-hidden">
       {/* ── Left: client list (collapsible) ── */}
-      <div className={`shrink-0 border-r border-border/60 flex flex-col bg-card/30 transition-all duration-300 ${sidebarOpen ? "w-72" : "w-0 overflow-hidden border-r-0"}`}>
-        <div className="w-72 flex flex-col h-full">
+      <div
+        className={`min-h-0 min-w-0 flex-col bg-card/30 transition-all duration-300 lg:shrink-0 lg:border-r lg:border-border/60 ${
+          mobileDetailOpen ? "hidden lg:flex" : "flex"
+        } ${
+          sidebarOpen
+            ? "w-full lg:w-[240px] xl:w-[288px]"
+            : "w-full lg:w-0 lg:overflow-hidden lg:border-r-0"
+        }`}
+      >
+        <div className="flex h-full min-h-0 w-full flex-col lg:w-[240px] xl:w-[288px]">
           <div className="p-4 border-b border-border/60">
             <div className="flex items-center gap-2 mb-3">
               <Users className="h-4 w-4 text-primary" />
@@ -1205,7 +1214,10 @@ export default function CpaClients() {
                   return (
                     <button
                       key={client.id}
-                      onClick={() => setSelectedClientId(client.id)}
+                      onClick={() => {
+                        setSelectedClientId(client.id);
+                        setMobileDetailOpen(true);
+                      }}
                       className={`w-full text-left px-4 py-3 transition-colors flex items-start gap-3 ${
                         isSelected ? "bg-primary/10 border-l-2 border-l-primary" : "hover:bg-card/60 border-l-2 border-l-transparent"
                       }`}
@@ -1234,9 +1246,13 @@ export default function CpaClients() {
       </div>
 
       {/* ── Right: detail ── */}
-      <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
+      <div
+        className={`min-h-0 min-w-0 flex-1 flex-col overflow-hidden ${
+          mobileDetailOpen ? "flex" : "hidden lg:flex"
+        }`}
+      >
         {/* Toggle bar */}
-        <div className="flex items-center gap-2 px-3 py-2 border-b border-border/40 bg-card/20 shrink-0">
+        <div className="hidden items-center gap-2 border-b border-border/40 bg-card/20 px-3 py-2 shrink-0 lg:flex">
           <Button variant="ghost" size="sm" onClick={() => setSidebarOpen(v => !v)}
             className="h-7 gap-1.5 text-xs text-muted-foreground hover:text-foreground px-2">
             {sidebarOpen ? <PanelLeftClose className="h-3.5 w-3.5" /> : <PanelLeftOpen className="h-3.5 w-3.5" />}
@@ -1253,12 +1269,15 @@ export default function CpaClients() {
           )}
         </div>
 
-        <div className="flex-1 overflow-auto">
+        <div className="min-h-0 flex-1 overflow-hidden">
           {selectedClient ? (
             <ClientDetailPanel
               client={selectedClient}
               orders={orders}
-              onBack={() => setSidebarOpen(true)}
+              onBack={() => {
+                setMobileDetailOpen(false);
+                setSidebarOpen(true);
+              }}
             />
           ) : (
             <div className="flex flex-col items-center justify-center h-full text-center p-8">

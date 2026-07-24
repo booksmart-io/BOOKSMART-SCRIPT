@@ -195,7 +195,7 @@ router.post("/extract-document", requireAuth, async (req, res) => {
     const endpoint = scannedPdf ? "https://api.openai.com/v1/responses" : "https://api.openai.com/v1/chat/completions";
     const requestBody = scannedPdf
       ? {
-          model: "gpt-4o", temperature: 0, max_output_tokens: 4096,
+          model: "gpt-4.1-mini", temperature: 0, max_output_tokens: 4096,
           input: [
             {
               role: "system",
@@ -216,7 +216,7 @@ router.post("/extract-document", requireAuth, async (req, res) => {
           text: { format: { type: "json_schema", ...jsonSchema(type) } },
         }
       : {
-          model: "gpt-4o", temperature: 0, max_tokens: 4096,
+          model: "gpt-4.1-mini", temperature: 0, max_tokens: 4096,
           messages: [{ role: "system", content: "You are a precise financial statement parser. Return only schema-valid data." }, { role: "user", content }],
           response_format: { type: "json_schema", json_schema: jsonSchema(type) },
         };
@@ -248,7 +248,7 @@ router.post("/extract-document", requireAuth, async (req, res) => {
     res.json({
       extracted: normalized, docType: type, validation, warnings,
       rawResponse: raw, fileHash: sha256(buffer), detectedFormat: format, pageCount: local.pages,
-      model: payload.model ?? "gpt-4o", modelVersion: payload.system_fingerprint ?? null,
+      model: payload.model ?? "gpt-4.1-mini", modelVersion: payload.system_fingerprint ?? null,
       promptVersion: STATEMENT_PROMPT_VERSION, schemaVersion: STATEMENT_SCHEMA_VERSION,
     });
   } catch {

@@ -233,7 +233,7 @@ export default function BulkReview() {
   const isBusy = approveMutation.isPending || rejectMutation.isPending;
 
   return (
-    <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+    <div className="min-w-0 space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Bulk Review</h1>
@@ -241,10 +241,10 @@ export default function BulkReview() {
             Approve AI-scanned transactions to reflect them in your income & expense totals.
           </p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
           <Button
             variant="outline"
-            className="gap-2"
+            className="w-full gap-2 whitespace-normal sm:w-auto"
             onClick={approveSelected}
             disabled={selectedIds.size === 0 || isBusy}
           >
@@ -252,7 +252,7 @@ export default function BulkReview() {
             Approve Selected ({selectedIds.size})
           </Button>
           <Button
-            className="gap-2 bg-primary text-primary-foreground"
+            className="w-full gap-2 bg-primary text-primary-foreground sm:w-auto"
             onClick={approveAll}
             disabled={pending.length === 0 || isBusy}
           >
@@ -263,7 +263,7 @@ export default function BulkReview() {
 
       {/* Summary stats */}
       {pending.length > 0 && (
-        <div className="grid grid-cols-3 gap-3">
+        <div className="grid grid-cols-1 gap-3 min-[390px]:grid-cols-3">
           <Card className="border-border/50 bg-secondary/10">
             <CardContent className="pt-4 pb-3">
               <p className="text-xs text-muted-foreground mb-1">Pending</p>
@@ -305,7 +305,7 @@ export default function BulkReview() {
             These transactions were extracted from your uploaded documents. Approve them to add to your financials.
           </CardDescription>
         </CardHeader>
-        <CardContent>
+        <CardContent className="px-3 sm:px-6">
           {isLoading ? (
             <div className="flex justify-center py-16">
               <Loader2 className="h-7 w-7 animate-spin text-muted-foreground" />
@@ -320,9 +320,9 @@ export default function BulkReview() {
             </div>
           ) : (
             <>
-              <div className="border rounded-md border-border/50">
-                <Table>
-                  <TableHeader className="bg-secondary/20">
+              <div className="min-w-0 rounded-md border border-border/50">
+                <Table className="block md:table">
+                  <TableHeader className="hidden bg-secondary/20 md:table-header-group">
                     <TableRow>
                       <TableHead className="w-10">
                         <Checkbox
@@ -337,39 +337,41 @@ export default function BulkReview() {
                       <TableHead className="text-right w-32">Actions</TableHead>
                     </TableRow>
                   </TableHeader>
-                  <TableBody>
+                  <TableBody className="block md:table-row-group">
                     {pending.map((tx) => (
-                      <TableRow key={tx.id} className={selectedIds.has(tx.id) ? "bg-primary/5" : ""}>
-                        <TableCell>
+                      <TableRow key={tx.id} className={`grid min-w-0 grid-cols-[auto_minmax(0,1fr)_auto] gap-x-2 gap-y-3 border-b p-3 last:border-b-0 md:table-row md:p-0 ${selectedIds.has(tx.id) ? "bg-primary/5" : ""}`}>
+                        <TableCell className="p-0 md:p-4">
                           <Checkbox
                             checked={selectedIds.has(tx.id)}
                             onCheckedChange={() => toggleSelect(tx.id)}
                           />
                         </TableCell>
-                        <TableCell className="text-muted-foreground text-sm whitespace-nowrap">
+                        <TableCell className="hidden whitespace-nowrap text-sm text-muted-foreground md:table-cell">
                           {fmtDate(tx.date_time)}
                         </TableCell>
-                        <TableCell>
-                          <div className="font-medium text-sm">{tx.title}</div>
+                        <TableCell className="min-w-0 p-0 md:p-4">
+                          <div className="break-words text-sm font-medium">{tx.title}</div>
+                          <div className="mt-1 text-xs text-muted-foreground md:hidden">{fmtDate(tx.date_time)}</div>
                           {tx.description && tx.description !== tx.title && (
-                            <div className="text-xs text-muted-foreground truncate max-w-[240px]">
+                            <div className="max-w-full break-words text-xs text-muted-foreground md:max-w-[240px] md:truncate">
                               {tx.description}
                             </div>
                           )}
                         </TableCell>
-                        <TableCell>
-                          <span className={`font-semibold ${tx.transaction_type === "credit" ? "text-emerald-500" : "text-rose-400"}`}>
+                        <TableCell className="p-0 text-right md:p-4 md:text-left">
+                          <span className={`whitespace-nowrap font-semibold ${tx.transaction_type === "credit" ? "text-emerald-500" : "text-rose-400"}`}>
                             {tx.transaction_type === "credit" ? "+" : "-"}{fmtMoney(tx.amount)}
                           </span>
                         </TableCell>
-                        <TableCell>
+                        <TableCell className="col-span-2 col-start-2 min-w-0 p-0 md:table-cell md:p-4">
+                          <span className="mb-1 block text-xs font-medium text-muted-foreground md:hidden">Category</span>
                           <Select
                             value={categoryMap[tx.id] ? String(categoryMap[tx.id]) : ""}
                             onValueChange={(v) =>
                               setCategoryMap((prev) => ({ ...prev, [tx.id]: Number(v) }))
                             }
                           >
-                            <SelectTrigger className="h-8 text-xs">
+                            <SelectTrigger className="min-h-11 min-w-0 text-xs md:h-8 md:min-h-8">
                               <SelectValue placeholder="Select…" />
                             </SelectTrigger>
                             <SelectContent>
@@ -381,12 +383,13 @@ export default function BulkReview() {
                             </SelectContent>
                           </Select>
                         </TableCell>
-                        <TableCell className="text-right">
-                          <div className="flex justify-end gap-1">
+                        <TableCell className="col-span-3 p-0 text-right md:table-cell md:p-4">
+                          <div className="flex justify-end gap-2">
                             <Button
                               size="sm"
                               variant="ghost"
-                              className="h-7 w-7 p-0 text-emerald-500 hover:bg-emerald-500/10"
+                              className="h-11 w-11 p-0 text-emerald-500 hover:bg-emerald-500/10 md:h-8 md:w-8"
+                              aria-label={`Approve ${tx.title}`}
                               disabled={isBusy}
                               onClick={async () => {
                                 setApprovingId(tx.id);
@@ -404,7 +407,8 @@ export default function BulkReview() {
                             <Button
                               size="sm"
                               variant="ghost"
-                              className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
+                              className="h-11 w-11 p-0 text-muted-foreground hover:bg-destructive/10 hover:text-destructive md:h-8 md:w-8"
+                              aria-label={`Reject ${tx.title}`}
                               disabled={isBusy}
                               onClick={() => rejectMutation.mutate(tx.id)}
                             >
@@ -417,12 +421,12 @@ export default function BulkReview() {
                   </TableBody>
                 </Table>
               </div>
-              <div className="mt-4 flex items-center justify-between text-xs text-muted-foreground">
+              <div className="mt-4 flex flex-col gap-2 text-xs text-muted-foreground min-[390px]:flex-row min-[390px]:items-center min-[390px]:justify-between">
                 <span>{selectedIds.size} of {pending.length} selected</span>
                 <Button
                   size="sm"
                   variant="outline"
-                  className="h-8 gap-1.5 text-xs text-emerald-500 border-emerald-500/30 hover:bg-emerald-500/10"
+                  className="min-h-11 w-full gap-1.5 border-emerald-500/30 text-xs text-emerald-500 hover:bg-emerald-500/10 min-[390px]:w-auto"
                   onClick={approveSelected}
                   disabled={selectedIds.size === 0 || isBusy}
                 >

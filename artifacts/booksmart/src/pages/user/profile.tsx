@@ -648,10 +648,10 @@ export default function Profile() {
   const CurrentBusinessIcon = BUSINESS_STEPS[businessStep].icon;
 
   return (
-    <div className="min-h-[calc(100vh-4rem)] animate-in fade-in slide-in-from-bottom-4 duration-500">
-      <div className="mx-auto w-full max-w-6xl px-4 pt-6">
-        <h1 className="mb-4 text-center text-2xl font-bold tracking-tight">Set Up Your Profile</h1>
-        <p className="mb-10 text-center text-sm text-muted-foreground">
+    <div className="min-w-0 animate-in fade-in slide-in-from-bottom-4 duration-500">
+      <div className="mx-auto w-full max-w-6xl px-3 pt-4 sm:px-4 sm:pt-6">
+        <h1 className="mb-3 text-center text-2xl font-bold tracking-tight sm:mb-4">Set Up Your Profile</h1>
+        <p className="mb-7 text-center text-sm text-muted-foreground sm:mb-10">
           Complete your profile and add your business before BookSmart starts the onboarding survey.
         </p>
 
@@ -667,7 +667,7 @@ export default function Profile() {
               <div className="space-y-8 pt-3">
                 <ProfileAvatarUploader currentUrl={userRow?.img_url} initials={initials} />
 
-                <div className="grid gap-4 lg:grid-cols-3">
+                <div className="grid min-w-0 gap-4 sm:grid-cols-2 xl:grid-cols-3">
                   <TextField label="First Name *" value={firstName} onChange={setFirstName} hideLabel />
                   <TextField label="Middle Name" value={middleName} onChange={setMiddleName} hideLabel />
                   <TextField label="Last Name *" value={lastName} onChange={setLastName} hideLabel />
@@ -675,7 +675,7 @@ export default function Profile() {
                 <TextField label="Phone Number" value={phone} onChange={setPhone} type="tel" hideLabel />
 
                 <div className="flex justify-end">
-                  <Button type="button" onClick={continuePersonal}>Next Step</Button>
+                  <Button type="button" onClick={continuePersonal} className="w-full sm:w-auto">Next Step</Button>
                 </div>
               </div>
             </ProfileSection>
@@ -690,18 +690,18 @@ export default function Profile() {
                         Choose how you would like to provide your business information.
                       </p>
                     </div>
-                    <div className="grid gap-4 lg:grid-cols-2">
+                    <div className="grid min-w-0 gap-4 xl:grid-cols-2">
                       <button
                         type="button"
                         onClick={() => setSetupMethod("upload")}
-                        className="relative rounded-xl border border-primary bg-primary/5 p-5 text-left transition-colors hover:bg-primary/10"
+                        className="relative min-w-0 rounded-xl border border-primary bg-primary/5 p-4 pt-14 text-left transition-colors hover:bg-primary/10 sm:p-5 sm:pt-5"
                       >
                         <span className="absolute right-4 top-4 rounded-full bg-primary px-2.5 py-1 text-xs font-semibold text-primary-foreground">
                           Recommended
                         </span>
                         <FileUp className="mb-4 h-7 w-7 text-primary" />
                         <h3 className="font-semibold">Upload Business Document</h3>
-                        <p className="mt-2 pr-2 text-sm text-muted-foreground">
+                        <p className="mt-2 break-words text-sm text-muted-foreground sm:pr-2">
                           Upload Articles of Organization, a Certificate of Formation, Articles of Incorporation,
                           or a similar official registration document. BookSmart will prefill what it can find.
                         </p>
@@ -709,7 +709,7 @@ export default function Profile() {
                       <button
                         type="button"
                         onClick={() => setSetupMethod("manual")}
-                        className="rounded-xl border border-border/70 bg-card/35 p-5 text-left transition-colors hover:border-primary/60"
+                        className="min-w-0 rounded-xl border border-border/70 bg-card/35 p-4 text-left transition-colors hover:border-primary/60 sm:p-5"
                       >
                         <PenLine className="mb-4 h-7 w-7 text-primary" />
                         <h3 className="font-semibold">Enter Details Manually</h3>
@@ -754,7 +754,7 @@ export default function Profile() {
                   </div>
                 )}
                 <div>
-                  <div className="grid gap-2 text-xs font-medium text-muted-foreground sm:grid-cols-3 lg:grid-cols-5">
+                  <div className="hidden gap-2 text-xs font-medium text-muted-foreground sm:grid sm:grid-cols-3 xl:grid-cols-5">
                     {BUSINESS_STEPS.map((item, index) => (
                       <button
                         key={item.title}
@@ -768,6 +768,10 @@ export default function Profile() {
                         <span>{item.title}</span>
                       </button>
                     ))}
+                  </div>
+                  <div className="flex min-w-0 items-center justify-between gap-3 text-sm sm:hidden">
+                    <span className="min-w-0 break-words font-semibold text-foreground">{BUSINESS_STEPS[businessStep].title}</span>
+                    <span className="shrink-0 text-muted-foreground">Step {businessStep + 1} of {BUSINESS_STEPS.length}</span>
                   </div>
                   <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-secondary">
                     <div
@@ -788,7 +792,7 @@ export default function Profile() {
                 </div>
 
                 {businessStep === 0 && (
-                  <div className="grid gap-4 lg:grid-cols-2">
+                  <div className="grid min-w-0 gap-4 xl:grid-cols-2">
                     <TextField label="Legal Business Name *" value={businessName} onChange={setBusinessName} hideLabel />
                     <SelectField label="Business Type *" value={orgType} onChange={setOrgType} options={ENTITY_TYPES} placeholder="Select business type" />
                     <SelectField label="Industry *" value={industry} onChange={setIndustry} options={INDUSTRIES} placeholder="Select industry" />
@@ -801,7 +805,7 @@ export default function Profile() {
                     <TextField label="Website" value={website} onChange={setWebsite} hideLabel />
                     <TextField label="Business Email" value={businessEmail} onChange={setBusinessEmail} type="email" hideLabel />
                     <TextField label="Business Phone" value={businessPhone} onChange={setBusinessPhone} type="tel" hideLabel />
-                    <div className="space-y-2 lg:col-span-2">
+                    <div className="min-w-0 space-y-2 xl:col-span-2">
                       <Label>Products or services</Label>
                       <Textarea
                         value={businessDescription}
@@ -814,7 +818,7 @@ export default function Profile() {
                 )}
 
                 {businessStep === 1 && (
-                  <div className="grid gap-4 lg:grid-cols-2">
+                  <div className="grid min-w-0 gap-4 xl:grid-cols-2">
                     <TextField label="Street" value={street} onChange={setStreet} hideLabel />
                     <TextField label="Suite" value={suite} onChange={setSuite} hideLabel />
                     <TextField label="City" value={city} onChange={setCity} hideLabel />
@@ -832,7 +836,7 @@ export default function Profile() {
                     <TextField label="Owner Full Name" value={ownerName} onChange={setOwnerName} hideLabel />
                     <TextField label="Owner Title" value={ownerTitle} onChange={setOwnerTitle} hideLabel />
                     <TextField label="Ownership Percentage" value={ownershipPercent} onChange={setOwnershipPercent} type="number" hideLabel />
-                    <div className="space-y-2 lg:col-span-2">
+                    <div className="min-w-0 space-y-2 xl:col-span-2">
                       <Label>Additional owners</Label>
                       <Textarea
                         value={additionalOwners}
@@ -845,7 +849,7 @@ export default function Profile() {
                 )}
 
                 {businessStep === 2 && (
-                  <div className="grid gap-4 lg:grid-cols-2">
+                  <div className="grid min-w-0 gap-4 xl:grid-cols-2">
                     <TextField label="EIN / TIN *" value={einTin} onChange={setEinTin} hideLabel />
                     <SelectField
                       label="Federal Tax Classification *"
@@ -879,7 +883,7 @@ export default function Profile() {
                 {businessStep === 3 && (
                   <div className="space-y-5">
                     <MultiSection title="Business Operations" options={BUSINESS_OPERATIONS} selected={operations} onToggle={(value) => toggleList(operations, setOperations, value)} />
-                    <div className="grid gap-4 lg:grid-cols-2">
+                    <div className="grid min-w-0 gap-4 xl:grid-cols-2">
                       <SelectField label="Employee Type" value={employeeType} onChange={setEmployeeType} options={EMPLOYEE_TYPES} placeholder="Select employee type" />
                       <SelectField label="Approximate Annual Revenue" value={annualRevenue} onChange={setAnnualRevenue} options={REVENUE_RANGES} placeholder="Select range" />
                       <TextField label="Average Monthly Revenue" value={monthlyRevenue} onChange={setMonthlyRevenue} type="number" hideLabel />
@@ -887,7 +891,7 @@ export default function Profile() {
                       <SelectField label="Profitability" value={profitability} onChange={setProfitability} options={PROFITABILITY} placeholder="Select status" />
                     </div>
                     <MultiSection title="Business Goals" options={BUSINESS_GOALS} selected={goals} onToggle={(value) => toggleList(goals, setGoals, value)} />
-                    <div className="grid gap-4 lg:grid-cols-2">
+                    <div className="grid min-w-0 gap-4 xl:grid-cols-2">
                       <SelectField label="Applying for Funding?" value={applyingFunding} onChange={setApplyingFunding} options={["yes", "no", "maybe"]} />
                       <TextField label="Desired Funding Amount" value={desiredFundingAmount} onChange={setDesiredFundingAmount} type="number" hideLabel />
                       <TextField label="Expected Timeline" value={fundingTimeline} onChange={setFundingTimeline} hideLabel />
@@ -916,7 +920,7 @@ export default function Profile() {
                   </div>
                 )}
 
-                <div className="flex justify-end gap-3 pt-1">
+                <div className="flex flex-col-reverse gap-3 pt-1 sm:flex-row sm:justify-end">
                   {businessStep === 0 ? (
                     <Button type="button" variant="outline" onClick={() => setStep(0)}>Back</Button>
                   ) : (
@@ -956,7 +960,7 @@ function TextField({
 }) {
   const id = label.toLowerCase().replace(/[^a-z0-9]+/g, "-");
   return (
-    <div className="space-y-2">
+    <div className="min-w-0 space-y-2">
       <Label htmlFor={id}>{label}</Label>
       <Input
         id={id}
@@ -964,7 +968,7 @@ function TextField({
         value={value}
         placeholder={label}
         onChange={(event) => onChange(event.target.value)}
-        className="h-12 bg-card text-base"
+        className="h-12 min-w-0 bg-card text-base"
       />
     </div>
   );
@@ -985,10 +989,10 @@ function SelectField({
 }) {
   const normalized = options.map((option) => typeof option === "string" ? { value: option, label: option } : option);
   return (
-    <div className="space-y-2">
+    <div className="min-w-0 space-y-2">
       <Label>{label}</Label>
       <Select value={value} onValueChange={onChange}>
-        <SelectTrigger className="h-12 bg-card text-base">
+        <SelectTrigger className="h-12 min-w-0 bg-card text-base">
           <SelectValue placeholder={placeholder ?? label} />
         </SelectTrigger>
         <SelectContent>
@@ -1020,7 +1024,7 @@ function CheckRow({
         onChange={(event) => onChange(event.target.checked)}
         className="h-4 w-4 accent-primary"
       />
-      <span>{label}</span>
+      <span className="min-w-0 break-words">{label}</span>
     </label>
   );
 }
@@ -1037,9 +1041,9 @@ function MultiSection({
   onToggle: (value: string) => void;
 }) {
   return (
-    <div className="space-y-2 lg:col-span-2">
+    <div className="min-w-0 space-y-2 xl:col-span-2">
       <Label>{title}</Label>
-      <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+      <div className="grid min-w-0 gap-2 sm:grid-cols-2 xl:grid-cols-3">
         {options.map((option) => (
           <CheckRow key={option} label={option} checked={selected.includes(option)} onChange={() => onToggle(option)} />
         ))}
@@ -1068,7 +1072,7 @@ function ProfileSection({
   last?: boolean;
 }) {
   return (
-    <div className="grid grid-cols-[48px_minmax(0,1fr)] gap-x-5">
+    <div className="grid min-w-0 grid-cols-[36px_minmax(0,1fr)] gap-x-2 sm:grid-cols-[48px_minmax(0,1fr)] sm:gap-x-5">
       <div className="relative flex justify-center">
         {!last && <div className="absolute top-8 h-full w-px bg-primary/80" />}
         <button
@@ -1081,15 +1085,15 @@ function ProfileSection({
           {index + 1}
         </button>
       </div>
-      <section className={`min-w-0 pb-10 ${active ? "min-h-[220px]" : "min-h-[94px]"}`}>
+      <section className="min-w-0 pb-8 sm:pb-10">
         <button
           type="button"
           onClick={onClick}
           className={`mb-6 flex w-full items-center rounded-md text-left transition-colors ${
-            active ? "bg-card/35 px-5 py-5" : "px-0 py-1 hover:text-primary"
+            active ? "bg-card/35 px-3 py-4 sm:px-5 sm:py-5" : "px-0 py-1 hover:text-primary"
           }`}
         >
-          <span className="text-xl font-bold text-foreground">{title}</span>
+          <span className="min-w-0 break-words text-lg font-bold text-foreground sm:text-xl">{title}</span>
         </button>
         {active && <div>{children}</div>}
       </section>

@@ -1679,7 +1679,7 @@ function UploadDialog({ open, onClose, onUploaded, onImportCreated, numericUserI
                 <Sparkles className="absolute inset-0 m-auto h-5 w-5 text-primary" />
               </div>
               <p className="text-sm text-muted-foreground text-center max-w-[240px]">
-                GPT-4o is reading your document and extracting financial figures…
+                AI is reading your document and extracting financial figures…
               </p>
             </div>
           </>
@@ -1727,7 +1727,7 @@ function UploadDialog({ open, onClose, onUploaded, onImportCreated, numericUserI
             ) : extracted ? (
               <div className="space-y-3 py-2">
                 <p className="text-xs text-muted-foreground">
-                  Review the figures GPT-4o extracted from your document. Confirm to save them,
+                  Review the figures AI extracted from your document. Confirm to save them,
                   or skip to keep only the file.
                 </p>
                 <div className="rounded-md border border-border/50 divide-y divide-border/40">
@@ -2078,18 +2078,18 @@ export default function Tax() {
           </CardHeader>
           <CardContent>
             {/* Filters */}
-            <div className="flex flex-wrap gap-2 mb-4">
-              <div className="relative flex-1 min-w-[180px]">
+            <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:flex-wrap">
+              <div className="relative min-w-0 flex-1">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                 <Input
                   placeholder="Search documents…"
-                  className="pl-9 h-9"
+                  className="h-11 pl-9 sm:h-9"
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
                 />
               </div>
               <Select value={filterYear} onValueChange={setFilterYear}>
-                <SelectTrigger className="h-9 w-[110px]">
+                <SelectTrigger className="h-11 w-full sm:h-9 sm:w-[110px]">
                   <SelectValue placeholder="Year" />
                 </SelectTrigger>
                 <SelectContent>
@@ -2102,7 +2102,7 @@ export default function Tax() {
                 </SelectContent>
               </Select>
               <Select value={filterCategory} onValueChange={setFilterCategory}>
-                <SelectTrigger className="h-9 w-[150px]">
+                <SelectTrigger className="h-11 w-full sm:h-9 sm:w-[150px]">
                   <SelectValue placeholder="Category" />
                 </SelectTrigger>
                 <SelectContent>
@@ -2144,8 +2144,8 @@ export default function Tax() {
                 </p>
               </div>
             ) : (
-              <div className="border rounded-md border-border/50">
-                <Table>
+              <div className="min-w-0 rounded-md border border-border/50">
+                <Table className="min-w-[620px]">
                   <TableHeader className="bg-secondary/20">
                     <TableRow>
                       <TableHead>Document Name</TableHead>
@@ -2163,7 +2163,7 @@ export default function Tax() {
                           <div className="flex items-center gap-2">
                             <FileIcon mime={doc.mime_type} />
                             <div className="min-w-0">
-                              <span className="block truncate max-w-[160px]">{doc.name}</span>
+                              <span className="block max-w-[220px] truncate">{doc.name}</span>
                               {((doc.parsed_data?.statement_workflow as Record<string, unknown> | undefined)?.lifecycle_status === "confirmed") && (
                                 <span className="text-[10px] text-emerald-400">Extracted and confirmed</span>
                               )}
@@ -2192,7 +2192,7 @@ export default function Tax() {
                               <Button
                                 variant="ghost"
                                 size="icon"
-                                className="h-7 w-7"
+                                className="h-11 w-11 sm:h-8 sm:w-8"
                               >
                                 <MoreVertical className="h-4 w-4" />
                               </Button>

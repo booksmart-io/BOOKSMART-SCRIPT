@@ -146,7 +146,7 @@ export default function AdminCpas() {
   ];
 
   return (
-    <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+    <div className="min-w-0 space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
       <div>
         <h1 className="text-3xl font-bold tracking-tight">CPA Directory</h1>
         <p className="text-muted-foreground">Review and verify CPA applications.</p>
@@ -168,13 +168,13 @@ export default function AdminCpas() {
                 onChange={(e) => setSearch(e.target.value)}
               />
             </div>
-            <div className="flex gap-1">
+            <div className="flex w-full flex-wrap gap-1 sm:w-auto sm:justify-end">
               {filterOptions.map((o) => (
                 <Button
                   key={o.value}
                   size="sm"
                   variant={filter === o.value ? "default" : "outline"}
-                  className="h-9 text-xs"
+                  className="min-h-10 flex-1 text-xs sm:flex-none"
                   onClick={() => setFilter(o.value)}
                 >
                   {o.label}
@@ -188,15 +188,15 @@ export default function AdminCpas() {
             </div>
           </div>
 
-          <div className="border rounded-md border-border/50">
-            <Table>
+          <div className="min-w-0 rounded-md border border-border/50">
+            <Table className="min-w-[680px]">
               <TableHeader className="bg-secondary/20">
                 <TableRow>
                   <TableHead>CPA Name</TableHead>
                   <TableHead>License #</TableHead>
-                  <TableHead>States</TableHead>
-                  <TableHead>Specialties</TableHead>
-                  <TableHead>Applied</TableHead>
+                  <TableHead className="hidden xl:table-cell">States</TableHead>
+                  <TableHead className="hidden xl:table-cell">Specialties</TableHead>
+                  <TableHead className="hidden lg:table-cell">Applied</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
@@ -219,12 +219,12 @@ export default function AdminCpas() {
                   </TableRow>
                 ) : filtered.map((cpa) => (
                   <TableRow key={cpa.id}>
-                    <TableCell>
+                    <TableCell className="min-w-0">
                       <div className="font-medium">{fullName(cpa)}</div>
-                      <div className="text-xs text-muted-foreground">{cpa.email}</div>
+                      <div className="max-w-[220px] break-all text-xs text-muted-foreground xl:truncate">{cpa.email}</div>
                     </TableCell>
                     <TableCell className="font-mono text-sm">{cpa.license_number || <span className="text-muted-foreground">-</span>}</TableCell>
-                    <TableCell>
+                    <TableCell className="hidden xl:table-cell">
                       <div className="flex flex-wrap gap-1">
                         {(cpa.state_focuses ?? []).slice(0, 3).map((s) => (
                           <Badge key={s} variant="outline" className="text-[10px] px-1.5 py-0">{s}</Badge>
@@ -235,7 +235,7 @@ export default function AdminCpas() {
                         {!(cpa.state_focuses ?? []).length && <span className="text-muted-foreground text-xs">-</span>}
                       </div>
                     </TableCell>
-                    <TableCell>
+                    <TableCell className="hidden xl:table-cell">
                       <div className="flex flex-wrap gap-1">
                         {(cpa.specialties ?? []).slice(0, 2).map((s) => (
                           <Badge key={s} variant="secondary" className="text-[10px] px-1.5 py-0">{s}</Badge>
@@ -246,22 +246,22 @@ export default function AdminCpas() {
                         {!(cpa.specialties ?? []).length && <span className="text-muted-foreground text-xs">-</span>}
                       </div>
                     </TableCell>
-                    <TableCell className="text-muted-foreground text-sm">{formatDate(cpa.created_at)}</TableCell>
+                    <TableCell className="hidden text-sm text-muted-foreground lg:table-cell">{formatDate(cpa.created_at)}</TableCell>
                     <TableCell>
                       <Badge variant="outline" className={statusColor[normalizeStatus(cpa.verification_status)] ?? ""}>
                         {normalizeStatus(cpa.verification_status)}
                       </Badge>
                     </TableCell>
                     <TableCell className="text-right">
-                      <div className="flex justify-end gap-2">
-                        <Button size="sm" variant="outline" className="h-8" onClick={() => setSelectedCpa(cpa)}>
+                      <div className="flex min-w-max justify-end gap-2">
+                        <Button size="sm" variant="outline" className="min-h-10" onClick={() => setSelectedCpa(cpa)}>
                           <Eye className="h-3.5 w-3.5 mr-1.5" /> View
                         </Button>
                         {normalizeStatus(cpa.verification_status) === "pending" ? (
                           <>
                             <Button
                               size="sm" variant="outline"
-                              className="h-8 text-emerald-500 hover:text-emerald-600 hover:bg-emerald-500/10 border-emerald-500/30"
+                              className="min-h-10 border-emerald-500/30 text-emerald-500 hover:bg-emerald-500/10 hover:text-emerald-600"
                               onClick={() => verifyMutation.mutate({ id: cpa.id, status: "approved" })}
                               disabled={verifyMutation.isPending}
                             >
@@ -269,7 +269,7 @@ export default function AdminCpas() {
                             </Button>
                             <Button
                               size="sm" variant="outline"
-                              className="h-8 text-destructive hover:text-destructive hover:bg-destructive/10 border-destructive/30"
+                              className="min-h-10 border-destructive/30 text-destructive hover:bg-destructive/10 hover:text-destructive"
                               onClick={() => verifyMutation.mutate({ id: cpa.id, status: "rejected" })}
                               disabled={verifyMutation.isPending}
                             >
@@ -279,7 +279,7 @@ export default function AdminCpas() {
                         ) : normalizeStatus(cpa.verification_status) === "rejected" ? (
                           <Button
                             size="sm" variant="outline"
-                            className="h-8 text-emerald-500 hover:text-emerald-600 hover:bg-emerald-500/10 border-emerald-500/30"
+                            className="min-h-10 border-emerald-500/30 text-emerald-500 hover:bg-emerald-500/10 hover:text-emerald-600"
                             onClick={() => verifyMutation.mutate({ id: cpa.id, status: "approved" })}
                             disabled={verifyMutation.isPending}
                           >
