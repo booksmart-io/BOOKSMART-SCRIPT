@@ -1,4 +1,4 @@
-import { Router } from "express";
+import { Router, type Request, type Response } from "express";
 import { createClient } from "@supabase/supabase-js";
 
 import { requireAuth } from "../middlewares/require-auth";
@@ -9,6 +9,12 @@ import {
   type PlanKey,
   type TokenPackageKey,
 } from "../lib/stripe-catalog";
+import { fulfillTokenCheckout } from "../lib/token-fulfillment";
+import { findBlockingSubscription } from "../lib/subscription-safety";
+import {
+  setSubscriptionCancellation,
+  SubscriptionActionError,
+} from "../lib/subscription-cancellation";
 
 const router = Router();
 
@@ -36,26 +42,15 @@ function getAdminClient() {
   });
 }
 
-/**
- * Production redirects must use HTTPS.
- * Localhost HTTP redirects are allowed only during development.
- */
 function isAllowedRedirectUrl(value: unknown): value is string {
-  if (typeof value !== "string" || value.trim() === "") {
-    return false;
-  }
+  if (typeof value !== "string" || value.trim() === "") return false;
 
   try {
     const url = new URL(value);
-
-    if (url.protocol === "https:") {
-      return true;
-    }
+    if (url.protocol === "https:") return true;
 
     const isLocalhost =
-      url.hostname === "localhost" ||
-      url.hostname === "127.0.0.1";
-
+      url.hostname === "localhost" || url.hostname === "127.0.0.1";
     return (
       process.env.NODE_ENV === "development" &&
       url.protocol === "http:" &&
@@ -70,17 +65,17 @@ function validateRedirectUrls(
   successUrl: unknown,
   cancelUrl: unknown,
 ): string | null {
-  if (
-    !isAllowedRedirectUrl(successUrl) ||
-    !isAllowedRedirectUrl(cancelUrl)
-  ) {
-    return (
-      "Redirect URLs must use HTTPS. " +
-      "HTTP localhost URLs are allowed only in development."
-    );
+  if (!isAllowedRedirectUrl(successUrl) || !isAllowedRedirectUrl(cancelUrl)) {
+    return "Redirect URLs must use HTTPS. HTTP localhost URLs are allowed only in development.";
   }
-
   return null;
+}
+
+function isCheckoutAttemptId(value: unknown): value is string {
+  return typeof value === "string" &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+      value,
+    );
 }
 
 function errorMessage(error: unknown): string {
@@ -239,6 +234,52 @@ router.get("/stripe/status", requireAuth, async (req, res) => {
   }
 });
 
+async function handleSubscriptionCancellation(
+  req: Request,
+  res: Response,
+  cancelAtPeriodEnd: boolean,
+) {
+  try {
+    const result = await setSubscriptionCancellation(
+      getStripeClient(),
+      getAdminClient(),
+      req.supabaseUserId!,
+      cancelAtPeriodEnd,
+    );
+    res.json(result);
+  } catch (error) {
+    if (error instanceof SubscriptionActionError) {
+      res.status(error.httpStatus).json({
+        error: error.code,
+        message: error.message,
+      });
+      return;
+    }
+
+    console.error("[stripe/subscription-cancellation]", error);
+    res.status(502).json({
+      error: "stripe_subscription_update_failed",
+      message: errorMessage(error),
+    });
+  }
+}
+
+router.post(
+  "/stripe/cancel-subscription",
+  requireAuth,
+  async (req, res) => {
+    await handleSubscriptionCancellation(req, res, true);
+  },
+);
+
+router.post(
+  "/stripe/resume-subscription",
+  requireAuth,
+  async (req, res) => {
+    await handleSubscriptionCancellation(req, res, false);
+  },
+);
+
 /**
  * Create subscription checkout.
  */
@@ -246,10 +287,11 @@ router.post(
   "/stripe/create-checkout-session",
   requireAuth,
   async (req, res) => {
-    const { planKey, successUrl, cancelUrl } = req.body as {
+    const { planKey, successUrl, cancelUrl, checkoutAttemptId } = req.body as {
       planKey?: string;
       successUrl?: string;
       cancelUrl?: string;
+      checkoutAttemptId?: string;
     };
 
     if (
@@ -262,11 +304,12 @@ router.post(
       return;
     }
 
-    const redirectError = validateRedirectUrls(
-      successUrl,
-      cancelUrl,
-    );
+    if (!isCheckoutAttemptId(checkoutAttemptId)) {
+      res.status(400).json({ error: "invalid_checkout_attempt_id" });
+      return;
+    }
 
+    const redirectError = validateRedirectUrls(successUrl, cancelUrl);
     if (redirectError) {
       res.status(400).json({
         error: "invalid_redirect_urls",
@@ -313,6 +356,27 @@ router.post(
           userRow,
         );
 
+      const subscriptions = await stripe.subscriptions.list({
+        customer: customerId,
+        status: "all",
+        limit: 100,
+      });
+      const existingSubscription =
+        findBlockingSubscription(subscriptions.data);
+
+      if (existingSubscription) {
+        res.status(409).json({
+          error: "subscription_plan_change_policy_required",
+          message:
+            "Your account already has a Stripe subscription. Plan changes are temporarily blocked to prevent duplicate subscriptions while proration and downgrade timing are finalized.",
+          subscriptionId: existingSubscription.id,
+          currentPriceId:
+            existingSubscription.items.data[0]?.price.id ?? null,
+          requestedPlan: planKey,
+        });
+        return;
+      }
+
       const session =
         await stripe.checkout.sessions.create({
           mode: "subscription",
@@ -330,6 +394,7 @@ router.post(
           metadata: {
             user_id: userId,
             plan_key: planKey,
+            checkout_attempt_id: checkoutAttemptId,
           },
           subscription_data: {
             metadata: {
@@ -337,13 +402,15 @@ router.post(
               plan_key: planKey,
             },
           },
+        }, {
+          idempotencyKey:
+            `booksmart:subscription:${userId}:${checkoutAttemptId}`,
         });
 
       if (!session.url) {
         res.status(502).json({
           error: "checkout_url_missing",
-          message:
-            "Stripe did not return a checkout URL.",
+          message: "Stripe did not return a checkout URL.",
         });
         return;
       }
@@ -372,11 +439,12 @@ router.post(
   "/stripe/create-token-checkout",
   requireAuth,
   async (req, res) => {
-    const { packageKey, successUrl, cancelUrl } =
+    const { packageKey, successUrl, cancelUrl, checkoutAttemptId } =
       req.body as {
         packageKey?: string;
         successUrl?: string;
         cancelUrl?: string;
+        checkoutAttemptId?: string;
       };
 
     if (
@@ -390,11 +458,12 @@ router.post(
       return;
     }
 
-    const redirectError = validateRedirectUrls(
-      successUrl,
-      cancelUrl,
-    );
+    if (!isCheckoutAttemptId(checkoutAttemptId)) {
+      res.status(400).json({ error: "invalid_checkout_attempt_id" });
+      return;
+    }
 
+    const redirectError = validateRedirectUrls(successUrl, cancelUrl);
     if (redirectError) {
       res.status(400).json({
         error: "invalid_redirect_urls",
@@ -461,14 +530,18 @@ router.post(
             user_id: userId,
             package_key: packageKey,
             tokens: String(tokenPackage.tokens),
+            purchase_type: "token_package",
+            checkout_attempt_id: checkoutAttemptId,
           },
+        }, {
+          idempotencyKey:
+            `booksmart:tokens:${userId}:${checkoutAttemptId}`,
         });
 
       if (!session.url) {
         res.status(502).json({
           error: "checkout_url_missing",
-          message:
-            "Stripe did not return a checkout URL.",
+          message: "Stripe did not return a checkout URL.",
         });
         return;
       }
@@ -562,114 +635,12 @@ router.post(
       }
 
       if (session.mode === "payment") {
-        const tokens = Number(
-          session.metadata?.tokens ?? 0,
+        const result = await fulfillTokenCheckout(
+          stripe,
+          admin,
+          session,
         );
-
-        if (!Number.isFinite(tokens) || tokens <= 0) {
-          res.status(400).json({
-            error: "invalid_token_amount",
-          });
-          return;
-        }
-
-        const {
-          data: existingTransaction,
-          error: existingError,
-        } = await admin
-          .from("token_transactions")
-          .select("id")
-          .eq(
-            "stripe_checkout_session_id",
-            session.id,
-          )
-          .maybeSingle();
-
-        if (existingError) {
-          res.status(500).json({
-            error:
-              "token_transaction_lookup_failed",
-            message: existingError.message,
-          });
-          return;
-        }
-
-        if (existingTransaction) {
-          res.json({
-            status: "already_processed",
-            tokenBalance:
-              userRow.token_balance ?? 0,
-          });
-          return;
-        }
-
-        const newBalance =
-          (userRow.token_balance ?? 0) + tokens;
-
-        const packageKey =
-          session.metadata?.package_key as
-            | TokenPackageKey
-            | undefined;
-
-        const stripePriceId =
-          packageKey &&
-          TOKEN_PACKAGES[packageKey]
-            ? TOKEN_PACKAGES[packageKey].priceId
-            : null;
-
-        const { error: transactionError } =
-          await admin
-            .from("token_transactions")
-            .insert({
-              user_id: userId,
-              amount: tokens,
-              balance_after: newBalance,
-              type: "purchase",
-              status: "posted",
-              use_case: `${tokens} tokens`,
-              stripe_customer_id:
-                typeof session.customer === "string"
-                  ? session.customer
-                  : session.customer?.id,
-              stripe_payment_intent_id:
-                typeof session.payment_intent ===
-                "string"
-                  ? session.payment_intent
-                  : session.payment_intent?.id,
-              stripe_checkout_session_id:
-                session.id,
-              stripe_price_id: stripePriceId,
-            });
-
-        if (transactionError) {
-          res.status(500).json({
-            error:
-              "token_transaction_insert_failed",
-            message: transactionError.message,
-          });
-          return;
-        }
-
-        const { error: balanceError } = await admin
-          .from("users")
-          .update({
-            token_balance: newBalance,
-          })
-          .eq("auth_id", userId);
-
-        if (balanceError) {
-          res.status(500).json({
-            error: "token_balance_update_failed",
-            message: balanceError.message,
-          });
-          return;
-        }
-
-        res.json({
-          status: "tokens_granted",
-          tokenBalance: newBalance,
-          tokensAdded: tokens,
-        });
+        res.json(result);
         return;
       }
 

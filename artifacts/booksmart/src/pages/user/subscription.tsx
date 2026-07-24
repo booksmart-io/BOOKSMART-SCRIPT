@@ -1,12 +1,31 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Check, Loader2 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { invalidatePaymentQueries } from "@/lib/payment-query-cache";
 
 type PlanKey = "plus" | "pro";
+type SubscriptionStatus = {
+  tier: "free" | "plus" | "pro";
+  tokenBalance: number;
+  subscription: {
+    status: string;
+    stripe_price_id: string | null;
+    current_period_end: string | null;
+    cancel_at_period_end: boolean;
+  } | null;
+};
 
 const PLAN_FEATURES: Record<"free" | PlanKey, string[]> = {
   free: [
@@ -49,12 +68,28 @@ async function fetchStatus() {
     headers: { Authorization: `Bearer ${token}` },
   });
   if (!res.ok) return null;
-  return res.json() as Promise<{ tier: "free" | "plus" | "pro"; tokenBalance: number }>;
+  return res.json() as Promise<SubscriptionStatus>;
+}
+
+function formatBillingDate(value: string | null | undefined) {
+  if (!value) return null;
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return null;
+  return new Intl.DateTimeFormat(undefined, {
+    month: "long",
+    day: "numeric",
+    year: "numeric",
+  }).format(date);
 }
 
 export default function Subscription() {
   const queryClient = useQueryClient();
   const [loadingPlan, setLoadingPlan] = useState<PlanKey | null>(null);
+  const [downgradeOpen, setDowngradeOpen] = useState(false);
+  const [subscriptionAction, setSubscriptionAction] =
+    useState<"cancel" | "resume" | null>(null);
+  const checkoutInFlight = useRef(false);
+  const subscriptionActionInFlight = useRef(false);
 
   const { data: status } = useQuery({
     queryKey: ["stripe_status"],
@@ -62,6 +97,12 @@ export default function Subscription() {
   });
 
   const currentTier = status?.tier ?? "free";
+  const cancellationPending =
+    currentTier !== "free" &&
+    status?.subscription?.cancel_at_period_end === true;
+  const billingEndDate = formatBillingDate(
+    status?.subscription?.current_period_end,
+  );
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -80,7 +121,7 @@ export default function Subscription() {
       const data = await res.json();
       if (res.ok) {
         toast.success("Subscription activated!");
-        queryClient.invalidateQueries({ queryKey: ["stripe_status"] });
+        invalidatePaymentQueries(queryClient);
       } else {
         toast.error(data.error === "payment_not_completed" ? "Payment not completed yet." : "Could not confirm subscription.");
       }
@@ -89,6 +130,8 @@ export default function Subscription() {
   }, [queryClient]);
 
   async function handleUpgrade(planKey: PlanKey) {
+    if (checkoutInFlight.current) return;
+    checkoutInFlight.current = true;
     setLoadingPlan(planKey);
     try {
       const token = await getAuthToken();
@@ -101,20 +144,75 @@ export default function Subscription() {
       const path = window.location.pathname;
       const successUrl = `${origin}${path}?checkout=success`;
       const cancelUrl = `${origin}${path}?checkout=cancelled`;
+      const checkoutAttemptId = crypto.randomUUID();
 
       const res = await fetch("/api/stripe/create-checkout-session", {
         method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ planKey, successUrl, cancelUrl }),
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          planKey,
+          successUrl,
+          cancelUrl,
+          checkoutAttemptId,
+        }),
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (!res.ok || !data.url) {
-        toast.error(data.error ?? "Could not start checkout.");
+        toast.error(data.message ?? data.error ?? "Could not start checkout.");
         return;
       }
       window.location.href = data.url;
     } finally {
+      checkoutInFlight.current = false;
       setLoadingPlan(null);
+    }
+  }
+
+  async function updateCancellation(
+    action: "cancel" | "resume",
+  ) {
+    if (subscriptionActionInFlight.current) return;
+    subscriptionActionInFlight.current = true;
+    setSubscriptionAction(action);
+    try {
+      const token = await getAuthToken();
+      if (!token) {
+        toast.error("Please sign in again.");
+        return;
+      }
+
+      const endpoint = action === "cancel"
+        ? "/api/stripe/cancel-subscription"
+        : "/api/stripe/resume-subscription";
+      const res = await fetch(endpoint, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast.error(
+          data.message ??
+            (action === "cancel"
+              ? "Could not schedule the downgrade."
+              : "Could not cancel the downgrade."),
+        );
+        return;
+      }
+
+      invalidatePaymentQueries(queryClient);
+      await queryClient.refetchQueries({ queryKey: ["stripe_status"] });
+      setDowngradeOpen(false);
+      toast.success(
+        action === "cancel"
+          ? "Downgrade scheduled."
+          : "Your paid plan will continue.",
+      );
+    } finally {
+      subscriptionActionInFlight.current = false;
+      setSubscriptionAction(null);
     }
   }
 
@@ -126,6 +224,29 @@ export default function Subscription() {
           Choose the plan that fits your business needs. Upgrade anytime to unlock AI insights and priority CPA matching.
         </p>
       </div>
+
+      {cancellationPending && (
+        <div className="flex flex-col gap-4 rounded-lg border border-amber-500/40 bg-amber-500/10 p-5 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <p className="font-bold text-amber-200">Downgrade scheduled</p>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Your {currentTier === "pro" ? "Pro" : "Plus"} plan remains active
+              {billingEndDate
+                ? ` until ${billingEndDate}. After that, your account will move to Free.`
+                : " until the end of the current billing period. After that, your account will move to Free."}
+            </p>
+          </div>
+          <Button
+            variant="outline"
+            disabled={subscriptionAction !== null}
+            onClick={() => updateCancellation("resume")}
+          >
+            {subscriptionAction === "resume"
+              ? <Loader2 className="h-4 w-4 animate-spin" />
+              : "Cancel Downgrade"}
+          </Button>
+        </div>
+      )}
 
       <div className="grid md:grid-cols-3 gap-8 mt-8">
         <Card className="border-border/50 flex flex-col">
@@ -150,8 +271,17 @@ export default function Subscription() {
             </ul>
           </CardContent>
           <CardFooter>
-            <Button variant="outline" className="w-full" disabled={currentTier === "free"}>
-              {currentTier === "free" ? "Current Plan" : "Downgrade"}
+            <Button
+              variant="outline"
+              className="w-full"
+              disabled={currentTier === "free" || cancellationPending || subscriptionAction !== null}
+              onClick={() => setDowngradeOpen(true)}
+            >
+              {currentTier === "free"
+                ? "Current Plan"
+                : cancellationPending
+                  ? "Downgrade Scheduled"
+                  : "Downgrade to Free"}
             </Button>
           </CardFooter>
         </Card>
@@ -160,6 +290,11 @@ export default function Subscription() {
           <CardHeader>
             <CardTitle className="text-2xl">Plus</CardTitle>
             <CardDescription>Tax optimization for growing businesses.</CardDescription>
+            {currentTier === "plus" && cancellationPending && (
+              <p className="text-sm font-semibold text-amber-300">
+                Current Plan · Downgrade scheduled
+              </p>
+            )}
             <div className="mt-4 flex items-baseline text-4xl font-bold">
               $9.99
               <span className="text-lg text-muted-foreground font-normal ml-1">/mo</span>
@@ -184,7 +319,7 @@ export default function Subscription() {
               disabled={currentTier === "plus" || loadingPlan !== null}
               onClick={() => handleUpgrade("plus")}
             >
-              {loadingPlan === "plus" ? <Loader2 className="h-4 w-4 animate-spin" /> : currentTier === "plus" ? "Current Plan" : "Upgrade to Plus"}
+              {loadingPlan === "plus" ? <Loader2 className="h-4 w-4 animate-spin" /> : currentTier === "plus" ? "Current Plan" : currentTier === "pro" ? "Change to Plus" : "Upgrade to Plus"}
             </Button>
           </CardFooter>
         </Card>
@@ -196,6 +331,11 @@ export default function Subscription() {
           <CardHeader>
             <CardTitle className="text-2xl text-primary">Pro</CardTitle>
             <CardDescription>The complete financial operating system.</CardDescription>
+            {currentTier === "pro" && cancellationPending && (
+              <p className="text-sm font-semibold text-amber-300">
+                Current Plan · Downgrade scheduled
+              </p>
+            )}
             <div className="mt-4 flex items-baseline text-4xl font-bold">
               $19.99
               <span className="text-lg text-muted-foreground font-normal ml-1">/mo</span>
@@ -215,11 +355,51 @@ export default function Subscription() {
           </CardContent>
           <CardFooter>
             <Button className="w-full" disabled={currentTier === "pro" || loadingPlan !== null} onClick={() => handleUpgrade("pro")}>
-              {loadingPlan === "pro" ? <Loader2 className="h-4 w-4 animate-spin" /> : currentTier === "pro" ? "Current Plan" : "Upgrade to Pro"}
+              {loadingPlan === "pro" ? <Loader2 className="h-4 w-4 animate-spin" /> : currentTier === "pro" ? "Current Plan" : currentTier === "plus" ? "Change to Pro" : "Upgrade to Pro"}
             </Button>
           </CardFooter>
         </Card>
       </div>
+
+      <Dialog
+        open={downgradeOpen}
+        onOpenChange={(open) => {
+          if (subscriptionAction === null) setDowngradeOpen(open);
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Downgrade to Free?</DialogTitle>
+            <DialogDescription className="pt-2">
+              Your {currentTier === "pro" ? "Pro" : "Plus"} plan will remain
+              active
+              {billingEndDate
+                ? ` until ${billingEndDate}.`
+                : " until the end of your current billing period."}
+              {" "}You will not be charged again after that date, and no
+              automatic refund will be issued.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              disabled={subscriptionAction !== null}
+              onClick={() => setDowngradeOpen(false)}
+            >
+              Keep My Plan
+            </Button>
+            <Button
+              variant="destructive"
+              disabled={subscriptionAction !== null}
+              onClick={() => updateCancellation("cancel")}
+            >
+              {subscriptionAction === "cancel"
+                ? <Loader2 className="h-4 w-4 animate-spin" />
+                : "Downgrade to Free"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

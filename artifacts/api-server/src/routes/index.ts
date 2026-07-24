@@ -17,6 +17,8 @@ import plaidRouter from "./plaid";
 import tokenUnlocksRouter from "./token-unlocks";
 import referralsRouter from "./referrals";
 import financialStatementsRouter from "./financial-statements";
+import businessDocumentRouter from "./business-document";
+import avatarRouter from "./avatar";
 
 const router: IRouter = Router();
 
@@ -38,5 +40,7 @@ router.use(plaidRouter);
 router.use(tokenUnlocksRouter);
 router.use(referralsRouter);
 router.use(financialStatementsRouter);
+router.use(businessDocumentRouter);
+router.use(avatarRouter);
 
 export default router;

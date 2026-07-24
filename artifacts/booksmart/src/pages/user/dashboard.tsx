@@ -7,12 +7,15 @@ import { useToast } from "@/hooks/use-toast";
 import { calculateFinancialReport } from "@/lib/financial-engine";
 import { pickActiveOrganization, useActiveOrganizationId } from "@/lib/active-organization";
 import BusinessSurveyDialog from "@/components/business-survey-dialog";
+import { dashboardOnboarding } from "@/lib/dashboard-onboarding";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
   Flame, Star, Lock, Coins, FileText, BarChart2, MessageSquare, Lightbulb,
   CreditCard, Upload, ShieldCheck, Loader2, Sparkles, ArrowRight, Wallet,
   CheckCircle2, CircleAlert, Landmark,
+  ClipboardList,
 } from "lucide-react";
 
 // Types
@@ -167,6 +170,7 @@ export default function UserDashboard() {
   const [insightLoading, setInsightLoading] = useState(false);
   const [insightUnlocked, setInsightUnlocked] = useState(false);
   const [surveyOpen, setSurveyOpen] = useState(false);
+  const [surveyIntroOpen, setSurveyIntroOpen] = useState(false);
 
   // Org lookup
   const { data: orgData, isLoading: orgLoading } = useQuery<{ id: number } | null>({
@@ -181,6 +185,19 @@ export default function UserDashboard() {
     },
   });
   const orgId = orgData?.id ?? null;
+  const { data: surveyStatusRows = [] } = useQuery<Array<{ survey_key: string; status: string; current_section_key: string | null }>>({
+    queryKey: ["survey_setup_status", orgId],
+    enabled: orgId != null,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("organization_survey_progress")
+        .select("survey_key,status,current_section_key")
+        .eq("organization_id", orgId!)
+        .eq("survey_version", 1);
+      if (error) throw error;
+      return data ?? [];
+    },
+  });
 
   useEffect(() => { console.log("[dashboard] numericId:", numericId, "orgId:", orgId); }, [numericId, orgId]);
 
@@ -194,7 +211,7 @@ export default function UserDashboard() {
     const pendingSurveyOrgId = Number(window.sessionStorage.getItem("booksmart:start-business-survey"));
     if (pendingSurveyOrgId !== orgId) return;
     window.sessionStorage.removeItem("booksmart:start-business-survey");
-    setSurveyOpen(true);
+    setSurveyIntroOpen(true);
   }, [orgId]);
 
   // Real-time tx updates
@@ -450,16 +467,25 @@ export default function UserDashboard() {
     },
   ];
 
+  const onboarding = dashboardOnboarding({
+    accountExists: !!user && numericId !== null,
+    businessInformationComplete: orgId !== null,
+    surveyStatuses: surveyStatusRows.map(({ status }) => status),
+    surveyReachedEnd: surveyStatusRows.length >= 2
+      && surveyStatusRows.every(({ current_section_key }) => current_section_key === null),
+    connectedBankCount,
+    transactionCount: allTxCount,
+  });
   const readinessItems = [
-    { label: "Business profile", detail: orgId ? "Active business selected" : "Create a business profile", complete: orgId !== null },
-    { label: "User profile", detail: profileComplete ? "Name and phone saved" : "Add name and phone", complete: profileComplete },
-    { label: "Bank connection", detail: connectedBankCount > 0 ? `${connectedBankCount} connected` : "No bank connected yet", complete: connectedBankCount > 0 },
-    { label: "Documents", detail: docCount > 0 ? `${docCount} uploaded` : "Upload financial or tax documents", complete: docCount > 0 },
-    { label: "Transactions", detail: allTxCount > 0 ? `${allTxCount} available` : "Upload or sync transactions", complete: allTxCount > 0 },
-    { label: "Categories", detail: uncategorizedCount === 0 && allTxCount > 0 ? "All transactions categorized" : `${uncategorizedCount} need review`, complete: uncategorizedCount === 0 && allTxCount > 0 },
+    { label: "Account created", detail: user && numericId ? "Your BookSmart account is active" : "Finish creating your account", complete: !!user && numericId !== null },
+    { label: "Business information", detail: orgId ? "Active business profile completed" : "Complete your business profile", complete: orgId !== null },
+    { label: "Business survey", detail: onboarding.surveyLabel, complete: onboarding.surveyComplete },
+    { label: "Connect bank account", detail: connectedBankCount > 0 ? `${connectedBankCount} active connection${connectedBankCount === 1 ? "" : "s"}` : "No business bank connected", complete: connectedBankCount > 0 },
+    { label: "Import first transactions", detail: allTxCount > 0 ? `${allTxCount} transaction${allTxCount === 1 ? "" : "s"} available` : "Waiting for a bank sync or statement import", complete: allTxCount > 0 },
   ];
-  const readinessComplete = readinessItems.filter(item => item.complete).length;
-  const readinessPct = Math.round((readinessComplete / readinessItems.length) * 100);
+  const readinessComplete = onboarding.completedCount;
+  const readinessPct = onboarding.percent;
+  const nextSetupAction = onboarding.nextAction;
 
   // AI Insight unlock
   async function unlockAiInsight() {
@@ -529,19 +555,30 @@ difficulty must be "Easy", "Medium", or "Hard". savings is a USD number.`;
   // Render
   return (
     <div className="min-h-0">
-      <div className="relative -top-2 mb-2 flex justify-start sm:-top-9 sm:mb-0 sm:h-0 sm:justify-end items-center gap-5 pr-1 text-[14px] font-semibold">
-        <span className="flex items-center gap-1">
-          <Flame className="h-[15px] w-[15px] text-orange-500" />
-          Streak: {streakDays} day{streakDays !== 1 ? "s" : ""}
-        </span>
-        <span className="flex items-center gap-1 text-primary">
-          <Star className="h-[15px] w-[15px] fill-primary text-primary" />
-          {xpTotal.toLocaleString()} XP
-        </span>
+      <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <p className="text-[12px] font-medium uppercase tracking-[0.18em] text-primary">BookSmart dashboard</p>
+          <h1 className="mt-1 text-2xl font-bold tracking-tight text-foreground">
+            Welcome back, {firstName}
+          </h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Here’s the latest snapshot of your business and setup progress.
+          </p>
+        </div>
+        <div className="flex items-center gap-4 pr-1 text-[13px] font-semibold">
+          <span className="flex items-center gap-1.5 rounded-full border border-orange-400/20 bg-orange-400/10 px-3 py-1.5">
+            <Flame className="h-[15px] w-[15px] text-orange-500" />
+            {streakDays} day streak
+          </span>
+          <span className="flex items-center gap-1.5 rounded-full border border-primary/20 bg-primary/10 px-3 py-1.5 text-primary">
+            <Star className="h-[15px] w-[15px] fill-primary text-primary" />
+            {xpTotal.toLocaleString()} XP
+          </span>
+        </div>
       </div>
 
       {/* 2-column grid: main content + right sidebar */}
-      <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_350px]">
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_350px]">
 
         {/* LEFT / MAIN */}
         <div className="space-y-4 min-w-0">
@@ -606,16 +643,35 @@ difficulty must be "Easy", "Medium", or "Hard". savings is a USD number.`;
 
             {/* Today's Missions */}
             <Card>
-              <CardContent className="p-0 min-h-[316px]">
-                <div className="px-5 pt-4 pb-3">
+              <CardContent className="p-0">
+                <div className="px-5 pt-4 pb-2.5">
                   <p className="text-[15px] font-bold">Action Center</p>
                   <p className="text-[12px] text-muted-foreground mt-1">Quick access to the setup and finance tasks that are live now.</p>
                 </div>
-                <div className="px-4 pb-4 space-y-2">
+                <div className="space-y-1.5 px-4 pb-4">
+                  <button
+                    type="button"
+                    onClick={() => setSurveyOpen(true)}
+                    disabled={!orgId}
+                    className="flex w-full items-center gap-3 rounded-xl bg-muted/12 px-3 py-2.5 text-left transition-colors hover:bg-muted/20 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg bg-primary/15 text-primary">
+                      <ClipboardList className="h-5 w-5" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-[13px] font-semibold">Complete your BookSmart setup</p>
+                      <p className="mt-0.5 truncate text-[11px] text-muted-foreground">
+                        {onboarding.surveyComplete ? "Business Survey and Balance Sheet Profile complete" : "Continue your organization-specific survey"}
+                      </p>
+                    </div>
+                    <span className="whitespace-nowrap text-[12px] font-semibold text-primary">
+                      {onboarding.surveyComplete ? "Review Answers" : "Continue Survey"}
+                    </span>
+                  </button>
                   {actionItems.map(item => (
                     <Link key={item.title} href={item.href}>
-                      <div className="flex items-center gap-3 rounded-xl bg-muted/12 px-3 py-3 transition-colors hover:bg-muted/20 cursor-pointer">
-                        <div className={`h-10 w-10 flex-shrink-0 rounded-lg flex items-center justify-center ${item.iconBg}`}>
+                      <div className="flex items-center gap-3 rounded-xl bg-muted/12 px-3 py-2.5 transition-colors hover:bg-muted/20 cursor-pointer">
+                        <div className={`h-9 w-9 flex-shrink-0 rounded-lg flex items-center justify-center ${item.iconBg}`}>
                           {item.icon}
                         </div>
                         <div className="min-w-0 flex-1">
@@ -632,7 +688,7 @@ difficulty must be "Easy", "Medium", or "Hard". savings is a USD number.`;
 
             {/* AI Insight */}
             <Card style={{ background: "linear-gradient(135deg, #020e2c 0%, #071f4a 50%, #061a3d 100%)", borderColor: "rgba(255,255,255,0.08)" }}>
-              <CardContent className="p-5 min-h-[316px] flex flex-col items-center justify-center text-center gap-1.5">
+              <CardContent className="flex flex-col items-center gap-1.5 p-5 text-center">
                 <p className="text-[15px] font-bold text-white">AI Insight</p>
                 <p className="text-[12px] text-white/60">Maximize Your Business Savings Potential!</p>
 
@@ -704,8 +760,14 @@ difficulty must be "Easy", "Medium", or "Hard". savings is a USD number.`;
                 <div className="px-5 pt-4 pb-3">
                   <div className="flex items-center justify-between gap-3">
                     <div>
-                      <p className="text-[15px] font-bold">Business Readiness</p>
-                      <p className="text-[12px] text-muted-foreground mt-1">{readinessComplete} of {readinessItems.length} setup items complete</p>
+                      <p className="text-[15px] font-bold">
+                        {readinessPct === 100 ? "BookSmart setup complete" : `Complete your BookSmart setup — ${readinessPct}%`}
+                      </p>
+                      <p className="text-[12px] text-muted-foreground mt-1">
+                        {readinessPct === 100
+                          ? "Your active business is ready to use."
+                          : `${readinessComplete} of ${readinessItems.length} milestones complete`}
+                      </p>
                     </div>
                     <span className="text-[20px] font-bold text-primary">{readinessPct}%</span>
                   </div>
@@ -713,9 +775,9 @@ difficulty must be "Easy", "Medium", or "Hard". savings is a USD number.`;
                     <div className="h-full bg-primary rounded-full transition-all duration-700" style={{ width: `${readinessPct}%` }} />
                   </div>
                 </div>
-                <div className="px-4 pb-4 space-y-2">
-                  {readinessItems.map(item => (
-                    <div key={item.label} className="flex items-center gap-3 rounded-xl bg-muted/10 px-3 py-2.5">
+                <div className={`px-4 pb-4 ${readinessPct === 100 ? "space-y-0" : "space-y-1.5"}`}>
+                  {readinessPct < 100 && readinessItems.map(item => (
+                    <div key={item.label} className="flex items-center gap-3 rounded-xl bg-muted/10 px-3 py-2">
                       <div className={`h-8 w-8 rounded-full flex items-center justify-center flex-shrink-0 ${item.complete ? "bg-emerald-500/15" : "bg-amber-500/15"}`}>
                         {item.complete
                           ? <CheckCircle2 className="h-4 w-4 text-emerald-400" />
@@ -727,40 +789,94 @@ difficulty must be "Easy", "Medium", or "Hard". savings is a USD number.`;
                       </div>
                     </div>
                   ))}
+                  {nextSetupAction === "survey" && (
+                    <Button className="mt-2.5 w-full" onClick={() => setSurveyOpen(true)}>
+                      {onboarding.surveyInProgress ? "Continue Survey" : "Start Survey"}
+                    </Button>
+                  )}
+                  {nextSetupAction === "bank" && (
+                    <div className="mt-2.5 rounded-xl border border-primary/25 bg-primary/5 p-3">
+                      <p className="text-sm font-semibold">Connect your business bank account</p>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        Securely connect your bank to automatically import transactions into BookSmart.
+                      </p>
+                      <div className="mt-2.5 flex flex-col gap-2 sm:flex-row">
+                        <Button onClick={() => setLocation("/user/reports?tab=transactions&setupAction=connect-bank")}>
+                          Connect Bank Account
+                        </Button>
+                        <Button variant="outline" onClick={() => setLocation("/user/reports?tab=transactions&setupAction=upload-statement")}>
+                          Upload Bank Statement
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+                  {nextSetupAction === "transactions" && (
+                    <div className="mt-2.5 rounded-xl border border-amber-500/25 bg-amber-500/5 p-3">
+                      <p className="text-sm font-semibold">Waiting for your first transactions</p>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        Your bank is connected. BookSmart will update this milestone when real transactions arrive.
+                      </p>
+                      <Button className="mt-2.5" variant="outline" onClick={() => setLocation("/user/reports?tab=transactions&setupAction=upload-statement")}>
+                        Upload Bank Statement
+                      </Button>
+                    </div>
+                  )}
+                  {nextSetupAction === "complete" && (
+                    <p className="rounded-xl bg-emerald-500/10 px-3 py-2.5 text-xs text-emerald-300">
+                      All onboarding milestones are complete. Normal bank and transaction management remains available in Reports.
+                    </p>
+                  )}
                 </div>
               </CardContent>
             </Card>
 
-            <Card>
-              <CardContent className="p-5 min-h-[300px] flex flex-col">
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <p className="text-[15px] font-bold">Current Plan</p>
-                    <p className="text-[12px] text-muted-foreground mt-1">Subscription and token access for this account.</p>
+            <Card className="relative h-full overflow-hidden">
+              <div className="pointer-events-none absolute -right-16 -top-20 h-48 w-48 rounded-full bg-primary/10 blur-3xl" />
+              <div className="pointer-events-none absolute -bottom-20 -left-16 h-48 w-48 rounded-full bg-blue-500/10 blur-3xl" />
+              <CardContent className="relative flex h-full flex-col p-5">
+                <div className="flex items-start justify-between gap-3 border-b border-border/30 pb-4">
+                  <div className="flex items-start gap-3">
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-primary/25 bg-primary/10">
+                      <Sparkles className="h-5 w-5 text-primary" />
+                    </div>
+                    <div>
+                      <p className="text-[15px] font-bold">Current Plan</p>
+                      <p className="mt-1 text-[12px] text-muted-foreground">Subscription and token access for this account.</p>
+                    </div>
                   </div>
-                  <span className="rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-[12px] font-bold text-primary">{planLabel}</span>
+                  <span className="rounded-full border border-primary/35 bg-primary/10 px-3 py-1 text-[12px] font-bold text-primary shadow-[0_0_18px_rgba(250,204,21,0.08)]">{planLabel}</span>
                 </div>
 
-                <div className="mt-5 grid grid-cols-2 gap-3">
-                  <div className="rounded-xl bg-muted/10 p-4">
-                    <p className="text-[11px] text-muted-foreground">Tokens</p>
-                    <p className="text-[24px] font-bold mt-1">{liveTokens}</p>
-                  </div>
-                  <div className="rounded-xl bg-muted/10 p-4">
-                    <p className="text-[11px] text-muted-foreground">Banks</p>
-                    <p className="text-[24px] font-bold mt-1">{connectedBankCount}</p>
-                  </div>
-                  <div className="rounded-xl bg-muted/10 p-4">
-                    <p className="text-[11px] text-muted-foreground">Documents</p>
-                    <p className="text-[24px] font-bold mt-1">{docCount}</p>
-                  </div>
-                  <div className="rounded-xl bg-muted/10 p-4">
-                    <p className="text-[11px] text-muted-foreground">Transactions</p>
-                    <p className="text-[24px] font-bold mt-1">{allTxCount}</p>
+                <div className="mt-4 grid grid-cols-2 gap-3">
+                  {[
+                    { label: "Tokens", value: liveTokens, icon: Coins, tone: "text-amber-300 bg-amber-400/10 border-amber-400/20" },
+                    { label: "Banks", value: connectedBankCount, icon: Landmark, tone: "text-emerald-300 bg-emerald-400/10 border-emerald-400/20" },
+                    { label: "Documents", value: docCount, icon: FileText, tone: "text-blue-300 bg-blue-400/10 border-blue-400/20" },
+                    { label: "Transactions", value: allTxCount, icon: CreditCard, tone: "text-violet-300 bg-violet-400/10 border-violet-400/20" },
+                  ].map(({ label, value, icon: MetricIcon, tone }) => (
+                    <div key={label} className="rounded-xl border border-border/35 bg-background/20 p-3.5 shadow-sm">
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-[11px] font-medium text-muted-foreground">{label}</p>
+                        <div className={`flex h-7 w-7 items-center justify-center rounded-lg border ${tone}`}>
+                          <MetricIcon className="h-3.5 w-3.5" />
+                        </div>
+                      </div>
+                      <p className="mt-2 text-[24px] font-bold leading-none">{value}</p>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="mt-4 rounded-xl border border-border/35 bg-muted/10 p-3.5">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="text-[12px] font-semibold">{planLabel} workspace</p>
+                      <p className="mt-0.5 text-[11px] text-muted-foreground">Manage billing, usage, and additional BookSmart tokens.</p>
+                    </div>
+                    <ShieldCheck className="h-5 w-5 shrink-0 text-primary" />
                   </div>
                 </div>
 
-                <div className="mt-auto pt-5 flex flex-col gap-2 sm:flex-row">
+                <div className="mt-auto flex flex-col gap-2 pt-4 sm:flex-row">
                   <Link href="/user/subscription" className="flex-1">
                     <Button className="w-full">{planTier === "pro" ? "Manage Plan" : "Upgrade Plan"}</Button>
                   </Link>
@@ -896,6 +1012,75 @@ difficulty must be "Easy", "Medium", or "Hard". savings is a USD number.`;
             </CardContent>
           </Card>
 
+          {/* Recent Activity */}
+          <Card>
+            <CardContent className="p-4">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-[13px] font-bold">Recent Activity</p>
+                  <p className="mt-0.5 text-[10px] text-muted-foreground">Latest activity for the active business.</p>
+                </div>
+                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-primary/20 bg-primary/10">
+                  <BarChart2 className="h-4 w-4 text-primary" />
+                </div>
+              </div>
+
+              {recentTxs.length > 0 ? (
+                <div className="mt-3 space-y-1.5">
+                  {recentTxs.slice(0, 4).map((transaction) => (
+                    <div key={transaction.id} className="flex items-center gap-2.5 rounded-lg bg-muted/10 px-2.5 py-2">
+                      <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${
+                        transaction.amount >= 0 ? "bg-emerald-500/10 text-emerald-400" : "bg-orange-500/10 text-orange-400"
+                      }`}>
+                        <CreditCard className="h-3.5 w-3.5" />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-[11px] font-semibold">{transaction.title || "Transaction"}</p>
+                        <p className="text-[9px] text-muted-foreground">
+                          {new Date(transaction.date_time).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
+                        </p>
+                      </div>
+                      <span className={`shrink-0 text-[11px] font-bold ${
+                        transaction.amount >= 0 ? "text-emerald-400" : "text-foreground"
+                      }`}>
+                        {formatMoney(transaction.amount)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="mt-3 rounded-xl border border-dashed border-border/50 bg-muted/5 px-4 py-5 text-center">
+                  <CreditCard className="mx-auto h-5 w-5 text-muted-foreground" />
+                  <p className="mt-2 text-[11px] font-semibold">No transaction activity yet</p>
+                  <p className="mt-1 text-[10px] leading-relaxed text-muted-foreground">
+                    Connected bank transactions and statement imports will appear here.
+                  </p>
+                </div>
+              )}
+
+              <div className="mt-3 grid grid-cols-2 gap-2">
+                <div className="rounded-lg border border-border/30 bg-muted/5 px-2.5 py-2">
+                  <div className="flex items-center gap-1.5 text-[9px] text-muted-foreground">
+                    <FileText className="h-3 w-3 text-blue-400" /> Documents
+                  </div>
+                  <p className="mt-1 text-[13px] font-bold">{docCount}</p>
+                </div>
+                <div className="rounded-lg border border-border/30 bg-muted/5 px-2.5 py-2">
+                  <div className="flex items-center gap-1.5 text-[9px] text-muted-foreground">
+                    <Landmark className="h-3 w-3 text-emerald-400" /> Banks
+                  </div>
+                  <p className="mt-1 text-[13px] font-bold">{connectedBankCount}</p>
+                </div>
+              </div>
+
+              <Link href="/user/reports?tab=transactions">
+                <button className="mt-3 w-full rounded-lg border border-border/40 py-2 text-[11px] font-medium text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground">
+                  View all transactions
+                </button>
+              </Link>
+            </CardContent>
+          </Card>
+
           {/* Your CPA (active orders) */}
           {activeOrders.length > 0 && (
             <Card>
@@ -929,8 +1114,21 @@ difficulty must be "Easy", "Medium", or "Hard". savings is a USD number.`;
         </div>
       </div>
 
-      {/* Hidden username usage to silence linter */}
-      <span className="hidden">{firstName}</span>
+      <Dialog open={surveyIntroOpen} onOpenChange={setSurveyIntroOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Help BookSmart personalize your experience</DialogTitle>
+            <DialogDescription>
+              We’ll ask a few questions about your business, tax situation, assets, and financial setup.
+              Estimated time: 8–12 minutes.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+            <Button variant="ghost" onClick={() => setSurveyIntroOpen(false)}>I’ll do this later</Button>
+            <Button onClick={() => { setSurveyIntroOpen(false); setSurveyOpen(true); }}>Start Survey</Button>
+          </div>
+        </DialogContent>
+      </Dialog>
       <BusinessSurveyDialog
         orgId={orgId}
         open={surveyOpen}

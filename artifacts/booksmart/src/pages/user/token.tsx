@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   BarChart2,
   Building2,
@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { invalidatePaymentQueries } from "@/lib/payment-query-cache";
 
 import { Button } from "@/components/ui/button";
 import { supabase } from "@/lib/supabase";
@@ -218,6 +219,7 @@ function usageRows(data: PlanUsage | null | undefined) {
 
 export default function Token() {
   const queryClient = useQueryClient();
+  const checkoutInFlight = useRef(false);
   const [loadingPackage, setLoadingPackage] = useState<PackageKey | null>(null);
   const [selectedPackage, setSelectedPackage] = useState<PackageKey>("tokens_professional");
   const [showAllHistory, setShowAllHistory] = useState(false);
@@ -266,7 +268,7 @@ export default function Token() {
       });
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
-        toast.success(data.tokensAdded ? `+${data.tokensAdded} tokens added!` : "Tokens added!");
+        toast.success(data.tokensAdded ? `+${data.tokensAdded} tokens added!` : "Token purchase confirmed.");
         refreshTokenData();
       } else {
         toast.error(data.error === "payment_not_completed" ? "Payment not completed yet." : data.message ?? "Could not confirm purchase.");
@@ -277,13 +279,12 @@ export default function Token() {
   }, []);
 
   function refreshTokenData() {
-    queryClient.invalidateQueries({ queryKey: ["stripe_status"] });
-    queryClient.invalidateQueries({ queryKey: ["token_transactions"] });
-    queryClient.invalidateQueries({ queryKey: ["token_unlock_summary"] });
-    queryClient.invalidateQueries({ queryKey: ["plan_limits_usage"] });
+    invalidatePaymentQueries(queryClient);
   }
 
   async function handleBuy(packageKey = selectedPackage) {
+    if (checkoutInFlight.current) return;
+    checkoutInFlight.current = true;
     setLoadingPackage(packageKey);
     try {
       const token = await getAuthToken();
@@ -296,11 +297,20 @@ export default function Token() {
       const path = window.location.pathname;
       const successUrl = `${origin}${path}?checkout=success`;
       const cancelUrl = `${origin}${path}?checkout=cancelled`;
+      const checkoutAttemptId = crypto.randomUUID();
 
       const res = await fetch("/api/stripe/create-token-checkout", {
         method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ packageKey, successUrl, cancelUrl }),
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          packageKey,
+          successUrl,
+          cancelUrl,
+          checkoutAttemptId,
+        }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data.url) {
@@ -309,6 +319,7 @@ export default function Token() {
       }
       window.location.href = data.url;
     } finally {
+      checkoutInFlight.current = false;
       setLoadingPackage(null);
     }
   }

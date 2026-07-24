@@ -5,6 +5,7 @@ import { supabase } from "@/lib/supabase";
 import { useToast } from "@/hooks/use-toast";
 import { useDeductionRuleSet, summarizeDeductions, type OrgRow } from "@/lib/deduction-engine";
 import { pickActiveOrganization, useActiveOrganizationId } from "@/lib/active-organization";
+import { liabilityBalanceEntries } from "@/lib/survey-liabilities";
 import {
   Card, CardContent, CardHeader, CardTitle, CardFooter,
 } from "@/components/ui/card";
@@ -219,7 +220,7 @@ function buildSurveyProfile(org: OrgRow | null | undefined): string {
       addArray("AI notification preferences", onboarding.ai_preferences);
     }
 
-    const debtEntries = Object.entries(debts).filter(([, v]) => typeof v === "number" && v > 0) as Array<[string, number]>;
+    const debtEntries = liabilityBalanceEntries(debts);
     if (debtEntries.length) {
       const debtStr = debtEntries.map(([k, v]) => `${k.replace(/_/g, " ")}: $${v.toFixed(0)}`).join(", ");
       lines.push(`- Outstanding business debts: ${debtStr}`);

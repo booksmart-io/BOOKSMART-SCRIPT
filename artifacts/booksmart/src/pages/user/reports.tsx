@@ -2440,6 +2440,7 @@ export default function Reports() {
   );
   const [cfShowPaid, setCfShowPaid] = useState(true);
   const searchStr = useSearch();
+  const setupActionHandled = useRef<string | null>(null);
   const [tab, setTab] = useState<Tab>(() => {
     const p = new URLSearchParams(searchStr);
     const t = p.get("tab");
@@ -3222,6 +3223,7 @@ Respond with ONLY valid JSON, no explanation:
                   "Could not connect bank",
               );
             queryClient.invalidateQueries({ queryKey: ["plaid_accounts"] });
+            queryClient.invalidateQueries({ queryKey: ["dashboard_connected_banks", orgId] });
 
             const syncRes = await fetch("/api/plaid/sync", {
               method: "POST",
@@ -3270,6 +3272,8 @@ Respond with ONLY valid JSON, no explanation:
             invalidateTransactionReports();
             queryClient.invalidateQueries({ queryKey: ["tx_deductions"] });
             queryClient.invalidateQueries({ queryKey: ["plaid_accounts"] });
+            queryClient.invalidateQueries({ queryKey: ["dashboard_connected_banks", orgId] });
+            queryClient.invalidateQueries({ queryKey: ["tx_count", orgId] });
             toast({
               title: "Bank connected",
               description: `Synced ${syncJson.added ?? 0} new transaction${(syncJson.added ?? 0) === 1 ? "" : "s"}. Categorized ${categorized}.`,
@@ -3304,6 +3308,22 @@ Respond with ONLY valid JSON, no explanation:
       setPlaidConnecting(false);
     }
   }
+
+  useEffect(() => {
+    if (!orgId) return;
+    const action = new URLSearchParams(searchStr).get("setupAction");
+    const actionKey = action ? `${orgId}:${action}` : null;
+    if (!actionKey || setupActionHandled.current === actionKey) return;
+    setupActionHandled.current = actionKey;
+    if (action === "connect-bank") {
+      void handleConnectBank();
+    } else if (action === "upload-statement") {
+      setUploadCategory("Transactions");
+      setShowUpload(true);
+    }
+  // The dashboard setup action is intentionally consumed once per organization.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orgId, searchStr]);
 
   // ── Current period transactions ─────────────────────────────────────────────
   const { data: connectedBanks = [], isLoading: accountsLoading } = useQuery<

@@ -20,6 +20,7 @@ type AuthContextType = {
   profile: UserProfile | null;
   isLoading: boolean;
   signOut: () => Promise<void>;
+  refreshProfile: () => Promise<void>;
 };
 
 const AuthContext = createContext<AuthContextType>({
@@ -28,6 +29,7 @@ const AuthContext = createContext<AuthContextType>({
   profile: null,
   isLoading: true,
   signOut: async () => {},
+  refreshProfile: async () => {},
 });
 
 export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
@@ -283,8 +285,14 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     await supabase.auth.signOut();
   };
 
+  const refreshProfile = async () => {
+    const authUuid = user?.id ?? (await supabase.auth.getUser()).data.user?.id;
+    if (!authUuid) throw new Error("No authenticated user is available.");
+    await fetchProfile(authUuid);
+  };
+
   return (
-    <AuthContext.Provider value={{ session, user, profile, isLoading, signOut }}>
+    <AuthContext.Provider value={{ session, user, profile, isLoading, signOut, refreshProfile }}>
       {children}
     </AuthContext.Provider>
   );

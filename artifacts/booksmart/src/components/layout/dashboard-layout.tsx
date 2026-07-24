@@ -9,6 +9,7 @@ import { useTheme } from "@/components/theme-provider";
 import { useUnreadCount } from "@/hooks/use-unread-count";
 import { SubscriptionUpgradePrompt } from "@/components/subscription-upgrade-prompt";
 import { Button } from "@/components/ui/button";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
   LayoutDashboard, Gem, Copy, Scissors, MapPin, Coins, MessageSquare, Globe,
   Settings, User, LogOut, DollarSign, ShieldCheck, Tags, Briefcase, Users,
@@ -29,9 +30,13 @@ export function DashboardLayout({ children, role }: DashboardLayoutProps) {
   const isDark = theme === "dark" || (theme === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);
   const unreadCount = useUnreadCount();
 
-  const firstName = (profile as any)?.first_name || profile?.email?.split("@")[0] || "";
-  const lastName = (profile as any)?.last_name || "";
-  const fullName = [firstName, lastName].filter(Boolean).join(" ") || profile?.email || "User";
+  const fullName = profile?.full_name || profile?.email || "User";
+  const avatarInitials = fullName
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase())
+    .join("") || "U";
 
   const navConfig = {
     user: {
@@ -235,11 +240,10 @@ export function DashboardLayout({ children, role }: DashboardLayoutProps) {
                 {/* User profile row */}
                 <div className="flex items-center gap-2.5 px-3 py-3 cursor-pointer hover:bg-sidebar-accent/50 transition-colors"
                   onClick={() => navigate("/cpa/profile")}>
-                  <div className="w-8 h-8 rounded-full bg-primary/20 border border-primary/30 flex items-center justify-center flex-shrink-0">
-                    <span className="text-[11px] font-bold text-primary">
-                      {fullName.slice(0, 2).toUpperCase()}
-                    </span>
-                  </div>
+                  <Avatar className="w-8 h-8 border border-primary/30 flex-shrink-0">
+                    {profile?.img_url && <AvatarImage src={profile.img_url} alt="" className="object-cover" />}
+                    <AvatarFallback className="bg-primary/20 text-[11px] font-bold text-primary">{avatarInitials}</AvatarFallback>
+                  </Avatar>
                   <div className="flex-1 min-w-0">
                     <p className="text-[12px] font-semibold text-sidebar-foreground truncate">{fullName}, CPA</p>
                     <p className="text-[10px] text-sidebar-foreground/50 truncate">Anderson Tax & Advisory</p>
@@ -316,9 +320,10 @@ export function DashboardLayout({ children, role }: DashboardLayoutProps) {
                   onClick={() => navigate("/cpa/profile")}
                   className="hidden md:flex items-center gap-2 pl-2 pr-3 py-1.5 rounded-full border border-border/40 hover:border-border/80 transition-colors"
                 >
-                  <div className="w-6 h-6 rounded-full bg-primary/20 flex items-center justify-center">
-                    <span className="text-[9px] font-bold text-primary">{fullName.slice(0, 2).toUpperCase()}</span>
-                  </div>
+                  <Avatar className="w-6 h-6">
+                    {profile?.img_url && <AvatarImage src={profile.img_url} alt="" className="object-cover" />}
+                    <AvatarFallback className="bg-primary/20 text-[9px] font-bold text-primary">{avatarInitials}</AvatarFallback>
+                  </Avatar>
                   <span className="text-xs font-medium text-foreground">{fullName}</span>
                   <ChevronRight className="h-3 w-3 text-muted-foreground rotate-90" />
                 </button>

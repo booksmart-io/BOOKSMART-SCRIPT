@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { Check, Loader2, Sparkles, X } from "lucide-react";
@@ -79,6 +79,7 @@ export function SubscriptionUpgradePrompt({ userId }: { userId?: number | null }
   const [location] = useLocation();
   const [open, setOpen] = useState(false);
   const [loadingPlan, setLoadingPlan] = useState<PlanKey | null>(null);
+  const checkoutInFlight = useRef(false);
 
   const storageKey = useMemo(
     () => `${PROMPT_STORAGE_PREFIX}:${userId ?? "anonymous"}`,
@@ -115,6 +116,8 @@ export function SubscriptionUpgradePrompt({ userId }: { userId?: number | null }
   }
 
   async function handleUpgrade(planKey: PlanKey) {
+    if (checkoutInFlight.current) return;
+    checkoutInFlight.current = true;
     setLoadingPlan(planKey);
     try {
       const token = await getAuthToken();
@@ -126,13 +129,22 @@ export function SubscriptionUpgradePrompt({ userId }: { userId?: number | null }
       const origin = window.location.origin;
       const successUrl = `${origin}/user/subscription?checkout=success`;
       const cancelUrl = `${origin}/user/subscription?checkout=cancelled`;
+      const checkoutAttemptId = crypto.randomUUID();
 
       const res = await fetch("/api/stripe/create-checkout-session", {
         method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ planKey, successUrl, cancelUrl }),
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          planKey,
+          successUrl,
+          cancelUrl,
+          checkoutAttemptId,
+        }),
       });
-      const data = await res.json() as { url?: string; error?: string; message?: string };
+      const data = await res.json().catch(() => ({}));
       if (!res.ok || !data.url) {
         toast.error(data.message ?? data.error ?? "Could not start checkout.");
         return;
@@ -140,6 +152,7 @@ export function SubscriptionUpgradePrompt({ userId }: { userId?: number | null }
       window.sessionStorage.setItem(storageKey, "1");
       window.location.href = data.url;
     } finally {
+      checkoutInFlight.current = false;
       setLoadingPlan(null);
     }
   }
@@ -204,7 +217,9 @@ export function SubscriptionUpgradePrompt({ userId }: { userId?: number | null }
                     <span className="text-sm text-muted-foreground"> /mo</span>
                   </div>
                   <Button className="w-full" onClick={() => handleUpgrade(planKey)} disabled={loadingPlan !== null}>
-                    {isLoadingPlan ? <Loader2 className="h-4 w-4 animate-spin" /> : `Select ${planKey === "pro" ? "Pro" : "Plus"}`}
+                    {isLoadingPlan ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : `Select ${planKey === "pro" ? "Pro" : "Plus"}`}
                   </Button>
                 </div>
               </div>

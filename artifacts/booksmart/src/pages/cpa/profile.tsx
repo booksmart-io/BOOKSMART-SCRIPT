@@ -1,12 +1,12 @@
 import { useEffect, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, BriefcaseBusiness, Camera, Check, ChevronDown, FileText, Loader2, Search, Trash2, Upload, X } from "lucide-react";
+import { ArrowLeft, BriefcaseBusiness, Check, ChevronDown, FileText, Loader2, Search, Trash2, Upload, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { ProfileAvatarUploader } from "@/components/profile-avatar-uploader";
 import { useAuth } from "@/hooks/use-auth";
 import { supabase } from "@/lib/supabase";
 import { toast } from "sonner";
@@ -259,23 +259,7 @@ export default function CpaProfile() {
         <div className="space-y-0">
           <CpaSection index={0} title="Personal Information" active={step === 0} onClick={() => setStep(0)}>
             <div className="space-y-8 pt-3">
-              <div className="flex justify-center">
-                <div className="relative">
-                  <Avatar className="h-28 w-28 bg-white text-muted-foreground">
-                    {cpaRow?.img_url && <AvatarImage src={cpaRow.img_url} />}
-                    <AvatarFallback className="bg-white text-muted-foreground">
-                      {initials === "C" ? <Camera className="h-8 w-8 text-muted-foreground/70" /> : <span className="text-3xl font-bold text-primary">{initials}</span>}
-                    </AvatarFallback>
-                  </Avatar>
-                  <button
-                    type="button"
-                    className="absolute bottom-0 right-0 flex h-8 w-8 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-lg"
-                    onClick={() => toast.info("Photo upload is not available yet.")}
-                  >
-                    <Camera className="h-4 w-4" />
-                  </button>
-                </div>
-              </div>
+              <ProfileAvatarUploader currentUrl={cpaRow?.img_url} initials={initials} emptyInitials={["C"]} />
 
               <div className="grid gap-4 lg:grid-cols-3">
                 <Field label="First Name *" value={firstName} onChange={setFirstName} hideLabel />

@@ -5,6 +5,7 @@ import type Stripe from "stripe";
 import { getStripeClient } from "../lib/stripe-client";
 import { SUBSCRIPTION_PLANS, type PlanKey } from "../lib/stripe-catalog";
 import { enforceConnectedAccountLimit } from "../lib/plan-limits";
+import { fulfillTokenCheckout } from "../lib/token-fulfillment";
 
 const router = Router();
 
@@ -162,6 +163,29 @@ router.post(
 
     try {
       switch (event.type) {
+        case "checkout.session.completed":
+        case "checkout.session.async_payment_succeeded": {
+          const session = event.data.object as Stripe.Checkout.Session;
+          if (
+            session.mode === "payment" &&
+            session.payment_status === "paid" &&
+            (
+              session.metadata?.purchase_type === "token_package" ||
+              Boolean(session.metadata?.package_key)
+            )
+          ) {
+            const stripe = getStripeClient();
+            const result = await fulfillTokenCheckout(
+              stripe,
+              getAdminClient(),
+              session,
+            );
+            console.info(
+              `[stripe/webhook] token Session ${session.id}: ${result.status}`,
+            );
+          }
+          break;
+        }
         case "customer.subscription.created":
         case "customer.subscription.updated":
         case "customer.subscription.deleted":

@@ -1,7 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useLocation } from "wouter";
-import { BriefcaseBusiness, Building2, Camera, Landmark, MapPin, ShieldCheck } from "lucide-react";
+import { BriefcaseBusiness, Building2, FileUp, Landmark, MapPin, PenLine, ShieldCheck } from "lucide-react";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -9,11 +9,13 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { ProfileAvatarUploader } from "@/components/profile-avatar-uploader";
 import { useAuth } from "@/hooks/use-auth";
 import { supabase } from "@/lib/supabase";
 import { pickActiveOrganization, useActiveOrganizationId } from "@/lib/active-organization";
 import { checkAddBusiness } from "@/lib/plan-limits";
+import BusinessDocumentUpload, { type ExtractedBusinessDocument } from "@/components/business-document-upload";
+import { buildBusinessDocumentPrefill } from "@/lib/business-document-prefill";
 
 type UserRow = {
   id: number;
@@ -108,6 +110,14 @@ export default function Profile() {
   const [activeOrgId, setActiveOrgId] = useActiveOrganizationId(numericId);
   const [step, setStep] = useState(0);
   const [businessStep, setBusinessStep] = useState(0);
+  const [setupMethod, setSetupMethod] = useState<"upload" | "manual" | null>(null);
+  const [extractionNotice, setExtractionNotice] = useState("");
+  const [extractionContext, setExtractionContext] = useState<{
+    registeredAgent: string | null;
+    organizers: string[];
+    warnings: string[];
+  } | null>(null);
+  const saveInFlight = useRef(false);
 
   const { data: userRow, isLoading: userLoading } = useQuery<UserRow | null>({
     queryKey: ["profile_user", numericId],
@@ -233,6 +243,7 @@ export default function Profile() {
 
   useEffect(() => {
     if (!orgRow) return;
+    setSetupMethod("manual");
     setBusinessName(orgRow.name ?? "");
     setOrgType(orgRow.org_type ?? "");
     setIndustry(orgRow.industry ?? "");
@@ -375,6 +386,30 @@ export default function Profile() {
     if (!firstName.trim()) return "First name is required.";
     if (!lastName.trim()) return "Last name is required.";
     return null;
+  };
+
+  const applyExtractedBusiness = (extracted: ExtractedBusinessDocument) => {
+    const prefill = buildBusinessDocumentPrefill(extracted, states);
+    if (prefill.businessName) setBusinessName(prefill.businessName);
+    if (prefill.orgType) setOrgType(prefill.orgType);
+    if (prefill.stateId) setStateId(prefill.stateId);
+    if (prefill.stateIncorporation) setStateIncorporation(prefill.stateIncorporation);
+    if (prefill.yearEstablished) setYearEstablished(prefill.yearEstablished);
+    if (prefill.street) setStreet(prefill.street);
+    if (prefill.suite) setSuite(prefill.suite);
+    if (prefill.city) setCity(prefill.city);
+    if (prefill.zip) setZip(prefill.zip);
+    if (prefill.country) setCountry(prefill.country);
+    if (prefill.stateRegistrationNumber) setStateRegistrationNumber(prefill.stateRegistrationNumber);
+
+    setExtractionContext({
+      registeredAgent: extracted.registeredAgent?.name ?? null,
+      organizers: extracted.organizers.map((organizer) => organizer.name).filter((name): name is string => !!name),
+      warnings: extracted.warnings ?? [],
+    });
+    setExtractionNotice("We found some information in your business document. Please review it before continuing.");
+    setSetupMethod("manual");
+    setBusinessStep(0);
   };
 
   const validateBusiness = () => {
@@ -534,10 +569,26 @@ export default function Profile() {
         },
       };
 
-      if (orgRow?.id) {
-        const { error } = await supabase.from("organizations").update(payload).eq("id", orgRow.id);
+      // Initial onboarding is allowed to create only the first organization.
+      // Re-query at save time so a refresh, prior attempt, or another completed
+      // onboarding request reuses the existing business instead of inserting.
+      const { data: ownedOrganizations, error: ownedOrganizationsError } = await supabase
+        .from("organizations")
+        .select("id")
+        .eq("owner_id", numericId)
+        .order("id", { ascending: true })
+        .limit(1);
+      if (ownedOrganizationsError) throw ownedOrganizationsError;
+      const existingOrgId = orgRow?.id ?? (ownedOrganizations?.[0] as { id?: number } | undefined)?.id ?? null;
+
+      if (existingOrgId) {
+        const { error } = await supabase
+          .from("organizations")
+          .update(payload)
+          .eq("id", existingOrgId)
+          .eq("owner_id", numericId);
         if (error) throw error;
-        return { orgId: orgRow.id, created: false };
+        return { orgId: existingOrgId, created: false };
       }
 
       await checkAddBusiness();
@@ -563,7 +614,16 @@ export default function Profile() {
     onError: (error: Error) => {
       toast.error(`Failed to save profile: ${error.message}`);
     },
+    onSettled: () => {
+      saveInFlight.current = false;
+    },
   });
+
+  const saveProfile = () => {
+    if (saveInFlight.current || saveMutation.isPending) return;
+    saveInFlight.current = true;
+    saveMutation.mutate();
+  };
 
   const continuePersonal = () => {
     const error = validatePersonal();
@@ -605,24 +665,7 @@ export default function Profile() {
           <div className="space-y-0">
             <ProfileSection index={0} title="Personal Information" active={step === 0} onClick={() => setStep(0)}>
               <div className="space-y-8 pt-3">
-                <div className="flex justify-center">
-                  <div className="relative">
-                    <Avatar className="h-28 w-28 bg-white text-muted-foreground">
-                      {userRow?.img_url && <AvatarImage src={userRow.img_url} />}
-                      <AvatarFallback className="bg-white text-muted-foreground">
-                        {initials === "?" ? <Camera className="h-8 w-8 text-muted-foreground/70" /> : <span className="text-3xl font-bold text-primary">{initials}</span>}
-                      </AvatarFallback>
-                    </Avatar>
-                    <button
-                      type="button"
-                      className="absolute bottom-0 right-0 flex h-8 w-8 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-lg"
-                      aria-label="Profile photo upload is not available yet"
-                      onClick={() => toast.info("Photo upload is not available yet.")}
-                    >
-                      <Camera className="h-4 w-4" />
-                    </button>
-                  </div>
-                </div>
+                <ProfileAvatarUploader currentUrl={userRow?.img_url} initials={initials} />
 
                 <div className="grid gap-4 lg:grid-cols-3">
                   <TextField label="First Name *" value={firstName} onChange={setFirstName} hideLabel />
@@ -639,6 +682,77 @@ export default function Profile() {
 
             <ProfileSection index={1} title="Business Information" active={step === 1} onClick={() => setStep(1)} last>
               <div className="space-y-5">
+                {setupMethod === null && !orgRow ? (
+                  <div className="space-y-6">
+                    <div>
+                      <h2 className="text-xl font-bold">Set up your business</h2>
+                      <p className="mt-1 text-sm text-muted-foreground">
+                        Choose how you would like to provide your business information.
+                      </p>
+                    </div>
+                    <div className="grid gap-4 lg:grid-cols-2">
+                      <button
+                        type="button"
+                        onClick={() => setSetupMethod("upload")}
+                        className="relative rounded-xl border border-primary bg-primary/5 p-5 text-left transition-colors hover:bg-primary/10"
+                      >
+                        <span className="absolute right-4 top-4 rounded-full bg-primary px-2.5 py-1 text-xs font-semibold text-primary-foreground">
+                          Recommended
+                        </span>
+                        <FileUp className="mb-4 h-7 w-7 text-primary" />
+                        <h3 className="font-semibold">Upload Business Document</h3>
+                        <p className="mt-2 pr-2 text-sm text-muted-foreground">
+                          Upload Articles of Organization, a Certificate of Formation, Articles of Incorporation,
+                          or a similar official registration document. BookSmart will prefill what it can find.
+                        </p>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setSetupMethod("manual")}
+                        className="rounded-xl border border-border/70 bg-card/35 p-5 text-left transition-colors hover:border-primary/60"
+                      >
+                        <PenLine className="mb-4 h-7 w-7 text-primary" />
+                        <h3 className="font-semibold">Enter Details Manually</h3>
+                        <p className="mt-2 text-sm text-muted-foreground">
+                          Continue with the existing business setup form and enter the information yourself.
+                        </p>
+                      </button>
+                    </div>
+                  </div>
+                ) : setupMethod === "upload" && !orgRow ? (
+                  <BusinessDocumentUpload
+                    onExtracted={applyExtractedBusiness}
+                    onManual={() => setSetupMethod("manual")}
+                  />
+                ) : (
+                  <>
+                {extractionNotice && (
+                  <div className="rounded-lg border border-primary/40 bg-primary/10 p-4">
+                    <p className="font-medium text-foreground">{extractionNotice}</p>
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      Extracted values are editable below and will not be saved until you select Save &amp; Continue.
+                    </p>
+                    {extractionContext && (
+                      <div className="mt-3 space-y-1 text-xs text-muted-foreground">
+                        {extractionContext.registeredAgent && <p>Registered agent found: {extractionContext.registeredAgent}</p>}
+                        {extractionContext.organizers.length > 0 && <p>Organizers found: {extractionContext.organizers.join(", ")}</p>}
+                        {extractionContext.warnings.map((warning) => <p key={warning}>Note: {warning}</p>)}
+                      </div>
+                    )}
+                    <Button
+                      type="button"
+                      variant="link"
+                      className="mt-2 h-auto p-0"
+                      onClick={() => {
+                        setExtractionNotice("");
+                        setExtractionContext(null);
+                        setSetupMethod("upload");
+                      }}
+                    >
+                      Try Another Document
+                    </Button>
+                  </div>
+                )}
                 <div>
                   <div className="grid gap-2 text-xs font-medium text-muted-foreground sm:grid-cols-3 lg:grid-cols-5">
                     {BUSINESS_STEPS.map((item, index) => (
@@ -811,11 +925,13 @@ export default function Profile() {
                   {businessStep < BUSINESS_STEPS.length - 1 ? (
                     <Button type="button" onClick={continueBusinessStep}>Next Step</Button>
                   ) : (
-                    <Button type="button" onClick={() => saveMutation.mutate()} disabled={saveMutation.isPending}>
+                    <Button type="button" onClick={saveProfile} disabled={saveMutation.isPending}>
                       {saveMutation.isPending ? "Saving..." : orgRow?.id ? "Save Changes" : "Save & Continue"}
                     </Button>
                   )}
                 </div>
+                  </>
+                )}
               </div>
             </ProfileSection>
           </div>

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Dialog, DialogContent,
@@ -19,6 +19,21 @@ import {
 import { toast } from "sonner";
 import { supabase } from "@/lib/supabase";
 import { cn } from "@/lib/utils";
+import { useSurveyProgress } from "@/hooks/use-survey-progress";
+import {
+  STEP_KEYS,
+  finalizeApplicableProgress,
+  isApplicable,
+  meaningfulAnswer,
+  questionsForStep,
+  type ProgressState,
+} from "@/lib/survey-progress";
+import {
+  SURVEY_SECTIONS,
+  applicableSurveyCompletion,
+  questionsForSection,
+  sectionIndexForStep,
+} from "@/lib/survey-sections";
 import houseIcon from "@/assets/survey-icons/house.png";
 import buildingIcon from "@/assets/survey-icons/building.png";
 import carIcon from "@/assets/survey-icons/car.png";
@@ -115,6 +130,7 @@ type SurveyData = {
   business_utility_percent: number | null;
   business_meal_percent: number | null;
   equipment_cost: number | null;
+  equipment_current_value: number | null;
   debts: Record<string, unknown> | null;
 };
 
@@ -268,12 +284,14 @@ function PercentSlider({
 
 function SurveyQuestionCard({
   icon: Icon,
+  image,
   title,
   description,
   example,
   children,
 }: {
   icon: React.ElementType;
+  image?: string;
   title: string;
   description: string;
   example?: string;
@@ -282,8 +300,10 @@ function SurveyQuestionCard({
   return (
     <div className="rounded-2xl border border-white/85 bg-[#0d2a4f] p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]">
       <div className="flex items-start gap-3">
-        <div className="h-12 w-12 rounded-2xl bg-[#FFC72B] text-white flex items-center justify-center shrink-0">
-          <Icon className="h-6 w-6" />
+        <div className="h-12 w-12 rounded-2xl bg-[#FFC72B]/15 text-[#FFC72B] flex items-center justify-center shrink-0 overflow-hidden">
+          {image
+            ? <img src={image} alt="" aria-hidden="true" className="h-10 w-10 object-contain" />
+            : <Icon className="h-6 w-6" aria-hidden="true" />}
         </div>
         <div className="min-w-0">
           <h4 className="text-[17px] font-bold leading-tight text-white">{title}</h4>
@@ -422,7 +442,12 @@ export default function BusinessSurveyDialog({ orgId, open, onOpenChange, initia
 
   // Equipment & Debt
   const [equipmentCost, setEquipmentCost] = useState("0");
+  const [equipmentCurrentValue, setEquipmentCurrentValue] = useState("0");
   const [debts, setDebts] = useState<Record<string, string>>({});
+  const [hasDebt, setHasDebt] = useState<boolean | null>(null);
+  const [touchedQuestionKeys, setTouchedQuestionKeys] = useState<Set<string>>(new Set());
+  const resumeApplied = useRef(false);
+  const resumeOrgId = useRef<number | null>(null);
 
   // Fetch existing org data to pre-fill
   const { data: orgData } = useQuery<SurveyData | null>({
@@ -444,6 +469,7 @@ export default function BusinessSurveyDialog({ orgId, open, onOpenChange, initia
           "total_house_area_sqft","dedicated_office_area_sqft",
           "business_vehicle_percent","business_utility_percent","business_meal_percent",
           "equipment_cost","debts",
+          "equipment_current_value",
           "industry",
         ].join(","))
         .eq("id", orgId!)
@@ -489,12 +515,18 @@ export default function BusinessSurveyDialog({ orgId, open, onOpenChange, initia
     setUtilityPct(orgData.business_utility_percent ?? 100);
     setMealPct(orgData.business_meal_percent ?? 100);
     setEquipmentCost(orgData.equipment_cost?.toString() ?? "0");
+    setEquipmentCurrentValue(orgData.equipment_current_value?.toString() ?? "0");
     const rawDebts = orgData.debts ?? {};
     const strDebts: Record<string, string> = {};
     for (const k of DEBT_CATEGORIES.map((d) => d.key)) {
       strDebts[k] = rawDebts[k]?.toString() ?? "";
     }
+    const selectedLiabilities = Array.isArray(rawDebts.selected_liability_keys)
+      ? rawDebts.selected_liability_keys as string[]
+      : [];
+    for (const key of selectedLiabilities) strDebts[`__${key}_selected`] = "1";
     setDebts(strDebts);
+    setHasDebt(typeof rawDebts.has_debt === "boolean" ? rawDebts.has_debt : (selectedLiabilities.length > 0 ? true : null));
     setPhonePct(typeof rawDebts.phone_business_percent === "number" ? rawDebts.phone_business_percent : 50);
     setInternetPct(typeof rawDebts.internet_business_percent === "number" ? rawDebts.internet_business_percent : 50);
     setHasReceivables(typeof rawDebts.has_receivables === "boolean" ? rawDebts.has_receivables : null);
@@ -506,10 +538,65 @@ export default function BusinessSurveyDialog({ orgId, open, onOpenChange, initia
     setAdditionalCategories(Array.isArray(rawDebts.additional_balance_sheet_categories) ? rawDebts.additional_balance_sheet_categories as string[] : []);
   }, [orgData]);
 
-  // Reset step when dialog opens
-  useEffect(() => {
-    if (open) setStep(initialStep ?? 0);
-  }, [open, initialStep]);
+  const selectedDebtKeys = DEBT_CATEGORIES.filter(({ key }) => (debts[key] ?? "") !== "" || debts[`__${key}_selected`] === "1");
+  const surveyAnswers = useMemo<Record<string, unknown>>(() => ({
+    "tax.filing_status": filingStatus,
+    "tax.primary_business_state": primaryState,
+    "tax.residency_status": residencyStatus,
+    "tax.multi_state_activity": multiState,
+    "income.primary_types": incomeTypes,
+    "income.passive_types": passiveIncome,
+    "team.structure": teamStructure,
+    "accounting.method": accountingMethod,
+    "equipment.ownership": majorEquipment,
+    "vehicle.ownership": vehicleOwnership,
+    "vehicle.deduction_method": vehicleUsage,
+    "vehicle.over_6000_lbs": vehicleOver6k,
+    "workspace.home_office_type": homeOfficeType,
+    "workspace.home_status": homeStatus,
+    "workspace.tech_usage": techUsage,
+    "property.interests": realEstate,
+    "property.hosts_home_meetings": hostsMeetings,
+    "health.insurance": healthInsurance,
+    "health.savings": healthSavings,
+    "family.education_support": familyEducation,
+    "strategy.tax_goal": taxGoal,
+    "strategy.retirement": retirementCurrent,
+    "strategy.audit_appetite": auditAppetite,
+    "workspace.home_business_use_percent": touchedQuestionKeys.has("workspace.home_business_use_percent") || touchedQuestionKeys.has("workspace.home_allocation_percent") ? homeBusinessPct : null,
+    "vehicle.business_use_percent": touchedQuestionKeys.has("vehicle.business_use_percent") || touchedQuestionKeys.has("vehicle.balance_business_use_percent") ? vehiclePct : null,
+    "workspace.utility_business_use_percent": touchedQuestionKeys.has("workspace.utility_business_use_percent") || touchedQuestionKeys.has("workspace.balance_utility_percent") ? utilityPct : null,
+    "equipment.spending_this_year": equipmentCost === "" ? null : Number(equipmentCost),
+    "liabilities.selected": hasDebt === false ? [] : selectedDebtKeys.map(({ key }) => key),
+    "workspace.primary_work_location": homeOfficeType,
+    "workspace.total_home_sqft": Number(totalHouseArea),
+    "workspace.home_allocation_percent": touchedQuestionKeys.has("workspace.home_allocation_percent") ? homeBusinessPct : null,
+    "vehicle.balance_business_use_percent": touchedQuestionKeys.has("vehicle.balance_business_use_percent") ? vehiclePct : null,
+    "workspace.phone_business_use_percent": touchedQuestionKeys.has("workspace.phone_business_use_percent") ? phonePct : null,
+    "workspace.internet_business_use_percent": touchedQuestionKeys.has("workspace.internet_business_use_percent") ? internetPct : null,
+    "workspace.balance_utility_percent": touchedQuestionKeys.has("workspace.balance_utility_percent") ? utilityPct : null,
+    "equipment.balance_ownership": majorEquipment,
+    "equipment.current_value": equipmentCurrentValue === "" ? null : Number(equipmentCurrentValue),
+    "assets.has_receivables": hasReceivables,
+    "assets.has_inventory": hasInventory,
+    "liabilities.has_debt": hasDebt,
+    "liabilities.balances": Object.fromEntries(selectedDebtKeys.map(({ key }) => [key, Number(debts[key]) || 0])),
+    "equity.owner_contributed": ownerContributed,
+    "equity.owner_contribution_details": ownerContributionAmount || ownerContributionDate
+      ? { amount: Number(ownerContributionAmount) || 0, date: ownerContributionDate || null }
+      : null,
+    "equity.owner_draws": ownerDraws,
+  }), [
+    filingStatus, primaryState, residencyStatus, multiState, incomeTypes, passiveIncome,
+    teamStructure, accountingMethod, majorEquipment, vehicleOwnership, vehicleUsage,
+    vehicleOver6k, homeOfficeType, homeStatus, techUsage, realEstate, hostsMeetings,
+    healthInsurance, healthSavings, familyEducation, taxGoal, retirementCurrent,
+    auditAppetite, homeBusinessPct, vehiclePct, utilityPct, equipmentCost,
+    selectedDebtKeys, totalHouseArea, phonePct, internetPct, equipmentCurrentValue,
+    hasReceivables, hasInventory, debts, ownerContributed, ownerContributionAmount,
+    ownerContributionDate, ownerDraws, touchedQuestionKeys, hasDebt,
+  ]);
+  const surveyProgress = useSurveyProgress(orgId, open, !!orgData, surveyAnswers);
 
   // ─── One-question-per-screen step definitions ──────────────────────────────
   type StepDef = {
@@ -532,10 +619,17 @@ export default function BusinessSurveyDialog({ orgId, open, onOpenChange, initia
       const val = parseFloat(debts[key] ?? "");
       if (!isNaN(val) && val > 0) numericDebts[key] = val;
     }
-    return { debts: { ...(orgData?.debts ?? {}), ...numericDebts, ...extra } };
+    return {
+      debts: {
+        ...(orgData?.debts ?? {}),
+        ...numericDebts,
+        selected_liability_keys: selectedDebtKeys.map(({ key }) => key),
+        has_debt: hasDebt,
+        ...extra,
+      },
+    };
   };
 
-  const selectedDebtKeys = DEBT_CATEGORIES.filter(({ key }) => (debts[key] ?? "") !== "" || debts[`__${key}_selected`] === "1");
   const ADDITIONAL_CATEGORIES = ["Accounts Payable", "Goodwill", "Retained Earnings", "Notes Payable", "Investments", "Security Deposits", "Prepaid Expenses", "Accrued Expenses", "Deferred Revenue", "Other Assets / Liabilities"];
 
   const BUSINESS_STEPS: StepDef[] = useMemo(() => [
@@ -620,12 +714,6 @@ export default function BusinessSurveyDialog({ orgId, open, onOpenChange, initia
           <SurveyQuestionCard icon={Calculator} title="What accounting method do you use?" description="Most small businesses use cash basis unless they elected accrual.">
             <InlineChoices options={ACCOUNTING_METHOD} selected={accountingMethod} onChange={setAccountingMethod} />
           </SurveyQuestionCard>
-          <SurveyQuestionCard icon={Wrench} title="Did you buy major tools, equipment, or machinery?" description="Major assets can unlock depreciation or Section 179 planning.">
-            <div className="flex gap-3">
-              <Button type="button" variant={majorEquipment === true ? "default" : "outline"} onClick={() => setMajorEquipment(true)} className="min-w-20">Yes</Button>
-              <Button type="button" variant={majorEquipment === false ? "default" : "outline"} onClick={() => setMajorEquipment(false)} className="min-w-20">No</Button>
-            </div>
-          </SurveyQuestionCard>
         </div>
       ),
       payload: () => ({ team_structure: teamStructure, accounting_method: accountingMethod, major_equipment: majorEquipment }),
@@ -640,15 +728,19 @@ export default function BusinessSurveyDialog({ orgId, open, onOpenChange, initia
           <SurveyQuestionCard icon={Car} title="How is your business vehicle owned or leased?" description="Example: Company Owned if the vehicle is titled to the business.">
             <PillGroup options={VEHICLE_OWNERSHIP} selected={vehicleOwnership} multi={false} onChange={(v) => setVehicleOwnership(v as string)} />
           </SurveyQuestionCard>
-          <SurveyQuestionCard icon={Route} title="How do you track vehicle deductions?" description="Example: Standard Mileage Rate if you track business miles.">
-            <PillGroup options={VEHICLE_USAGE} selected={vehicleUsage} multi={false} onChange={(v) => setVehicleUsage(v as string)} />
-          </SurveyQuestionCard>
-          <SurveyQuestionCard icon={Truck} title="Is the vehicle over 6,000 lbs?" description="Heavy vehicles can qualify for different depreciation rules.">
-            <div className="flex gap-3">
-              <Button type="button" variant={vehicleOver6k === true ? "default" : "outline"} onClick={() => setVehicleOver6k(true)} className="min-w-20">Yes</Button>
-              <Button type="button" variant={vehicleOver6k === false ? "default" : "outline"} onClick={() => setVehicleOver6k(false)} className="min-w-20">No</Button>
-            </div>
-          </SurveyQuestionCard>
+          {vehicleOwnership && vehicleOwnership !== "No Business Vehicle" && (
+            <>
+              <SurveyQuestionCard icon={Route} title="How do you track vehicle deductions?" description="Example: Standard Mileage Rate if you track business miles.">
+                <PillGroup options={VEHICLE_USAGE} selected={vehicleUsage} multi={false} onChange={(v) => setVehicleUsage(v as string)} />
+              </SurveyQuestionCard>
+              <SurveyQuestionCard icon={Truck} title="Is the vehicle over 6,000 lbs?" description="Heavy vehicles can qualify for different depreciation rules.">
+                <div className="flex gap-3">
+                  <Button type="button" variant={vehicleOver6k === true ? "default" : "outline"} onClick={() => setVehicleOver6k(true)} className="min-w-20">Yes</Button>
+                  <Button type="button" variant={vehicleOver6k === false ? "default" : "outline"} onClick={() => setVehicleOver6k(false)} className="min-w-20">No</Button>
+                </div>
+              </SurveyQuestionCard>
+            </>
+          )}
         </div>
       ),
       payload: () => ({ vehicle_ownership: vehicleOwnership, vehicle_usage: vehicleUsage, vehicle_over_6k_lbs: vehicleOver6k }),
@@ -663,9 +755,11 @@ export default function BusinessSurveyDialog({ orgId, open, onOpenChange, initia
           <SurveyQuestionCard icon={Home} title="What type of workspace do you use?" description="Example: Dedicated Room if the room is used only for business.">
             <PillGroup options={HOME_OFFICE_TYPE} selected={homeOfficeType} multi={false} onChange={(v) => setHomeOfficeType(v as string)} />
           </SurveyQuestionCard>
-          <SurveyQuestionCard icon={Building} title="What is your home status?" description="This helps estimate home-office treatment correctly.">
-            <PillGroup options={HOME_STATUS} selected={homeStatus} multi={false} onChange={(v) => setHomeStatus(v as string)} />
-          </SurveyQuestionCard>
+          {(homeOfficeType === "Dedicated Room (Exclusive Use)" || homeOfficeType === "Shared Space (Non-Exclusive)") && (
+            <SurveyQuestionCard icon={Building} title="What is your home status?" description="This helps estimate home-office treatment correctly.">
+              <PillGroup options={HOME_STATUS} selected={homeStatus} multi={false} onChange={(v) => setHomeStatus(v as string)} />
+            </SurveyQuestionCard>
+          )}
           <SurveyQuestionCard icon={Laptop} title="Which technology costs support your business?" description="Select all that apply.">
             <PillGroup options={TECH_USAGE} selected={techUsage} multi onChange={(v) => setTechUsage(v as string[])} />
           </SurveyQuestionCard>
@@ -683,12 +777,12 @@ export default function BusinessSurveyDialog({ orgId, open, onOpenChange, initia
           <SurveyQuestionCard icon={Building2} title="Which property types apply to you?" description="Select every property type connected to your household or business.">
             <PillGroup options={REAL_ESTATE_INTERESTS} selected={realEstate} multi onChange={(v) => setRealEstate(v as string[])} />
           </SurveyQuestionCard>
-          <SurveyQuestionCard icon={Handshake} title="Do you host business meetings or corporate minutes at home?" description="Example: Renting your home to your business for board meetings.">
+          {(homeOfficeType === "Dedicated Room (Exclusive Use)" || homeOfficeType === "Shared Space (Non-Exclusive)") && <SurveyQuestionCard icon={Handshake} title="Do you host business meetings or corporate minutes at home?" description="Example: Renting your home to your business for board meetings.">
             <div className="flex gap-3">
               <Button type="button" variant={hostsMeetings === true ? "default" : "outline"} onClick={() => setHostsMeetings(true)} className="min-w-20">Yes</Button>
               <Button type="button" variant={hostsMeetings === false ? "default" : "outline"} onClick={() => setHostsMeetings(false)} className="min-w-20">No</Button>
             </div>
-          </SurveyQuestionCard>
+          </SurveyQuestionCard>}
         </div>
       ),
       payload: () => ({ real_estate_interests: realEstate, hosts_business_meetings: hostsMeetings }),
@@ -740,15 +834,15 @@ export default function BusinessSurveyDialog({ orgId, open, onOpenChange, initia
       description: "Use practical percentages to estimate mixed personal and business use.",
       render: () => (
         <div className="space-y-4">
-          <SurveyQuestionCard icon={Home} title="What percentage of your home is business use?" description="This estimates the business-use percentage of your home.">
-            <PercentSlider value={homeBusinessPct} onChange={setHomeBusinessPct} />
-          </SurveyQuestionCard>
-          <SurveyQuestionCard icon={Car} title="What percentage of vehicle use is business related?" description="Estimate the business share based on mileage or usage logs.">
-            <PercentSlider value={vehiclePct} onChange={setVehiclePct} />
-          </SurveyQuestionCard>
-          <SurveyQuestionCard icon={Lightbulb} title="What percentage of utilities support the business?" description="Estimate the household utility share used for business.">
-            <PercentSlider value={utilityPct} onChange={setUtilityPct} />
-          </SurveyQuestionCard>
+          {(homeOfficeType === "Dedicated Room (Exclusive Use)" || homeOfficeType === "Shared Space (Non-Exclusive)") && <SurveyQuestionCard icon={Home} title="What percentage of your home is business use?" description="This estimates the business-use percentage of your home.">
+            <PercentSlider value={homeBusinessPct} onChange={(value) => { setHomeBusinessPct(value); setTouchedQuestionKeys((keys) => new Set(keys).add("workspace.home_business_use_percent")); }} />
+          </SurveyQuestionCard>}
+          {vehicleOwnership && vehicleOwnership !== "No Business Vehicle" && <SurveyQuestionCard icon={Car} title="What percentage of vehicle use is business related?" description="Estimate the business share based on mileage or usage logs.">
+            <PercentSlider value={vehiclePct} onChange={(value) => { setVehiclePct(value); setTouchedQuestionKeys((keys) => new Set(keys).add("vehicle.business_use_percent")); }} />
+          </SurveyQuestionCard>}
+          {(homeOfficeType === "Dedicated Room (Exclusive Use)" || homeOfficeType === "Shared Space (Non-Exclusive)") && <SurveyQuestionCard icon={Lightbulb} title="What percentage of utilities support the business?" description="Estimate the household utility share used for business.">
+            <PercentSlider value={utilityPct} onChange={(value) => { setUtilityPct(value); setTouchedQuestionKeys((keys) => new Set(keys).add("workspace.utility_business_use_percent")); }} />
+          </SurveyQuestionCard>}
         </div>
       ),
       payload: () => {
@@ -767,33 +861,21 @@ export default function BusinessSurveyDialog({ orgId, open, onOpenChange, initia
       description: "Finish with major equipment costs and business liabilities.",
       render: () => (
         <div className="space-y-4">
-          <SurveyQuestionCard icon={DollarSign} title="How much did you spend on business equipment this year?" description="Enter the total cost of equipment, tools, hardware, or machinery bought for business use.">
+          <SurveyQuestionCard icon={Wrench} title="Do you own business equipment?" description="Examples include computers, tools, furniture, hardware, and machinery.">
+            <div className="flex gap-3">
+              <Button type="button" variant={majorEquipment === true ? "default" : "outline"} onClick={() => setMajorEquipment(true)} className="min-w-20">Yes</Button>
+              <Button type="button" variant={majorEquipment === false ? "default" : "outline"} onClick={() => setMajorEquipment(false)} className="min-w-20">No</Button>
+            </div>
+          </SurveyQuestionCard>
+          {majorEquipment === true && <SurveyQuestionCard icon={DollarSign} title="How much did you spend on business equipment this year?" description="Enter the total cost of equipment, tools, hardware, or machinery bought for business use.">
             <div className="relative">
               <span className="absolute left-3 top-1/2 -translate-y-1/2 text-[#D7E6FF]">$</span>
-              <Input value={equipmentCost} onChange={(e) => setEquipmentCost(e.target.value)} type="number" min="0" className="h-11 pl-8" />
+              <Input value={equipmentCost} onChange={(e) => { setEquipmentCost(e.target.value); setTouchedQuestionKeys((keys) => new Set(keys).add("equipment.spending_this_year")); }} type="number" min="0" className="h-11 pl-8" />
             </div>
-          </SurveyQuestionCard>
-          <SurveyQuestionCard icon={CreditCard} title="Does your business owe money to anyone?" description="Example: $12,000 SBA loan and $3,500 business credit card balance.">
-            <div className="grid grid-cols-1 gap-2">
-              {DEBT_CATEGORIES.map(({ key, label }) => (
-                <ChoicePill
-                  key={key}
-                  label={label}
-                  selected={(debts[key] ?? "") !== "" || debts[`__${key}_selected`] === "1"}
-                  onToggle={() => setDebts((d) => {
-                    const has = (d[key] ?? "") !== "" || d[`__${key}_selected`] === "1";
-                    const next = { ...d };
-                    if (has) delete next[`__${key}_selected`];
-                    else next[`__${key}_selected`] = "1";
-                    return next;
-                  })}
-                />
-              ))}
-            </div>
-          </SurveyQuestionCard>
+          </SurveyQuestionCard>}
         </div>
       ),
-      payload: () => ({ equipment_cost: parseFloat(equipmentCost) || 0, ...debtExtras() }),
+      payload: () => ({ major_equipment: majorEquipment, equipment_cost: parseFloat(equipmentCost) || 0 }),
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
   ], [
@@ -836,7 +918,7 @@ export default function BusinessSurveyDialog({ orgId, open, onOpenChange, initia
       example: "Example: If your home is 2,000 sq ft, enter 2,000.",
       render: () => (
         <div className="relative">
-          <Input value={totalHouseArea} onChange={(e) => setTotalHouseArea(e.target.value)} type="number" min="0" className="h-12 pr-14 text-lg" />
+          <Input value={totalHouseArea} onChange={(e) => { setTotalHouseArea(e.target.value); setTouchedQuestionKeys((keys) => new Set(keys).add("workspace.total_home_sqft")); }} type="number" min="0" className="h-12 pr-14 text-lg" />
           <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-[#D7E6FF]">sq ft</span>
         </div>
       ),
@@ -847,7 +929,7 @@ export default function BusinessSurveyDialog({ orgId, open, onOpenChange, initia
       icon: Home,
       title: "What percentage of your home is used regularly for business?",
       description: "Only include areas used regularly for business.",
-      render: () => <PercentSlider value={homeBusinessPct} onChange={setHomeBusinessPct} />,
+      render: () => <PercentSlider value={homeBusinessPct} onChange={(value) => { setHomeBusinessPct(value); setTouchedQuestionKeys((keys) => new Set(keys).add("workspace.home_allocation_percent")); }} />,
       payload: () => {
         const totalArea = parseFloat(totalHouseArea) || 0;
         return { dedicated_office_area_sqft: totalArea > 0 ? Math.round(totalArea * (homeBusinessPct / 100)) : null };
@@ -859,7 +941,7 @@ export default function BusinessSurveyDialog({ orgId, open, onOpenChange, initia
       image: carIcon,
       title: "How much of your vehicle use is for business?",
       description: "Include trips to customers, job sites, suppliers, and business meetings.",
-      render: () => <PercentSlider value={vehiclePct} onChange={setVehiclePct} />,
+      render: () => <PercentSlider value={vehiclePct} onChange={(value) => { setVehiclePct(value); setTouchedQuestionKeys((keys) => new Set(keys).add("vehicle.balance_business_use_percent")); }} />,
       payload: () => ({ business_vehicle_percent: Math.round(vehiclePct) }),
     },
     {
@@ -868,7 +950,7 @@ export default function BusinessSurveyDialog({ orgId, open, onOpenChange, initia
       image: phoneIcon,
       title: "What percentage of your phone service is used for business?",
       description: "Include calls, texts, email, scheduling, and business apps.",
-      render: () => <PercentSlider value={phonePct} onChange={setPhonePct} />,
+      render: () => <PercentSlider value={phonePct} onChange={(value) => { setPhonePct(value); setTouchedQuestionKeys((keys) => new Set(keys).add("workspace.phone_business_use_percent")); }} />,
       payload: () => debtExtras({ phone_business_percent: Math.round(phonePct) }),
     },
     {
@@ -877,7 +959,7 @@ export default function BusinessSurveyDialog({ orgId, open, onOpenChange, initia
       image: wifiIcon,
       title: "What percentage of your internet service is used for business?",
       description: "Include email, bookkeeping, online meetings, research, and other business activities.",
-      render: () => <PercentSlider value={internetPct} onChange={setInternetPct} />,
+      render: () => <PercentSlider value={internetPct} onChange={(value) => { setInternetPct(value); setTouchedQuestionKeys((keys) => new Set(keys).add("workspace.internet_business_use_percent")); }} />,
       payload: () => debtExtras({ internet_business_percent: Math.round(internetPct) }),
     },
     {
@@ -886,7 +968,7 @@ export default function BusinessSurveyDialog({ orgId, open, onOpenChange, initia
       image: lightbulbIcon,
       title: "What percentage of your household utilities support your business activities?",
       description: "Includes electricity, water, gas, trash and other household utilities.",
-      render: () => <PercentSlider value={utilityPct} onChange={setUtilityPct} />,
+      render: () => <PercentSlider value={utilityPct} onChange={(value) => { setUtilityPct(value); setTouchedQuestionKeys((keys) => new Set(keys).add("workspace.balance_utility_percent")); }} />,
       payload: () => ({ business_utility_percent: Math.round(utilityPct) }),
     },
     {
@@ -907,10 +989,19 @@ export default function BusinessSurveyDialog({ orgId, open, onOpenChange, initia
       render: () => (
         <div className="relative">
           <span className="absolute left-3 top-1/2 -translate-y-1/2 text-[#D7E6FF]">$</span>
-          <Input value={equipmentCost} onChange={(e) => setEquipmentCost(e.target.value)} type="number" min="0" className="h-12 pl-8 text-lg" />
+          <Input
+            value={equipmentCurrentValue}
+            onChange={(e) => {
+              setEquipmentCurrentValue(e.target.value);
+              setTouchedQuestionKeys((keys) => new Set(keys).add("equipment.current_value"));
+            }}
+            type="number"
+            min="0"
+            className="h-12 pl-8 text-lg"
+          />
         </div>
       ),
-      payload: () => ({ equipment_cost: parseFloat(equipmentCost) || 0 }),
+      payload: () => ({ equipment_current_value: parseFloat(equipmentCurrentValue) || null }),
     },
     {
       part: "balance",
@@ -935,10 +1026,12 @@ export default function BusinessSurveyDialog({ orgId, open, onOpenChange, initia
       icon: CreditCard,
       image: creditCardsIcon,
       title: "Does your business owe money to anyone?",
-      description: "Select all that apply.",
+      description: "Choose No to skip all debt balances, or Yes and select every type that applies.",
       render: () => (
-        <div className="grid grid-cols-1 gap-2">
-          {DEBT_CATEGORIES.map(({ key, label }) => (
+        <div className="space-y-4">
+          <YesNoToggle value={hasDebt} onChange={setHasDebt} />
+          {hasDebt === true && <div className="grid grid-cols-1 gap-2">
+            {DEBT_CATEGORIES.map(({ key, label }) => (
             <ChoicePill
               key={key}
               label={label}
@@ -953,7 +1046,8 @@ export default function BusinessSurveyDialog({ orgId, open, onOpenChange, initia
                 });
               }}
             />
-          ))}
+            ))}
+          </div>}
         </div>
       ),
       payload: () => debtExtras(),
@@ -1021,37 +1115,207 @@ export default function BusinessSurveyDialog({ orgId, open, onOpenChange, initia
     // eslint-disable-next-line react-hooks/exhaustive-deps
   ], [
     homeOfficeType, totalHouseArea, homeBusinessPct, vehiclePct, phonePct, internetPct,
-    utilityPct, majorEquipment, equipmentCost, hasReceivables, hasInventory, debts,
+    utilityPct, majorEquipment, equipmentCurrentValue, hasReceivables, hasInventory, debts, hasDebt,
     selectedDebtKeys, ownerContributed, ownerContributionAmount, ownerContributionDate,
     ownerDraws, additionalCategories,
   ]);
 
-  const STEPS = useMemo(() => [...BUSINESS_STEPS, ...BALANCE_STEPS], [BUSINESS_STEPS, BALANCE_STEPS]);
-  const BUSINESS_STEP_COUNT = BUSINESS_STEPS.length;
-  const BALANCE_STEP_COUNT = BALANCE_STEPS.length;
+  const SOURCE_STEPS = useMemo(() => [...BUSINESS_STEPS, ...BALANCE_STEPS], [BUSINESS_STEPS, BALANCE_STEPS]);
+  const SECTION_ICONS: Record<string, React.ElementType> = {
+    "section.tax_basics": Gavel,
+    "section.team_accounting": Users,
+    "section.workspace_property": Home,
+    "section.vehicle": Car,
+    "section.equipment_assets": Wrench,
+    "section.debts_equity": CreditCard,
+    "section.tax_strategy": Target,
+  };
+  const HIDDEN_DUPLICATE_STEP_KEYS = new Set([
+    "business.deduction_percentages",
+    "balance.work_location",
+    "balance.equipment_ownership",
+  ]);
+  const STEPS: StepDef[] = useMemo(() => SURVEY_SECTIONS.map((section) => {
+    const sourceEntries = section.stepKeys
+      .map((stepKey) => ({ stepKey, source: SOURCE_STEPS[STEP_KEYS.indexOf(stepKey)] }))
+      .filter(({ stepKey, source }) => source && !HIDDEN_DUPLICATE_STEP_KEYS.has(stepKey));
+    return {
+      part: "business" as const,
+      icon: SECTION_ICONS[section.key] ?? ClipboardList,
+      title: section.title,
+      description: section.description,
+      render: () => (
+        <div className="space-y-4">
+          {sourceEntries.map(({ stepKey, source }) => {
+            const questions = questionsForStep(stepKey);
+            if (questions.length > 0 && questions.every((question) => !isApplicable(question, surveyAnswers))) {
+              return null;
+            }
+            return source.part === "business" ? (
+              <div key={stepKey}>{source.render()}</div>
+            ) : (
+              <SurveyQuestionCard
+                key={stepKey}
+                icon={source.icon}
+                image={source.image}
+                title={source.title}
+                description={source.description}
+                example={source.example}
+              >
+                {source.render()}
+              </SurveyQuestionCard>
+            );
+          })}
+          {section.key === "section.vehicle" && vehicleOwnership === "No Business Vehicle" && (
+            <div className="rounded-xl border border-[#5a7ca8] bg-[#07182c] p-4 text-sm text-[#D7E6FF]" role="status">
+              No business vehicle — we’ll skip vehicle-related questions.
+            </div>
+          )}
+          {section.key === "section.tax_basics" && (industryNiche || orgData?.industry) && (
+            <div className="rounded-xl border border-[#3b577d] bg-[#203750] p-4">
+              <p className="text-xs font-semibold uppercase tracking-wide text-[#9CB6D9]">Industry · Using your business profile</p>
+              <p className="mt-1 font-bold text-white">{industryNiche || orgData?.industry}</p>
+            </div>
+          )}
+        </div>
+      ),
+      payload: () => Object.assign({}, ...sourceEntries.map(({ source }) => source.payload())),
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }), [SOURCE_STEPS, vehicleOwnership, industryNiche, orgData?.industry]);
   const TOTAL_STEPS = STEPS.length;
+  const DEFAULT_SENSITIVE_KEYS = new Set([
+    "workspace.home_business_use_percent",
+    "vehicle.business_use_percent",
+    "workspace.utility_business_use_percent",
+    "workspace.home_allocation_percent",
+    "vehicle.balance_business_use_percent",
+    "workspace.phone_business_use_percent",
+    "workspace.internet_business_use_percent",
+    "workspace.balance_utility_percent",
+    "equipment.spending_this_year",
+    "equipment.current_value",
+  ]);
+
+  function stepIsNotApplicable(index: number) {
+    const questions = questionsForSection(index);
+    return questions.length > 0 && questions.every((question) => !isApplicable(question, surveyAnswers));
+  }
 
   function firstNonSkipped(from: number): number {
     let i = from;
-    while (i < TOTAL_STEPS && STEPS[i]?.skip?.()) i++;
+    while (i < TOTAL_STEPS && (STEPS[i]?.skip?.() || stepIsNotApplicable(i))) i++;
     return i;
   }
 
-  async function saveAndAdvance() {
-    if (!orgId) { advance(); return; }
+  function progressAfterAnsweringCurrent(): ProgressState {
+    const answered = new Set(surveyProgress.progress.answered);
+    const skipped = new Set(surveyProgress.progress.skipped);
+    for (const question of questionsForSection(step)) {
+      if (!isApplicable(question, surveyAnswers)) continue;
+      const value = surveyAnswers[question.key];
+      const touchedAliases: Record<string, string> = {
+        "workspace.home_business_use_percent": "workspace.home_allocation_percent",
+        "vehicle.business_use_percent": "vehicle.balance_business_use_percent",
+        "workspace.utility_business_use_percent": "workspace.balance_utility_percent",
+      };
+      const hasIntentionalValue = DEFAULT_SENSITIVE_KEYS.has(question.key)
+        ? (answered.has(question.key)
+          || ((touchedQuestionKeys.has(question.key) || touchedQuestionKeys.has(touchedAliases[question.key])) && value != null))
+        : meaningfulAnswer(value);
+      if (hasIntentionalValue) {
+        answered.add(question.key);
+        skipped.delete(question.key);
+      }
+    }
+    return { answered, skipped };
+  }
+
+  function payloadWithoutUnconfirmedDefaults(payload: Record<string, unknown>) {
+    const next = { ...payload };
+    const alreadyAnswered = surveyProgress.progress.answered;
+    const confirmed = (key: string) => touchedQuestionKeys.has(key) || alreadyAnswered.has(key);
+    const columnByQuestion: Record<string, string> = {
+      "workspace.home_business_use_percent": "dedicated_office_area_sqft",
+      "vehicle.business_use_percent": "business_vehicle_percent",
+      "workspace.utility_business_use_percent": "business_utility_percent",
+      "workspace.home_allocation_percent": "dedicated_office_area_sqft",
+      "vehicle.balance_business_use_percent": "business_vehicle_percent",
+      "workspace.balance_utility_percent": "business_utility_percent",
+      "equipment.spending_this_year": "equipment_cost",
+      "equipment.current_value": "equipment_current_value",
+    };
+    for (const question of questionsForSection(step)) {
+      const column = columnByQuestion[question.key];
+      if (column && !confirmed(question.key)) delete next[column];
+    }
+    if (next.debts && typeof next.debts === "object") {
+      const nextDebts = { ...(next.debts as Record<string, unknown>) };
+      if (!confirmed("workspace.phone_business_use_percent")) delete nextDebts.phone_business_percent;
+      if (!confirmed("workspace.internet_business_use_percent")) delete nextDebts.internet_business_percent;
+      next.debts = nextDebts;
+    }
+    return next;
+  }
+
+  async function saveCurrent(closeAfter: boolean) {
+    if (!orgId) {
+      if (closeAfter) onOpenChange(false);
+      else advance();
+      return;
+    }
     setSaving(true);
     try {
-      const payload = STEPS[step].payload();
+      const payload = payloadWithoutUnconfirmedDefaults(STEPS[step].payload());
       if (Object.keys(payload).length > 0) {
         const { error } = await supabase.from("organizations").update(payload).eq("id", orgId);
         if (error) throw error;
         qc.invalidateQueries({ queryKey: ["org_survey_data", orgId] });
         qc.invalidateQueries({ queryKey: ["organizations_list"] });
       }
-      advance();
+      const answeredProgress = progressAfterAnsweringCurrent();
+      const nextProgress = !closeAfter && step === TOTAL_STEPS - 1
+        ? finalizeApplicableProgress(surveyAnswers, answeredProgress)
+        : answeredProgress;
+      const nextIndex = firstNonSkipped(step + 1);
+      await surveyProgress.persist(
+        nextProgress,
+        closeAfter ? SURVEY_SECTIONS[step]?.stepKeys[0] : (SURVEY_SECTIONS[nextIndex]?.stepKeys[0] ?? null),
+      );
+      qc.invalidateQueries({ queryKey: ["survey_setup_status", orgId] });
+      if (closeAfter) {
+        onOpenChange(false);
+      } else {
+        advance();
+      }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Failed to save";
       toast.error(msg);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function saveAndAdvance() {
+    await saveCurrent(false);
+  }
+
+  async function skipAndAdvance() {
+    const answered = new Set(surveyProgress.progress.answered);
+    const skipped = new Set(surveyProgress.progress.skipped);
+    for (const question of questionsForSection(step)) {
+      if (isApplicable(question, surveyAnswers) && !answered.has(question.key)) {
+        skipped.add(question.key);
+      }
+    }
+    setSaving(true);
+    try {
+      const nextIndex = firstNonSkipped(step + 1);
+      await surveyProgress.persist({ answered, skipped }, SURVEY_SECTIONS[nextIndex]?.stepKeys[0] ?? null);
+      qc.invalidateQueries({ queryKey: ["survey_setup_status", orgId] });
+      advance();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to save survey progress");
     } finally {
       setSaving(false);
     }
@@ -1070,88 +1334,74 @@ export default function BusinessSurveyDialog({ orgId, open, onOpenChange, initia
   function goBack() {
     if (step === 0) { onOpenChange(false); return; }
     let i = step - 1;
-    while (i > 0 && STEPS[i]?.skip?.()) i--;
+    while (i > 0 && (STEPS[i]?.skip?.() || stepIsNotApplicable(i))) i--;
     setStep(i);
+  }
+
+  useEffect(() => {
+    if (!open) {
+      resumeApplied.current = false;
+      setTouchedQuestionKeys(new Set());
+      return;
+    }
+    if (resumeOrgId.current !== orgId) {
+      resumeOrgId.current = orgId;
+      resumeApplied.current = false;
+    }
+    if (!surveyProgress.loaded || resumeApplied.current) return;
+    const requested = initialStep != null ? initialStep : (
+      surveyProgress.legacyCompleteLike
+        ? TOTAL_STEPS
+        : sectionIndexForStep(surveyProgress.resumeStepKey)
+    );
+    setStep(firstNonSkipped(Math.max(0, requested)));
+    resumeApplied.current = true;
+  }, [open, initialStep, surveyProgress.loaded, surveyProgress.resumeStepKey, orgId]);
+
+  async function closeCompletedSurvey() {
+    if (surveyProgress.legacyCompleteLike && !surveyProgress.hasStoredProgress) {
+      try {
+        await surveyProgress.persist(surveyProgress.progress, null, "legacy_inferred");
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "Failed to save survey completion");
+        return;
+      }
+    }
+    onOpenChange(false);
   }
 
   const current = step < TOTAL_STEPS ? STEPS[step] : null;
   const CurrentIcon = current?.icon;
-  const currentPartIndex = current?.part === "balance" ? step - BUSINESS_STEP_COUNT : step;
-  const currentPartTotal = current?.part === "balance" ? BALANCE_STEP_COUNT : BUSINESS_STEP_COUNT;
-  const progressPct = current ? ((currentPartIndex + 1) / currentPartTotal) * 100 : 100;
+  const completion = applicableSurveyCompletion(surveyAnswers, surveyProgress.progress);
+  const progressPct = current ? Math.max(completion.percent, Math.round((step / TOTAL_STEPS) * 100)) : 100;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-[600px] p-0 overflow-hidden border-white/80 bg-[#06172b] gap-0 text-[#EAF2FF] rounded-2xl">
+      <DialogContent className="h-[100dvh] w-screen max-w-none rounded-none p-0 overflow-hidden border-white/80 bg-[#06172b] gap-0 text-[#EAF2FF] sm:h-auto sm:max-h-[92vh] sm:w-full sm:max-w-[760px] sm:rounded-2xl">
         <div className="border-b border-white/20 px-4 py-4">
           <h2 className="text-lg font-bold text-white">Business Survey</h2>
         </div>
-        <div className="p-5 max-h-[78vh] overflow-y-auto bg-[#0d2a4f]">
+        <div className="min-h-0 flex-1 overflow-y-auto bg-[#0d2a4f] p-4 sm:max-h-[78vh] sm:p-6">
           {current ? (
-            <div className={cn("flex flex-col", current.part === "business" ? "min-h-[620px]" : "min-h-[560px]")}>
-              {current.part === "business" ? (
-                <>
-                  <h3 className="text-2xl font-bold text-white">Business Survey</h3>
-                  <div className="mt-5 flex items-center gap-2 text-[#FFC72B] font-bold">
-                    <Flag className="h-4 w-4 fill-[#FFC72B]" />
-                    <span>Step {currentPartIndex + 1} of {BUSINESS_STEP_COUNT}</span>
-                  </div>
-                  <div className="mt-2 h-1.5 w-14 rounded-full bg-[#FFC72B]" />
-                  <div className="mt-5 rounded-xl border border-[#3b577d] bg-[#203750] p-4 flex items-center gap-4">
-                    <div className="h-12 w-12 rounded-xl bg-[#FFC72B]/15 text-[#FFC72B] flex items-center justify-center shrink-0">
-                      {CurrentIcon && <CurrentIcon className="h-7 w-7" />}
-                    </div>
-                    <div>
-                      <h4 className="text-lg font-bold text-white">{current.title}</h4>
-                      <p className="text-sm font-semibold text-white">{current.description}</p>
-                    </div>
-                  </div>
-                  <div className="mt-5">{current.render()}</div>
-                </>
-              ) : (
-                <>
-                  <h3 className="text-2xl font-bold text-white">Balance Sheet Questionnaire</h3>
-                  <div className="mt-2 flex items-center gap-2 text-[#FFC72B] font-bold">
-                    <Flag className="h-4 w-4 fill-[#FFC72B]" />
-                    <span>Question {currentPartIndex + 1} of {BALANCE_STEP_COUNT}</span>
-                  </div>
-                  <div className="mt-5 flex items-start gap-4 mb-5">
-                    <div className="h-10 w-10 rounded-full bg-[#2F6FDB] flex items-center justify-center text-lg font-bold text-white shadow-[0_0_16px_rgba(47,111,219,0.55)] shrink-0">
-                      {currentPartIndex + 1}
-                    </div>
-                    <h3 className="text-[20px] font-bold leading-tight text-white">{current.title}</h3>
-                  </div>
-
-                  <div className="min-h-[135px] flex items-center justify-center mb-5">
-                    {current.visual ? (
-                      <div className="w-full [&_img]:drop-shadow-[0_10px_16px_rgba(0,0,0,0.45)]">
-                        {current.visual()}
-                      </div>
-                    ) : current.image ? (
-                      <img src={current.image} alt="" className="h-[118px] w-[160px] object-contain drop-shadow-[0_10px_16px_rgba(0,0,0,0.45)]" />
-                    ) : (
-                      <div className="h-[118px] w-[160px] rounded-lg bg-[#102c52] border border-[#2C5A91] flex items-center justify-center">
-                        {CurrentIcon && <CurrentIcon className="h-14 w-14 text-[#7FB4FF]" />}
-                      </div>
-                    )}
-                  </div>
-
-                  {current.description && (
-                    <p className="text-[12px] leading-snug text-[#D7E6FF] text-center mb-4">{current.description}</p>
-                  )}
-
-                  {current.example && (
-                    <p className="text-[12px] leading-snug text-[#D7E6FF] mb-4">{current.example}</p>
-                  )}
-
-                  <div className="[&_input]:bg-[#031327] [&_input]:border-[#274a77] [&_input]:text-[#EAF2FF] [&_input]:placeholder:text-[#7993ba]">
-                    {current.render()}
-                  </div>
-                </>
-              )}
+            <div className="flex min-h-[560px] flex-col">
+              <div className="flex items-center gap-3">
+                <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-[#FFC72B]/15 text-[#FFC72B]">
+                  {CurrentIcon && <CurrentIcon className="h-7 w-7" aria-hidden="true" />}
+                </div>
+                <h3 className="text-2xl font-bold text-white">{current.title}</h3>
+              </div>
+              <div className="mt-2 flex items-center gap-2 font-bold text-[#FFC72B]">
+                <Flag className="h-4 w-4 fill-[#FFC72B]" />
+                <span>Section {step + 1} of {TOTAL_STEPS}</span>
+              </div>
+              <p className="mt-2 text-sm text-[#D7E6FF]">{current.description}</p>
+              <p className="mt-1 text-xs text-[#9CB6D9]">{progressPct}% overall completion · only applicable questions count</p>
+              <div className="mt-5 [&_input]:bg-[#031327] [&_input]:border-[#274a77] [&_input]:text-[#EAF2FF]">
+                {current.render()}
+              </div>
 
               <div className="mt-auto pt-7">
-                <div className="text-xs text-white mb-2">{currentPartIndex + 1} of {currentPartTotal}</div>
+                <div className="text-xs text-white mb-2">{progressPct}% complete</div>
                 <div className="h-2 rounded-full bg-[#1c3c66] overflow-hidden">
                   <div
                     className="h-full rounded-full bg-[#78C94D] transition-all duration-300"
@@ -1176,17 +1426,22 @@ export default function BusinessSurveyDialog({ orgId, open, onOpenChange, initia
           )}
         </div>
 
-        <div className="flex items-center justify-between border-t border-[#18375e] px-5 py-4 bg-[#031327]">
+        <div className="sticky bottom-0 flex items-center justify-between border-t border-[#18375e] bg-[#031327] px-3 py-3 sm:px-5 sm:py-4">
           <Button size="sm" variant="ghost" onClick={goBack} className="gap-1 text-[#D7E6FF] hover:text-white hover:bg-[#102c52] px-2">
             {step === 0 ? "Cancel" : <><ChevronLeft className="h-4 w-4" /> Back</>}
           </Button>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap justify-end gap-2">
             {current && (
-              <Button size="sm" variant="outline" onClick={advance} className="border-[#274a77] bg-transparent text-[#D7E6FF] hover:bg-[#102c52] hover:text-white px-2">Skip</Button>
+              <Button size="sm" variant="outline" onClick={skipAndAdvance} disabled={saving} className="border-[#274a77] bg-transparent text-[#D7E6FF] hover:bg-[#102c52] hover:text-white px-2">Skip unanswered</Button>
             )}
-            <Button size="sm" onClick={current ? saveAndAdvance : () => onOpenChange(false)} disabled={saving} className="gap-1.5 bg-[#FFC72B] text-[#031327] hover:bg-[#ffd95e] px-3">
+            {current && (
+              <Button size="sm" variant="ghost" onClick={() => saveCurrent(true)} disabled={saving} className="text-[#D7E6FF] hover:text-white hover:bg-[#102c52]">
+                Save &amp; Continue Later
+              </Button>
+            )}
+            <Button size="sm" onClick={current ? saveAndAdvance : closeCompletedSurvey} disabled={saving} className="gap-1.5 bg-[#FFC72B] text-[#031327] hover:bg-[#ffd95e] px-3">
               {saving && <Loader2 className="h-4 w-4 animate-spin" />}
-              {current ? (step === TOTAL_STEPS - 1 ? "Finish" : "Next") : "Done"}
+              {current ? (step === TOTAL_STEPS - 1 ? "Finish" : "Continue") : "Done"}
             </Button>
           </div>
         </div>
