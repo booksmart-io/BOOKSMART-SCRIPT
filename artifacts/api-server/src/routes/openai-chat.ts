@@ -25,7 +25,7 @@ const MODEL_MAP: Record<string, string> = {
 };
 
 const MAX_MESSAGES = 50;
-const MAX_TOKENS = 2000;
+const MAX_TOKENS = 3500;
 const MAX_BODY_BYTES = 64 * 1024; // 64 KB
 const OFF_TOPIC_RESPONSE =
   "I can only help with BookSmart-related topics like taxes, accounting, transactions, deductions, financial reports, business strategy, subscriptions, tokens, Plaid, Stripe, and CPA workflows. Please ask a question related to your business finances.";

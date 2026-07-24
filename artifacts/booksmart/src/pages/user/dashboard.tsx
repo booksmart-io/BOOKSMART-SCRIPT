@@ -4,7 +4,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/hooks/use-auth";
 import { supabase } from "@/lib/supabase";
 import { useToast } from "@/hooks/use-toast";
-import { normalizeStatementDoc, computeFinancialSnapshot, type StatementPeriod } from "@/lib/financial-statements";
+import { calculateFinancialReport } from "@/lib/financial-engine";
 import { pickActiveOrganization, useActiveOrganizationId } from "@/lib/active-organization";
 import BusinessSurveyDialog from "@/components/business-survey-dialog";
 import { Button } from "@/components/ui/button";
@@ -20,7 +20,11 @@ import {
 type Transaction = {
   id: number; title: string; amount: number; type: string;
   date_time: string; description: string; deductible?: boolean;
+  category_id?: number | null; sub_category_id?: number | null;
 };
+
+type Category = { id: number; name: string; type?: string | null };
+type SubCategory = { id: number; name: string; category_id?: number | null };
 
 type AiStrategy = {
   title: string; savings: number; description: string;
@@ -212,7 +216,7 @@ export default function UserDashboard() {
     enabled: orgId != null,
     queryFn: async () => {
       const { data, error } = await supabase.from("transactions")
-        .select("id, title, amount, type, date_time, description, deductible")
+        .select("id, title, amount, type, date_time, description, deductible, category_id, sub_category_id")
         .eq("org_id", orgId!).order("date_time", { ascending: false });
       if (error) throw error;
       console.log("[dashboard] tx_month rows:", data?.length ?? 0);
@@ -291,17 +295,26 @@ export default function UserDashboard() {
     },
   });
 
-  const { data: statementDocs = [] } = useQuery<StatementPeriod[]>({
-    queryKey: ["statement_docs", numericId],
-    enabled: numericId !== null,
-    staleTime: 30_000,
+  const { data: categories = [] } = useQuery<Category[]>({
+    queryKey: ["categories"],
+    staleTime: 300_000,
     queryFn: async () => {
-      const { data, error } = await supabase.from("user_documents")
-        .select("id, name, category, tax_year, parsed_data")
-        .eq("user_id", numericId!)
-        .in("category", ["Profit & Loss", "Income Statement", "Balance Sheet", "Cash Flow Statement"]);
+      const { data, error } = await supabase
+        .from("category")
+        .select("id, name")
+        .order("name");
       if (error) throw error;
-      return (data ?? []).flatMap((row) => normalizeStatementDoc(row as any));
+      return data ?? [];
+    },
+  });
+
+  const { data: subCategories = [] } = useQuery<SubCategory[]>({
+    queryKey: ["sub_categories"],
+    staleTime: 300_000,
+    queryFn: async () => {
+      const { data, error } = await supabase.from("sub_category").select("id, name, category_id").order("name");
+      if (error) throw error;
+      return data ?? [];
     },
   });
 
@@ -361,8 +374,20 @@ export default function UserDashboard() {
     },
   });
 
-  const snapshot = computeFinancialSnapshot(monthTxs, statementDocs);
-  const { income, expenses, netProfit } = snapshot;
+  const financialReport = calculateFinancialReport({
+    transactions: monthTxs,
+    start: new Date(0),
+    end: new Date(8_640_000_000_000_000),
+    categories,
+    subCategories,
+  });
+  const income = financialReport.pnl.netRevenue;
+  const expenses =
+    financialReport.pnl.cogs +
+    financialReport.pnl.operatingExpenses +
+    financialReport.pnl.otherExpenses +
+    financialReport.pnl.incomeTaxExpense;
+  const netProfit = financialReport.pnl.netIncome;
   const lastMonthIncome = lastMonthTxs.filter(t => t.amount > 0).reduce((s, t) => s + t.amount, 0);
 
   const profileComplete = !!(profile?.full_name && profile.phone);
@@ -396,7 +421,7 @@ export default function UserDashboard() {
       iconBg: "bg-emerald-600/90",
       title: connectedBankCount > 0 ? "Manage bank connections" : "Connect bank account",
       detail: connectedBankCount > 0 ? `${connectedBankCount} active bank connection${connectedBankCount === 1 ? "" : "s"}` : "Import transactions automatically with Plaid.",
-      href: "/user/reports",
+      href: "/user/reports?action=accounts",
       cta: connectedBankCount > 0 ? "View" : "Connect",
     },
     {
@@ -404,7 +429,7 @@ export default function UserDashboard() {
       iconBg: "bg-blue-600/90",
       title: "Upload documents",
       detail: `${docCount} document${docCount === 1 ? "" : "s"} uploaded for reports, tax, and AI context.`,
-      href: "/user/reports",
+      href: "/user/tax",
       cta: "Upload",
     },
     {
@@ -412,7 +437,7 @@ export default function UserDashboard() {
       iconBg: "bg-orange-500/90",
       title: "Review transactions",
       detail: `${allTxCount} transaction${allTxCount === 1 ? "" : "s"} imported, ${uncategorizedCount} need categorization.`,
-      href: "/user/reports",
+      href: "/user/reports?tab=transactions",
       cta: "Review",
     },
     {

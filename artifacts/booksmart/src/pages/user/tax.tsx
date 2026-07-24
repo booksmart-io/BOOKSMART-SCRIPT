@@ -41,6 +41,14 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
+import { Progress } from "@/components/ui/progress";
+import { StatementReviewDialog as FinancialStatementReviewDialog } from "@/components/statement-review-dialog";
+import {
+  createStatementReview,
+  extractFinancialStatement,
+  type StatementDraft,
+  type StatementType,
+} from "@/lib/statement-workflow";
 import {
   Card,
   CardContent,
@@ -106,6 +114,7 @@ type UserDocument = {
   file_size: number | null;
   mime_type: string | null;
   created_at: string;
+  parsed_data: Record<string, unknown> | null;
 };
 
 const CATEGORIES = [
@@ -540,6 +549,12 @@ function StatementReviewDialog({
   const [loadingRows, setLoadingRows] = useState(false);
   const [approvingId, setApprovingId] = useState<number | null>(null);
   const [rejectingId, setRejectingId] = useState<number | null>(null);
+  const [bulkApproval, setBulkApproval] = useState<{
+    total: number;
+    processed: number;
+    approved: number;
+    failed: number;
+  } | null>(null);
   const [importDocId, setImportDocId] = useState<number | null>(null);
   const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pollCountRef = useRef(0);
@@ -633,6 +648,7 @@ function StatementReviewDialog({
     setErrorMsg("");
     setRows([]);
     setDetectedPendingRows(0);
+    setBulkApproval(null);
 
     const poll = async () => {
       pollCountRef.current += 1;
@@ -802,9 +818,11 @@ function StatementReviewDialog({
 
       setRows((prev) => prev.filter((r) => r.id !== row.id));
       invalidateDashboard();
+      return true;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       toast({ title: "Failed to approve transaction", description: msg, variant: "destructive" });
+      return false;
     } finally {
       setApprovingId(null);
     }
@@ -823,9 +841,38 @@ function StatementReviewDialog({
   }
 
   async function approveAll() {
-    for (const row of [...rows]) {
-      await approveRow(row);
+    const rowsToApprove = [...rows];
+    setBulkApproval({
+      total: rowsToApprove.length,
+      processed: 0,
+      approved: 0,
+      failed: 0,
+    });
+
+    let approved = 0;
+    let failed = 0;
+    for (const row of rowsToApprove) {
+      const succeeded = await approveRow(row);
+      if (succeeded) approved += 1;
+      else failed += 1;
+      setBulkApproval({
+        total: rowsToApprove.length,
+        processed: approved + failed,
+        approved,
+        failed,
+      });
     }
+
+    if (failed > 0) {
+      toast({
+        title: `${approved} transaction${approved !== 1 ? "s" : ""} approved`,
+        description: `${failed} transaction${failed !== 1 ? "s" : ""} could not be approved. You can try again.`,
+        variant: "destructive",
+      });
+      setBulkApproval(null);
+      return;
+    }
+
     toast({ title: "All transactions approved" });
     onReviewComplete();
     onClose();
@@ -853,15 +900,27 @@ function StatementReviewDialog({
   // actions disabled until the import is complete so the user sees and acts on
   // the final, complete set of pending transactions.
   const displayStatus = importStatus;
+  const isBulkApproving = bulkApproval !== null;
+  const bulkProgress = bulkApproval
+    ? Math.round((bulkApproval.processed / bulkApproval.total) * 100)
+    : 0;
 
   return (
-    <Dialog open={open} onOpenChange={(v) => { if (!v) onClose(); }}>
+    <Dialog open={open} onOpenChange={(v) => { if (!v && !isBulkApproving) onClose(); }}>
       <DialogContent className="max-w-2xl max-h-[85vh] flex flex-col">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             {displayStatus === "processing" && <Loader2 className="h-5 w-5 animate-spin text-primary" />}
-            {displayStatus === "completed" && <CheckCircle2 className="h-5 w-5 text-emerald-400" />}
-            {displayStatus === "processing" ? "Processing Statement…" : displayStatus === "completed" ? `Review Transactions (${rows.length || detectedPendingRows})` : "Import Failed"}
+            {displayStatus === "completed" && (isBulkApproving
+              ? <Loader2 className="h-5 w-5 animate-spin text-emerald-400" />
+              : <CheckCircle2 className="h-5 w-5 text-emerald-400" />)}
+            {displayStatus === "processing"
+              ? "Processing Statement…"
+              : displayStatus === "completed"
+                ? isBulkApproving
+                  ? `Approving Transactions (${bulkApproval.processed}/${bulkApproval.total})`
+                  : `Review Transactions (${rows.length || detectedPendingRows})`
+                : "Import Failed"}
           </DialogTitle>
         </DialogHeader>
 
@@ -886,6 +945,11 @@ function StatementReviewDialog({
           {displayStatus === "completed" && (
             loadingRows ? (
               <div className="flex justify-center py-12"><Loader2 className="h-8 w-8 animate-spin text-primary" /></div>
+            ) : isBulkApproving && rows.length === 0 ? (
+              <div className="flex flex-col items-center gap-3 py-12 text-muted-foreground">
+                <Loader2 className="h-9 w-9 animate-spin text-emerald-400" />
+                <p className="text-sm">Finalizing your approved transactions…</p>
+              </div>
             ) : detectedPendingRows > 0 && rows.length === 0 ? (
               <div className="flex flex-col items-center gap-4 py-12 text-muted-foreground">
                 <Loader2 className="h-8 w-8 animate-spin text-primary" />
@@ -921,12 +985,12 @@ function StatementReviewDialog({
                     </span>
                     <div className="flex gap-1.5 flex-shrink-0">
                       <Button size="sm" variant="outline" className="h-7 px-2 text-xs text-rose-400 border-rose-800 hover:bg-rose-950"
-                        disabled={rejectingId === row.id || approvingId === row.id}
+                        disabled={isBulkApproving || rejectingId === row.id || approvingId === row.id}
                         onClick={() => rejectRow(row)}>
                         {rejectingId === row.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <X className="h-3 w-3" />}
                       </Button>
                       <Button size="sm" className="h-7 px-2 text-xs bg-emerald-700 hover:bg-emerald-600"
-                        disabled={approvingId === row.id || rejectingId === row.id}
+                        disabled={isBulkApproving || approvingId === row.id || rejectingId === row.id}
                         onClick={() => approveRow(row)}>
                         {approvingId === row.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <CheckCircle2 className="h-3 w-3" />}
                       </Button>
@@ -938,15 +1002,35 @@ function StatementReviewDialog({
           )}
         </div>
 
-        {displayStatus === "completed" && rows.length > 0 && (
+        {displayStatus === "completed" && (rows.length > 0 || isBulkApproving) && (
           <DialogFooter className="gap-2 pt-3 border-t border-border/50">
-            <p className="text-xs text-muted-foreground flex-1">{rows.length} transaction{rows.length !== 1 ? "s" : ""} pending</p>
-            <Button variant="outline" size="sm" onClick={rejectAll} className="text-rose-400 border-rose-800 hover:bg-rose-950">
-              Reject All
-            </Button>
-            <Button size="sm" onClick={approveAll} className="bg-emerald-700 hover:bg-emerald-600">
-              Approve All
-            </Button>
+            {bulkApproval ? (
+              <div className="flex-1 space-y-2" role="status" aria-live="polite">
+                <div className="flex items-center justify-between gap-4 text-xs">
+                  <span className="flex items-center gap-2 font-medium text-foreground">
+                    <Loader2 className="h-3.5 w-3.5 animate-spin text-emerald-400" />
+                    Approving transactions…
+                  </span>
+                  <span className="tabular-nums text-muted-foreground">
+                    {bulkApproval.processed} of {bulkApproval.total}
+                  </span>
+                </div>
+                <Progress value={bulkProgress} className="h-1.5" aria-label={`${bulkProgress}% approved`} />
+                <p className="text-xs text-muted-foreground">
+                  Please keep this window open while your transactions are being approved.
+                </p>
+              </div>
+            ) : (
+              <>
+                <p className="text-xs text-muted-foreground flex-1">{rows.length} transaction{rows.length !== 1 ? "s" : ""} pending</p>
+                <Button variant="outline" size="sm" onClick={rejectAll} className="text-rose-400 border-rose-800 hover:bg-rose-950">
+                  Reject All
+                </Button>
+                <Button size="sm" onClick={approveAll} className="bg-emerald-700 hover:bg-emerald-600">
+                  Approve All
+                </Button>
+              </>
+            )}
           </DialogFooter>
         )}
       </DialogContent>
@@ -958,6 +1042,7 @@ function StatementReviewDialog({
 
 function ManualReviewTemplate({
   docType,
+  extractionError,
   initialYear,
   initialStart,
   initialEnd,
@@ -965,6 +1050,7 @@ function ManualReviewTemplate({
   onConfirm,
 }: {
   docType: "pnl" | "bs" | "cf";
+  extractionError?: string | null;
   initialYear: number;
   initialStart: string;
   initialEnd: string;
@@ -1034,7 +1120,7 @@ function ManualReviewTemplate({
   return (
     <div className="space-y-4 py-1">
       <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-400">
-        AI could not auto-read this. Please enter values below.
+        AI could not auto-read this: {extractionError || "No extraction details were returned."} You can enter values below.
       </div>
 
       {docType !== "bs" && (
@@ -1203,10 +1289,18 @@ function UploadDialog({ open, onClose, onUploaded, onImportCreated, numericUserI
   const [extracted, setExtracted] = useState<ExtractedDoc | null>(null);
   const [insertedDocId, setInsertedDocId] = useState<number | null>(null);
   const [extractError, setExtractError] = useState<string | null>(null);
+  const [failureStage, setFailureStage] = useState<"extraction" | "review_storage" | null>(null);
   // Holds the period metadata (period_start/period_end/as_of/document_category)
   // saved at insert time, so handleConfirmExtraction can merge it back in
   // instead of clobbering it with the extracted figures.
   const [baseParsedData, setBaseParsedData] = useState<Record<string, string>>({});
+  const [statementReview, setStatementReview] = useState<{
+    id: number;
+    draft: StatementDraft;
+    warnings: string[];
+    documentId: number;
+    storagePath: string;
+  } | null>(null);
 
   const isBalanceSheet = category === "Balance Sheet";
   const busy = step === "uploading" || step === "extracting";
@@ -1223,6 +1317,7 @@ function UploadDialog({ open, onClose, onUploaded, onImportCreated, numericUserI
     setExtracted(null);
     setInsertedDocId(null);
     setExtractError(null);
+    setFailureStage(null);
     setBaseParsedData({});
   }
 
@@ -1325,14 +1420,28 @@ function UploadDialog({ open, onClose, onUploaded, onImportCreated, numericUserI
         // P&L / Balance Sheet / Cash Flow → AI extraction then review
         setStep("extracting");
         try {
-          const result = await callExtractDocument(pickedFile, mime, docType);
-          if (isZeroExtraction(result)) {
-            // AI "succeeded" but couldn't actually read the document — fall back
-            // to the Manual Review Template, same as a hard extraction failure.
-            setExtractError("AI could not confidently read this document.");
-          } else {
-            setExtracted(result);
+          if (uploadOrgId == null) throw new Error("Select an organization before uploading a financial statement.");
+          let extraction;
+          try {
+            extraction = await extractFinancialStatement(pickedFile, docType as StatementType);
+          } catch (error) {
+            setFailureStage("extraction");
+            throw error;
           }
+          setFailureStage("review_storage");
+          const review = await createStatementReview({
+            organizationId: uploadOrgId,
+            documentId: docId,
+            idempotencyKey: `${authUuid}:${crypto.randomUUID()}`,
+            extraction,
+          });
+          setStatementReview({
+            id: review.id,
+            draft: review.normalized_draft,
+            warnings: [...extraction.warnings, ...(review.extraction_warnings ?? [])],
+            documentId: docId,
+            storagePath,
+          });
           setStep("review");
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
@@ -1503,12 +1612,40 @@ function UploadDialog({ open, onClose, onUploaded, onImportCreated, numericUserI
 
   // ── Render ──────────────────────────────────────────────────────────────────
 
+  if (statementReview && uploadOrgId != null) {
+    return <FinancialStatementReviewDialog
+      open={open}
+      statementId={statementReview.id}
+      organizationId={uploadOrgId}
+      initial={statementReview.draft}
+      serverWarnings={statementReview.warnings}
+      onDone={() => {
+        onUploaded();
+        setStatementReview(null);
+        reset();
+        onClose();
+      }}
+      onDeleteUpload={async () => {
+        const { data } = await supabase.auth.getSession();
+        await fetch(`/api/document-delete?storagePath=${encodeURIComponent(statementReview.storagePath)}`, {
+          method: "DELETE",
+          headers: { Authorization: `Bearer ${data.session?.access_token ?? ""}` },
+        });
+        await supabase.from("user_documents").delete().eq("id", statementReview.documentId);
+        setStatementReview(null);
+        reset();
+        onUploaded();
+        onClose();
+      }}
+    />;
+  }
+
   return (
     <Dialog open={open} onOpenChange={(v) => { if (!v && !busy) handleClose(); }}>
       <DialogContent
         className={cn(
           "max-h-[85vh] overflow-y-auto flex flex-col",
-          step === "review" && extractError && categoryToDocType(category)
+          step === "review" && extractError && failureStage === "extraction" && categoryToDocType(category)
             ? "max-w-3xl"
             : "max-w-md"
         )}
@@ -1554,13 +1691,16 @@ function UploadDialog({ open, onClose, onUploaded, onImportCreated, numericUserI
             <DialogHeader>
               <DialogTitle className="flex items-center gap-2">
                 <Sparkles className="h-5 w-5 text-primary" />
-                {extractError ? "Manual Review Template" : "AI Extraction Review"}
+                {extractError
+                  ? failureStage === "extraction" ? "Manual Review Template" : "Could Not Start Review"
+                  : "AI Extraction Review"}
               </DialogTitle>
             </DialogHeader>
 
-            {extractError && categoryToDocType(category) ? (
+            {extractError && failureStage === "extraction" && categoryToDocType(category) ? (
               <ManualReviewTemplate
                 docType={categoryToDocType(category) as "pnl" | "bs" | "cf"}
+                extractionError={extractError}
                 initialYear={Number(taxYear) || CURRENT_YEAR}
                 initialStart={periodStart}
                 initialEnd={isBalanceSheet ? asOf : periodEnd}
@@ -1570,7 +1710,9 @@ function UploadDialog({ open, onClose, onUploaded, onImportCreated, numericUserI
             ) : extractError ? (
               <div className="space-y-3 py-2">
                 <p className="text-sm text-destructive">
-                  AI extraction failed: {extractError}
+                  {failureStage === "review_storage"
+                    ? `The document was extracted, but its review record could not be saved: ${extractError}`
+                    : `AI extraction failed: ${extractError}`}
                 </p>
                 <p className="text-xs text-muted-foreground">
                   Your document was saved. You can still use it without extracted data.
@@ -1790,6 +1932,7 @@ export default function Tax() {
   const [filterYear, setFilterYear] = useState<string>("all");
   const [filterCategory, setFilterCategory] = useState<string>("all");
   const [docToDelete, setDocToDelete] = useState<UserDocument | null>(null);
+  const [docToView, setDocToView] = useState<UserDocument | null>(null);
 
   const { data: docs = [], isLoading, error: queryError } = useQuery<UserDocument[]>({
     queryKey: ["user_documents", numericId],
@@ -1858,6 +2001,11 @@ export default function Tax() {
         .from("transactions")
         .delete()
         .eq("file_path", String(doc.id));
+      await supabase
+        .from("transactions")
+        .delete()
+        .eq("user_id", numericId!)
+        .eq("description", `Financial statement upload document:${doc.id}`);
 
       // 7. Delete the document row
       const { error } = await supabase
@@ -2014,7 +2162,12 @@ export default function Tax() {
                         <TableCell className="font-medium">
                           <div className="flex items-center gap-2">
                             <FileIcon mime={doc.mime_type} />
-                            <span className="truncate max-w-[160px]">{doc.name}</span>
+                            <div className="min-w-0">
+                              <span className="block truncate max-w-[160px]">{doc.name}</span>
+                              {((doc.parsed_data?.statement_workflow as Record<string, unknown> | undefined)?.lifecycle_status === "confirmed") && (
+                                <span className="text-[10px] text-emerald-400">Extracted and confirmed</span>
+                              )}
+                            </div>
                           </div>
                         </TableCell>
                         <TableCell>{doc.tax_year ?? "—"}</TableCell>
@@ -2045,6 +2198,12 @@ export default function Tax() {
                               </Button>
                             </DropdownMenuTrigger>
                             <DropdownMenuContent align="end">
+                              {Boolean((doc.parsed_data?.statement_workflow as Record<string, unknown> | undefined)?.confirmed_result) && (
+                                <DropdownMenuItem onClick={() => setDocToView(doc)}>
+                                  <FileText className="h-4 w-4 mr-2" />
+                                  View extracted data
+                                </DropdownMenuItem>
+                              )}
                               <DropdownMenuItem
                                 onClick={async () => {
                                   const url = await getSignedUrl(doc.file_url);
@@ -2144,6 +2303,43 @@ export default function Tax() {
           }
         />
       )}
+
+      {/* Delete confirmation dialog */}
+      <Dialog open={docToView !== null} onOpenChange={(open) => { if (!open) setDocToView(null); }}>
+        <DialogContent className="max-w-xl">
+          <DialogHeader>
+            <DialogTitle>Extracted Financial Statement</DialogTitle>
+          </DialogHeader>
+          {(() => {
+            const workflow = docToView?.parsed_data?.statement_workflow as Record<string, unknown> | undefined;
+            const result = workflow?.confirmed_result as { metadata?: Record<string, unknown>; values?: Record<string, unknown> } | undefined;
+            const values = result?.values ?? {};
+            const metadata = result?.metadata ?? {};
+            return (
+              <div className="space-y-4">
+                <div className="grid grid-cols-2 gap-2 text-sm">
+                  <div><span className="text-muted-foreground">Statement:</span> {String(metadata.statement_type ?? docToView?.category ?? "—")}</div>
+                  <div><span className="text-muted-foreground">Currency:</span> {String(metadata.currency ?? "USD")}</div>
+                  <div><span className="text-muted-foreground">Period start:</span> {String(metadata.period_start ?? "—")}</div>
+                  <div><span className="text-muted-foreground">Period end/as of:</span> {String(metadata.period_end ?? metadata.as_of_date ?? "—")}</div>
+                </div>
+                <div className="rounded-md border divide-y">
+                  {Object.entries(values).map(([field, value]) => (
+                    <div key={field} className="flex justify-between gap-4 px-3 py-2 text-sm">
+                      <span className="capitalize">{field.replaceAll("_", " ")}</span>
+                      <span className="font-medium tabular-nums">
+                        {typeof value === "number"
+                          ? new Intl.NumberFormat("en-US", { style: "currency", currency: String(metadata.currency ?? "USD") }).format(value)
+                          : "—"}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })()}
+        </DialogContent>
+      </Dialog>
 
       {/* Delete confirmation dialog */}
       <AlertDialog open={docToDelete !== null} onOpenChange={(open) => { if (!open) setDocToDelete(null); }}>

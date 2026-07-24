@@ -16,6 +16,7 @@ import adminRouter from "./admin";
 import plaidRouter from "./plaid";
 import tokenUnlocksRouter from "./token-unlocks";
 import referralsRouter from "./referrals";
+import financialStatementsRouter from "./financial-statements";
 
 const router: IRouter = Router();
 
@@ -36,5 +37,6 @@ router.use(adminRouter);
 router.use(plaidRouter);
 router.use(tokenUnlocksRouter);
 router.use(referralsRouter);
+router.use(financialStatementsRouter);
 
 export default router;

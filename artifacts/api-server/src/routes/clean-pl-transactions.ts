@@ -1,15 +1,18 @@
 import { Router } from "express";
 import { requireAuth } from "../middlewares/require-auth";
 
-const SUPABASE_URL = "https://pvppwmkswnluidlwnnck.supabase.co";
-const SUPABASE_ANON_KEY =
-  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InB2cHB3bWtzd25sdWlkbHdubmNrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjQ2ODg1MjgsImV4cCI6MjA4MDI2NDUyOH0.Sa9fKeEn0jbbvswuyABNHrpb01E4iKfI65_1HgfPWsM";
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY;
 
 const OPENROUTER_BASE = "https://openrouter.ai/api/v1";
 
 const router = Router();
 
 async function sbFetch(path: string, token: string, method = "GET", body?: unknown) {
+  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+    throw new Error("SUPABASE_URL and SUPABASE_ANON_KEY must be configured");
+  }
+
   return fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
     method,
     headers: {

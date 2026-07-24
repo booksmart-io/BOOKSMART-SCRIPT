@@ -1,8 +1,7 @@
 import { Request, Response, NextFunction } from "express";
 
-const SUPABASE_URL = "https://pvppwmkswnluidlwnnck.supabase.co";
-const SUPABASE_ANON_KEY =
-  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InB2cHB3bWtzd25sdWlkbHdubmNrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjQ2ODg1MjgsImV4cCI6MjA4MDI2NDUyOH0.Sa9fKeEn0jbbvswuyABNHrpb01E4iKfI65_1HgfPWsM";
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY;
 
 declare global {
   namespace Express {
@@ -35,6 +34,11 @@ export async function requireAuth(
   }
 
   try {
+    if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+      res.status(503).json({ error: "auth_service_unavailable", message: "Supabase is not configured" });
+      return;
+    }
+
     const response = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
       headers: {
         Authorization: `Bearer ${token}`,

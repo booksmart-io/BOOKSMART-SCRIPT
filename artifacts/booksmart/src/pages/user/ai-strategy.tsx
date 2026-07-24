@@ -32,7 +32,20 @@ type DeductionPeriod = "year" | "all";
 
 type Strategy = {
   title: string; description: string; savings: number;
+  deduction_amount?: number;
+  rank?: number;
   difficulty: Difficulty; status: Status; action_steps?: string[];
+  source_facts?: string[];
+  calculation?: {
+    user_data_inputs: Array<{
+      label: string;
+      value: number;
+      source_fact: string;
+    }>;
+    formula: string;
+    deduction_amount: number;
+    result: number;
+  };
 };
 
 // Row shape of the `ai_tax_strategies` Supabase table (persisted storage).
@@ -53,11 +66,6 @@ type Transaction = {
 
 type Category = { id: number; name: string };
 type SubCategory = { id: number; name: string; category_id: number };
-
-type DeductionGroup = {
-  label: string; totalAmount: number; count: number;
-  txs: Transaction[]; color: string;
-};
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -222,10 +230,23 @@ function buildSurveyProfile(org: OrgRow | null | undefined): string {
 }
 
 function rowToStrategy(row: StrategyRow): Strategy {
+  let deductionAmount = 0;
+  let rank: number | undefined;
+  try {
+    const context = JSON.parse(row.ai_context ?? "{}") as { deduction_amount?: unknown; rank?: unknown };
+    if (typeof context.deduction_amount === "number" && Number.isFinite(context.deduction_amount)) {
+      deductionAmount = context.deduction_amount;
+    }
+    if (typeof context.rank === "number" && Number.isInteger(context.rank)) rank = context.rank;
+  } catch {
+    // Legacy strategies stored plain-text context and have no validated deduction amount.
+  }
   return {
     title: row.title,
     description: row.summary ?? "",
     savings: row.estimated_savings ?? 0,
+    deduction_amount: deductionAmount,
+    rank,
     difficulty: difficultyFromRisk(row.risk_level),
     status: statusFromRow(row),
     action_steps: row.implementation_steps ?? undefined,
@@ -249,27 +270,6 @@ function categoryLabelFor(t: Transaction, categories: Category[], subCategories:
   if (sub) return sub.name;
   if (cat) return cat.name;
   return "Uncategorized";
-}
-
-function groupDeductions(
-  txs: Transaction[],
-  amountFor: (t: Transaction) => number,
-  labelFor: (t: Transaction) => string,
-): DeductionGroup[] {
-  const map = new Map<string, { txs: Transaction[]; total: number }>();
-  for (const t of txs) {
-    const key = labelFor(t);
-    if (!map.has(key)) map.set(key, { txs: [], total: 0 });
-    const g = map.get(key)!;
-    g.txs.push(t);
-    g.total += amountFor(t);
-  }
-  return Array.from(map.entries())
-    .sort((a, b) => b[1].total - a[1].total)
-    .map(([label, data], i) => ({
-      label, totalAmount: data.total, count: data.txs.length,
-      txs: data.txs, color: PIE_COLORS[i % PIE_COLORS.length],
-    }));
 }
 
 // ─── Main Component ───────────────────────────────────────────────────────────
@@ -361,7 +361,14 @@ export default function AiStrategy() {
       return (data as StrategyRow[]) ?? [];
     },
   });
-  const strategies    = useMemo(() => (strategyRows ?? []).map(rowToStrategy), [strategyRows]);
+  const strategies = useMemo(
+    () => (strategyRows ?? []).map(rowToStrategy).sort((a, b) =>
+      (a.rank ?? Number.MAX_SAFE_INTEGER) - (b.rank ?? Number.MAX_SAFE_INTEGER) ||
+      b.savings - a.savings ||
+      (b.deduction_amount ?? 0) - (a.deduction_amount ?? 0),
+    ),
+    [strategyRows],
+  );
   const hasGenerated  = !strategiesLoading && strategies.length > 0;
 
   // ── Federal / state deduction rules ─────────────────────────────────────────
@@ -461,12 +468,7 @@ export default function AiStrategy() {
     (t: Transaction) => categoryLabelFor(t, categories, subCategories),
     [categories, subCategories],
   );
-  const groups = useMemo(
-    () => groupDeductions(deductibleTxs, deductionAmountForTx, labelForDeductionTx),
-    [deductibleTxs, deductionAmountForTx, labelForDeductionTx],
-  );
-
-  // All transactions (income + expense) grouped by category for the table + donut
+  // All transactions (income + expense) remain visible in the breakdown table.
   const allTxsAmt = useMemo(() => dedTxs.reduce((s, t) => s + Math.abs(t.amount), 0), [dedTxs]);
   const tableGroups = useMemo(() => {
     const map = new Map<string, { txs: Transaction[]; totalAmt: number; dedAmt: number }>();
@@ -489,12 +491,17 @@ export default function AiStrategy() {
         color: PIE_COLORS[i % PIE_COLORS.length],
       }));
   }, [dedTxs, deductionAmountForTx, labelForDeductionTx]);
+  const deductionChartGroups = useMemo(
+    () => tableGroups.filter(group => group.dedAmt > 0),
+    [tableGroups],
+  );
 
   // ── AI Strategy derived ────────────────────────────────────────────────────
   const income         = monthTxs.filter(t => t.amount > 0).reduce((s, t) => s + t.amount, 0);
   const expenses       = Math.abs(monthTxs.filter(t => t.amount < 0).reduce((s, t) => s + t.amount, 0));
   const netProfit      = income - expenses;
   const totalSavings   = strategies.reduce((s, st) => s + (st.savings ?? 0), 0);
+  const totalAdditionalDeductions = strategies.reduce((s, st) => s + (st.deduction_amount ?? 0), 0);
 
   // ── Business Survey summary for AI prompt ──────────────────────────────────
   const surveyProfile = useMemo(() => buildSurveyProfile(org), [org]);
@@ -503,6 +510,15 @@ export default function AiStrategy() {
   const generate = useCallback(async () => {
     setGenerating(true);
     try {
+      if (!surveyProfile.trim() && allTxs.length === 0) {
+        toast({
+          title: "More information needed",
+          description: "Complete the business survey or add transactions before generating a personalized strategy.",
+          variant: "destructive",
+        });
+        return;
+      }
+
       const { data: preSession } = await supabase.auth.getSession();
       const preToken = preSession.session?.access_token;
       const checkRes = await fetch("/api/plan-limits/check-ai-strategy", {
@@ -520,38 +536,67 @@ export default function AiStrategy() {
         return;
       }
 
-      const txLines = allTxs.slice(0, 40)
-        .map(t => `${t.date_time.split("T")[0]}: ${t.title} ${t.amount >= 0 ? "+" : ""}$${Math.abs(t.amount).toFixed(2)}`)
-        .join("\n");
+      const sourceEntries = [
+        { id: "FIN-1", fact: `Monthly income: $${income.toFixed(2)}` },
+        { id: "FIN-2", fact: `Monthly expenses: $${expenses.toFixed(2)}` },
+        { id: "FIN-3", fact: `Net profit (month): $${netProfit.toFixed(2)}` },
+        { id: "FIN-4", fact: `Annualized income (estimate): $${(income * 12).toFixed(2)}` },
+        { id: "FIN-5", fact: `Total transactions analyzed: ${allTxs.length}` },
+        ...surveyProfile.split("\n").map((fact, index) => ({
+          id: `PROFILE-${index + 1}`,
+          fact: fact.replace(/^-\s*/, "").trim(),
+        })).filter(entry => entry.fact),
+        ...allTxs.slice(0, 40).map((tx, index) => ({
+          id: `TX-${index + 1}`,
+          fact: `${tx.date_time.split("T")[0]} | ${tx.title} | ${tx.amount >= 0 ? "+" : "-"}$${Math.abs(tx.amount).toFixed(2)}`,
+        })),
+      ];
+      const sourceById = new Map(sourceEntries.map(entry => [entry.id, entry.fact]));
+      const sourceData = sourceEntries.map(entry => `${entry.id}: ${entry.fact}`).join("\n");
 
-      const prompt = `You are an expert US tax strategist for freelancers and small businesses. Analyze the following financial data and generate personalized, actionable tax-saving strategies.
+      const prompt = `You are an expert US tax strategist for freelancers and small businesses.
 
-FINANCIAL SUMMARY:
-- Monthly income: $${income.toFixed(2)}
-- Monthly expenses: $${expenses.toFixed(2)}
-- Net profit (month): $${netProfit.toFixed(2)}
-- Annualized income (estimate): $${(income * 12).toFixed(2)}
-- Total transactions analyzed: ${allTxs.length}
+STRICT GROUNDING REQUIREMENT:
+- Recommend a strategy ONLY when it is directly supported by one or more facts in USER-SUPPLIED DATA below.
+- Never assume or invent an entity type, election, employee count, age, dependents, tax bracket, location, ownership structure, account, asset, expense, income source, or personal circumstance.
+- A merely possible strategy is not enough. Omit it unless the supplied facts make it relevant.
+- Cite every supporting fact by its exact source ID in source_facts. Every strategy must contain at least one valid source ID.
+- Every personalized statement in the title, description, action steps, and calculation must be traceable to source_facts. Tax-law explanations may be general, but must be written conditionally unless the user's facts confirm eligibility.
+- Return up to 6 distinct strategy opportunities grounded in the supplied user data. Do not invent an opportunity merely to reach six.
+- For supported opportunities that need more user information before an amount can be calculated, return deduction_amount=0 and savings=0, explain what information is missing in the description, and provide a calculation object with empty user_data_inputs, formula="Insufficient user data", deduction_amount=0, and result=0.
+- Consider recorded business expenses, vehicle use, home office, retirement planning, health insurance, entity/QBI/estimated-tax planning, and recordkeeping, but include an area only when the supplied facts support it.
+- Every non-zero savings amount must have a calculation whose numeric user_data_inputs cite the exact user-data source IDs that support them. Derived inputs are allowed only when the formula explains how they were derived from those cited facts.
+- calculation.result must equal savings. Use 0 when the user data is insufficient for a defensible calculation; never invent an amount, balance, contribution, expense, tax rate, or tax bracket.
 
-BUSINESS PROFILE (from onboarding survey):
-${surveyProfile || "(No business survey completed yet — provide general freelancer/SMB strategies)"}
+USER-SUPPLIED DATA (each fact has a stable source ID):
+${sourceData}
 
-RECENT TRANSACTIONS (last 40):
-${txLines || "(No transaction data available yet — provide general freelancer/SMB strategies)"}
-
-INSTRUCTIONS:
-Generate 5 specific US tax-saving strategies tailored to this business profile. Consider deductions, entity structure, retirement accounts, QBI, self-employment tax, home office, vehicle, health insurance, etc. based on the income level, business profile, and transaction patterns. Directly reference relevant business-profile details (filing status, vehicle/home-office setup, retirement accounts, debts, tax goal, etc.) in your explanations whenever they are provided.
+Generate only the specific US tax-saving strategies justified by the data above.
 
 Respond ONLY with valid JSON in exactly this format — no markdown, no explanation:
 {
   "strategies": [
     {
       "title": "Strategy Name",
+      "deduction_amount": 10000,
       "savings": 2500,
-      "description": "Detailed explanation referencing their specific data. 2-3 sentences.",
+      "description": "One concise sentence tied to the cited user facts; identify missing information when savings is zero.",
       "difficulty": "Easy",
       "status": "Recommended",
-      "action_steps": ["Step 1", "Step 2", "Step 3"]
+      "action_steps": ["One short next step", "Optional second short step"],
+      "source_facts": ["FIN-1"],
+      "calculation": {
+        "user_data_inputs": [
+          {
+            "label": "Name of input",
+            "value": 10000,
+            "source_fact": "the exact source ID containing or supporting this value, such as FIN-1"
+          }
+        ],
+        "formula": "A plain-language arithmetic explanation using only the listed inputs",
+        "deduction_amount": 10000,
+        "result": 2500
+      }
     }
   ]
 }
@@ -560,7 +605,11 @@ Rules:
 - difficulty must be exactly "Easy", "Medium", or "Hard"
 - status must be exactly "Recommended", "Action Required", or "New"
 - savings is an integer (USD, no symbols)
-- Include exactly 5 strategies`;
+- deduction_amount is an integer derived from the cited user inputs and must equal calculation.deduction_amount
+- Return between 1 and 6 distinct strategies; prefer 6 only when all 6 are supported
+- Every source_facts and calculation.user_data_inputs source_fact must be an exact source ID from USER-SUPPLIED DATA
+- calculation.result must exactly equal savings
+- If savings is greater than 0, calculation.user_data_inputs and formula must not be empty`;
 
       const { data: sessionData } = await supabase.auth.getSession();
       const token = sessionData.session?.access_token;
@@ -568,7 +617,7 @@ Rules:
       const res = await fetch("/api/openai-chat", {
         method: "POST",
         headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-        body: JSON.stringify({ model: "openai/gpt-4o-mini", messages: [{ role: "user", content: prompt }] }),
+        body: JSON.stringify({ model: "openai/gpt-4o-mini", max_tokens: 3500, messages: [{ role: "user", content: prompt }] }),
       });
 
       if (!res.ok) throw new Error(`Request failed: ${res.status} ${res.statusText}`);
@@ -578,6 +627,38 @@ Rules:
       if (!jsonMatch) throw new Error("Could not parse AI response — unexpected format");
       const parsed = JSON.parse(jsonMatch[0]) as { strategies: Strategy[] };
       if (!Array.isArray(parsed.strategies) || parsed.strategies.length === 0) throw new Error("AI returned no strategies");
+      const hasGroundedSources = (strategy: Strategy) =>
+        Array.isArray(strategy.source_facts) &&
+        strategy.source_facts.length > 0 &&
+        strategy.source_facts.every(fact => typeof fact === "string" && sourceById.has(fact.trim()));
+      const hasValidCalculation = (strategy: Strategy) => {
+        if (!Number.isInteger(strategy.savings) || strategy.savings < 0) return false;
+        if (!Number.isInteger(strategy.deduction_amount) || strategy.deduction_amount! < 0) return false;
+        const calculation = strategy.calculation;
+        if (
+          !calculation ||
+          !Number.isFinite(calculation.result) ||
+          Math.round(calculation.result) !== strategy.savings ||
+          !Number.isFinite(calculation.deduction_amount) ||
+          Math.round(calculation.deduction_amount) !== strategy.deduction_amount ||
+          typeof calculation.formula !== "string"
+        ) return false;
+        if (strategy.savings === 0) return true;
+        if (!calculation.formula.trim() || !Array.isArray(calculation.user_data_inputs) || calculation.user_data_inputs.length === 0) return false;
+        return calculation.user_data_inputs.every(input =>
+          !!input &&
+          typeof input.label === "string" &&
+            !!input.label.trim() &&
+            Number.isFinite(input.value) &&
+            typeof input.source_fact === "string" &&
+            sourceById.has(input.source_fact.trim()),
+        );
+      };
+      const groundedStrategies = parsed.strategies
+        .filter(strategy => hasGroundedSources(strategy) && hasValidCalculation(strategy))
+        .slice(0, 6);
+      if (groundedStrategies.length === 0) throw new Error("AI did not return any strategies supported by this user's data");
+      const excludedCount = parsed.strategies.length - groundedStrategies.length;
 
       if (orgId == null || !authUid) throw new Error("Missing organization or user — cannot save strategies");
 
@@ -586,7 +667,10 @@ Rules:
       const { error: delError } = await supabase.from("ai_tax_strategies").delete().eq("org_id", orgId);
       if (delError) throw delError;
 
-      const rowsToInsert = parsed.strategies.map(s => ({
+      const rankedStrategies = [...groundedStrategies]
+        .sort((a, b) => b.savings - a.savings || (b.deduction_amount ?? 0) - (a.deduction_amount ?? 0))
+        .map((strategy, index) => ({ ...strategy, rank: index + 1 }));
+      const rowsToInsert = rankedStrategies.map(s => ({
         user_id: authUid,
         org_id: orgId,
         title: s.title,
@@ -597,24 +681,43 @@ Rules:
         audit_risk: auditRiskFromStatus(s.status),
         implementation_steps: s.action_steps ?? [],
         tags: [],
-        ai_context: `Generated from ${allTxs.length} transactions; monthly net profit $${netProfit.toFixed(2)}.`,
+        ai_context: JSON.stringify({
+          generated_from_transactions: allTxs.length,
+          monthly_net_profit: netProfit,
+          source_facts: s.source_facts?.map(sourceId => ({
+            source_id: sourceId,
+            fact: sourceById.get(sourceId) ?? "",
+          })),
+          calculation: s.calculation,
+          deduction_amount: s.deduction_amount,
+          rank: s.rank,
+        }),
       }));
 
       const { error: insError } = await supabase.from("ai_tax_strategies").insert(rowsToInsert);
       if (insError) throw insError;
 
       await queryClient.invalidateQueries({ queryKey: strategiesQueryKey });
-      toast({ title: "Strategies updated!", description: `${parsed.strategies.length} personalized strategies generated.` });
+      toast({
+        title: "Strategies updated!",
+        description: `${rankedStrategies.length} supported strategies generated and ranked.${excludedCount > 0 ? ` ${excludedCount} unsupported candidate${excludedCount === 1 ? " was" : "s were"} excluded.` : ""}`,
+      });
     } catch (err) {
       toast({ title: "Failed to generate strategies", description: err instanceof Error ? err.message : "Unknown error", variant: "destructive" });
     } finally {
       setGenerating(false);
     }
-  }, [allTxs, monthTxs, income, expenses, netProfit, toast, orgId, authUid, queryClient, strategiesQueryKey]);
+  }, [allTxs, income, expenses, netProfit, surveyProfile, toast, orgId, authUid, queryClient, strategiesQueryKey]);
 
   // ── Derived: deduction optimization score ────────────────────────────────
-  const optimizationScore = strategies.length > 0
-    ? Math.min(95, Math.max(30, Math.round(50 + (totalSavings / Math.max(income * 12, 50_000)) * 45)))
+  const monthExpenseAmount = monthTxs
+    .filter(tx => tx.amount < 0)
+    .reduce((sum, tx) => sum + Math.abs(tx.amount), 0);
+  const monthDeductibleAmount = monthTxs
+    .filter(tx => tx.amount < 0 && tx.deductible)
+    .reduce((sum, tx) => sum + Math.abs(tx.amount), 0);
+  const optimizationScore = monthExpenseAmount > 0
+    ? Math.min(100, Math.round((monthDeductibleAmount / monthExpenseAmount) * 100))
     : 0;
   const notUtilized = 100 - optimizationScore;
 
@@ -671,7 +774,7 @@ Rules:
             <div className="px-8 py-5 text-center">
               <p className="text-xs text-muted-foreground mb-1">Additional Deductions Found</p>
               <p className="text-lg font-bold text-[#FFC72B]">
-                {hasGenerated && totalSavings > 0 ? fmt(totalSavings * 0.3) : "$ ---"}
+                {hasGenerated ? fmt(totalAdditionalDeductions) : "$ ---"}
               </p>
             </div>
             <div className="px-8 py-5 text-center">
@@ -727,6 +830,9 @@ Rules:
                       className="rounded-xl border border-border p-4 flex flex-col gap-3"
                       style={{ background: "linear-gradient(160deg, hsl(var(--muted)), hsl(var(--card)))" }}
                     >
+                      <span className="w-fit text-[10px] font-bold px-2 py-0.5 rounded-full bg-[#FFC72B] text-[#020E2C]">
+                        Rank #{s.rank ?? i + 1}
+                      </span>
                       <div className="flex items-start justify-between gap-2">
                         <p className="text-sm font-bold text-foreground leading-snug">{s.title}</p>
                         <span className="text-lg font-bold text-[#FFC72B] flex-shrink-0">{fmt(s.savings)}</span>
@@ -759,6 +865,9 @@ Rules:
                         className="flex items-center gap-4 rounded-xl border border-border px-5 py-4"
                         style={{ background: "linear-gradient(135deg, hsl(var(--muted)), hsl(var(--card)))" }}
                       >
+                        <span className="text-xs font-bold text-[#FFC72B] flex-shrink-0">
+                          #{s.rank ?? i + 4}
+                        </span>
                         <div className="flex-1 min-w-0">
                           <p className="text-sm font-bold text-foreground">{s.title}</p>
                           <p className="text-[11px] text-muted-foreground mt-0.5 leading-relaxed line-clamp-2">{s.description}</p>
@@ -855,10 +964,10 @@ Rules:
                     Deductions by Category
                     <Info className="h-3.5 w-3.5 text-muted-foreground" />
                   </p>
-                  {tableGroups.length === 0 ? (
+                  {deductionChartGroups.length === 0 ? (
                     <div className="flex flex-col items-center justify-center h-48 gap-3 text-center">
                       <TrendingDown className="h-10 w-10 text-muted-foreground/60" />
-                      <p className="text-sm text-muted-foreground">No transactions in this period.</p>
+                      <p className="text-sm text-muted-foreground">No eligible deductions in this period.</p>
                     </div>
                   ) : (
                     <div className="flex flex-col xl:flex-row xl:items-center gap-6 xl:gap-8">
@@ -866,11 +975,11 @@ Rules:
                       <div className="relative mx-auto aspect-square w-full max-w-[330px] flex-shrink-0 xl:mx-0">
                         <ResponsiveContainer width="100%" height="100%">
                           <PieChart>
-                            <Pie data={tableGroups} dataKey="totalAmt" nameKey="label"
+                            <Pie data={deductionChartGroups} dataKey="dedAmt" nameKey="label"
                               cx="50%" cy="50%" outerRadius={154} innerRadius={94} paddingAngle={2}>
-                              {tableGroups.map((g) => <Cell key={g.label} fill={g.color} />)}
+                              {deductionChartGroups.map((g) => <Cell key={g.label} fill={g.color} />)}
                             </Pie>
-                            <Tooltip formatter={(v: number) => [fmt(v), "Amount"]}
+                            <Tooltip formatter={(v: number) => [fmt(v), "Eligible deduction"]}
                               contentStyle={{ background: "hsl(var(--muted))", border: "1px solid hsl(var(--border))", borderRadius: 8, fontSize: 11 }} />
                           </PieChart>
                         </ResponsiveContainer>
@@ -883,14 +992,14 @@ Rules:
 
                       {/* Legend — right side */}
                       <div className="w-full max-w-[560px] min-w-0 space-y-3 xl:pr-1">
-                        {tableGroups.map(g => (
+                        {deductionChartGroups.map(g => (
                           <div key={g.label} className="grid grid-cols-[minmax(0,1fr)_90px] items-center gap-4">
                             <div className="flex items-center gap-2 min-w-0">
                               <span className="h-2.5 w-2.5 rounded-full flex-shrink-0" style={{ background: g.color }} />
                               <span className="text-xs text-foreground/90 truncate">{g.label}</span>
                             </div>
                             <span className="text-xs font-semibold text-foreground text-right">
-                              {g.dedAmt > 0 ? fmt(g.dedAmt) : "$"}
+                              {fmt(g.dedAmt)}
                             </span>
                           </div>
                         ))}
@@ -903,33 +1012,33 @@ Rules:
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   {[
                     {
-                      label: "Total Amount",
+                      label: "Total Activity",
                       value: fmt(allTxsAmt),
-                      sub: "100% of transactions",
+                      sub: `${dedTxs.length} income and expense transaction${dedTxs.length === 1 ? "" : "s"}`,
                       icon: <DollarSign className="h-4 w-4" style={{ color: "#60a5fa" }} />,
                       iconBg: "#60a5fa18",
                       subColor: "hsl(var(--muted-foreground))",
                     },
                     {
-                      label: "Total Deductions",
-                      value: fmt(totalDeductibleAmt),
-                      sub: `${deductionRate.toFixed(0)}% of total amount`,
-                      icon: <TrendingDown className="h-4 w-4" style={{ color: "#22c55e" }} />,
-                      iconBg: "#22c55e18",
-                      subColor: "#22c55e",
-                    },
-                    {
-                      label: "Total Transactions",
-                      value: dedTxs.length.toString(),
-                      sub: "Across all categories",
+                      label: "Total Expenses",
+                      value: fmt(totalExpenseAmt),
+                      sub: `${allExpenses.length} expense transaction${allExpenses.length === 1 ? "" : "s"}`,
                       icon: <Hash className="h-4 w-4" style={{ color: "#f59e0b" }} />,
                       iconBg: "#f59e0b18",
                       subColor: "hsl(var(--muted-foreground))",
                     },
                     {
-                      label: "Deduction Rate",
+                      label: "Eligible Deductions",
+                      value: fmt(totalDeductibleAmt),
+                      sub: `${deductibleTxs.length} expense${deductibleTxs.length === 1 ? "" : "s"} flagged as deductible`,
+                      icon: <TrendingDown className="h-4 w-4" style={{ color: "#22c55e" }} />,
+                      iconBg: "#22c55e18",
+                      subColor: "#22c55e",
+                    },
+                    {
+                      label: "Expense Deduction Rate",
                       value: `${deductionRate.toFixed(2)}%`,
-                      sub: "Average deduction rate",
+                      sub: "Eligible deductions ÷ total expenses",
                       icon: <Percent className="h-4 w-4" style={{ color: "#a78bfa" }} />,
                       iconBg: "#a78bfa18",
                       subColor: "hsl(var(--muted-foreground))",
@@ -953,8 +1062,8 @@ Rules:
               {/* ── Deductions Breakdown table ── */}
               <div>
                 <div className="mb-3">
-                  <p className="text-sm font-bold text-foreground">Deductions Breakdown</p>
-                  <p className="text-xs text-muted-foreground">Click on a category to view matching transactions</p>
+                  <p className="text-sm font-bold text-foreground">Transaction &amp; Deduction Breakdown</p>
+                  <p className="text-xs text-muted-foreground">Activity includes income and expenses; deductions include eligible expenses only.</p>
                 </div>
 
                 {tableGroups.length === 0 ? (
@@ -968,9 +1077,9 @@ Rules:
                     <div className="grid text-[10px] text-muted-foreground font-semibold uppercase tracking-wider px-4 py-2.5 border-b border-border/60"
                       style={{ gridTemplateColumns: "2fr 1fr 1fr 1fr 1fr auto" }}>
                       <span>Category</span>
-                      <span>Total</span>
-                      <span>Deductions</span>
-                      <span>Deduction Rate</span>
+                      <span>Activity</span>
+                      <span>Eligible Deduction</span>
+                      <span>Expense Deduction Rate</span>
                       <span>Transactions</span>
                       <span>Action</span>
                     </div>
@@ -992,7 +1101,7 @@ Rules:
                             {/* Total */}
                             <span className="text-sm text-foreground/90">{fmt(group.totalAmt)}</span>
                             {/* Deductions */}
-                            <span className="text-sm text-foreground/90">{group.dedAmt > 0 ? fmt(group.dedAmt) : "$"}</span>
+                            <span className="text-sm text-foreground/90">{group.dedAmt > 0 ? fmt(group.dedAmt) : "—"}</span>
                             {/* Deduction Rate */}
                             <span className="text-sm text-muted-foreground">{group.deductionRate > 0 ? `${group.deductionRate.toFixed(1)}%` : "—"}</span>
                             {/* Transactions */}
@@ -1013,7 +1122,7 @@ Rules:
                                   </div>
                                   <span className="text-foreground/90">{fmt(Math.abs(t.amount))}</span>
                                   <span className="text-[#22c55e] font-semibold">
-                                    {t.deductible ? fmt(deductionAmountForTx(t)) : "$"}
+                                    {t.deductible && deductionAmountForTx(t) > 0 ? fmt(deductionAmountForTx(t)) : "—"}
                                   </span>
                                   <span className="text-muted-foreground">
                                     {t.deductible && Math.abs(t.amount) > 0
