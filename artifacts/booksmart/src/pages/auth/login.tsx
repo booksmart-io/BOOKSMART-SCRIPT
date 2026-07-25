@@ -96,16 +96,18 @@ export default function Login() {
                 <span className="bg-card px-2 text-muted-foreground">Or continue with</span>
               </div>
             </div>
-            <Button
-              type="button"
-              variant="outline"
-              className="w-full"
-              onClick={handleGoogleLogin}
-              disabled={googleLoading}
-            >
-              <GoogleIcon className="mr-2 h-4 w-4" />
-              {googleLoading ? "Redirecting..." : "Continue with Google"}
-            </Button>
+        {/*
+<Button
+  type="button"
+  variant="outline"
+  className="w-full"
+  onClick={handleGoogleLogin}
+  disabled={googleLoading}
+>
+  <GoogleIcon className="mr-2 h-4 w-4" />
+  {googleLoading ? "Redirecting..." : "Continue with Google"}
+</Button>
+*/}
           </CardContent>
           <CardFooter className="flex justify-center">
             <p className="text-sm text-muted-foreground">
