@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildBusinessDocumentPrefill, safelyMapEntityType } from "./business-document-prefill";
+import {
+  buildBusinessDocumentPrefill,
+  preserveEnteredBusinessDocumentFields,
+  safelyMapEntityType,
+} from "./business-document-prefill";
 
 const states = [
   { id: 5, name: "California", code: "CA" },
@@ -40,6 +44,7 @@ test("maps explicit registration facts into existing form fields", () => {
     stateIncorporation: "Delaware",
     stateId: "5",
     yearEstablished: "2025",
+    startDate: "2025-04-03",
     street: "100 Market Street",
     suite: "Suite 200",
     city: "San Francisco",
@@ -63,4 +68,22 @@ test("does not invent or map ambiguous values", () => {
   }, states);
 
   assert.deepEqual(result, {});
+});
+
+test("document prefill fills empty fields without overwriting entered values", () => {
+  const result = preserveEnteredBusinessDocumentFields(
+    {
+      businessName: "Typed Name LLC",
+      street: "",
+      stateRegistrationNumber: "MANUAL-123",
+    },
+    {
+      businessName: "Extracted Name LLC",
+      street: "100 Extracted Street",
+      stateRegistrationNumber: "DOC-456",
+    },
+  );
+  assert.equal(result.businessName, "Typed Name LLC");
+  assert.equal(result.street, "100 Extracted Street");
+  assert.equal(result.stateRegistrationNumber, "MANUAL-123");
 });

@@ -7,6 +7,12 @@ import { useDeductionRuleSet, summarizeDeductions, type OrgRow } from "@/lib/ded
 import { pickActiveOrganization, useActiveOrganizationId } from "@/lib/active-organization";
 import { liabilityBalanceEntries } from "@/lib/survey-liabilities";
 import {
+  resolveBusinessProfileSources,
+  resolvedFactsForPrompt,
+  type FinancialActuals,
+} from "@/lib/business-profile-source-resolver";
+import { normalizeStatementDoc, type StatementPeriod } from "@/lib/financial-statements";
+import {
   Card, CardContent, CardHeader, CardTitle, CardFooter,
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -136,8 +142,6 @@ function buildSurveyProfile(org: OrgRow | null | undefined): string {
 
   const accountingMethod = str(org.accounting_method);
   if (accountingMethod) lines.push(`- Accounting method: ${accountingMethod}`);
-  const teamStructure = arr(org.team_structure);
-  if (teamStructure) lines.push(`- Team structure: ${teamStructure}`);
   const majorEquipment = bool(org.major_equipment);
   if (majorEquipment) lines.push(`- Made major equipment purchases: ${majorEquipment}`);
 
@@ -177,8 +181,6 @@ function buildSurveyProfile(org: OrgRow | null | undefined): string {
   const familyEducation = arr(org.family_education);
   if (familyEducation) lines.push(`- Family/education costs: ${familyEducation}`);
 
-  const taxGoal = str(org.tax_goal);
-  if (taxGoal) lines.push(`- Primary tax goal: ${taxGoal}`);
   const retirementCurrent = arr(org.retirement_current);
   if (retirementCurrent) lines.push(`- Current retirement accounts: ${retirementCurrent}`);
   const auditAppetite = str(org.audit_appetite);
@@ -199,24 +201,9 @@ function buildSurveyProfile(org: OrgRow | null | undefined): string {
       };
       addText("NAICS code", onboarding.naics_code);
       addText("Business description", onboarding.business_description);
-      addText("Business status", onboarding.business_status);
-      addText("Year established", onboarding.year_established);
-      const ownership = onboarding.ownership as Record<string, unknown> | undefined;
-      if (ownership?.ownership_percent) lines.push(`- Owner percentage: ${ownership.ownership_percent}%`);
       const banking = onboarding.banking as Record<string, unknown> | undefined;
       addText("Primary bank", banking?.primary_bank);
-      addText("Accounting software", banking?.accounting_software);
-      addText("Payroll provider", banking?.payroll_provider);
-      addArray("Payment platforms", banking?.payment_platforms);
-      addArray("Business operations", onboarding.operations);
-      const snapshot = onboarding.financial_snapshot as Record<string, unknown> | undefined;
-      addText("Approximate annual revenue", snapshot?.approximate_annual_revenue);
-      addText("Profitability", snapshot?.profitability);
       addArray("Deduction profile", onboarding.deduction_profile);
-      addArray("Business goals", onboarding.goals);
-      const funding = onboarding.funding as Record<string, unknown> | undefined;
-      addText("Funding plans", funding?.plans_to_apply);
-      addArray("Funding purposes", funding?.purposes);
       addArray("AI notification preferences", onboarding.ai_preferences);
     }
 
@@ -415,8 +402,25 @@ export default function AiStrategy() {
     queryFn:  async () => {
       const { data } = await supabase.from("transactions")
         .select("id,title,amount,type,date_time,description,deductible")
-        .eq("org_id", orgId!).order("date_time", { ascending: false }).limit(50);
+        .eq("org_id", orgId!).order("date_time", { ascending: false });
       return data ?? [];
+    },
+  });
+
+  const { data: statementPeriods = [] } = useQuery<StatementPeriod[]>({
+    queryKey: ["statement_docs_ai_strategy", numericId, orgId],
+    enabled: numericId !== null && orgId !== null,
+    staleTime: 30_000,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("user_documents")
+        .select("id, name, category, tax_year, parsed_data")
+        .eq("user_id", numericId!)
+        .in("category", ["Profit & Loss", "Income Statement"]);
+      if (error) throw error;
+      return (data ?? [])
+        .flatMap((row) => normalizeStatementDoc(row as never))
+        .filter((period) => period.docType === "pnl" && period.organizationId === orgId);
     },
   });
 
@@ -506,6 +510,30 @@ export default function AiStrategy() {
 
   // ── Business Survey summary for AI prompt ──────────────────────────────────
   const surveyProfile = useMemo(() => buildSurveyProfile(org), [org]);
+  const statementActuals = useMemo<FinancialActuals | null>(() => {
+    const latest = [...statementPeriods]
+      .filter((period) => period.pnl)
+      .sort((a, b) => (b.periodEnd?.getTime() ?? b.year ?? 0) - (a.periodEnd?.getTime() ?? a.year ?? 0))[0];
+    if (!latest?.pnl) return null;
+    const expenses = latest.pnl.cogs + latest.pnl.opex;
+    const periodLabel = latest.periodStart && latest.periodEnd
+      ? `${latest.periodStart.toISOString().slice(0, 10)} to ${latest.periodEnd.toISOString().slice(0, 10)}`
+      : latest.year ? String(latest.year) : latest.docName;
+    return {
+      revenue: latest.pnl.revenue,
+      expenses,
+      netIncome: latest.pnl.netIncome,
+      periodLabel,
+    };
+  }, [statementPeriods]);
+  const resolvedProfileFacts = useMemo(
+    () => resolveBusinessProfileSources({ organization: org, transactions: allTxs, statementActuals }),
+    [org, allTxs, statementActuals],
+  );
+  const groundedProfileEntries = useMemo(
+    () => resolvedFactsForPrompt(resolvedProfileFacts),
+    [resolvedProfileFacts],
+  );
 
   // ── Generate AI strategies ─────────────────────────────────────────────────
   const generate = useCallback(async () => {
@@ -538,13 +566,9 @@ export default function AiStrategy() {
       }
 
       const sourceEntries = [
-        { id: "FIN-1", fact: `Monthly income: $${income.toFixed(2)}` },
-        { id: "FIN-2", fact: `Monthly expenses: $${expenses.toFixed(2)}` },
-        { id: "FIN-3", fact: `Net profit (month): $${netProfit.toFixed(2)}` },
-        { id: "FIN-4", fact: `Annualized income (estimate): $${(income * 12).toFixed(2)}` },
-        { id: "FIN-5", fact: `Total transactions analyzed: ${allTxs.length}` },
+        ...groundedProfileEntries.map(({ id, fact }) => ({ id, fact })),
         ...surveyProfile.split("\n").map((fact, index) => ({
-          id: `PROFILE-${index + 1}`,
+          id: `PROFILE-EXTRA-${index + 1}`,
           fact: fact.replace(/^-\s*/, "").trim(),
         })).filter(entry => entry.fact),
         ...allTxs.slice(0, 40).map((tx, index) => ({
@@ -708,7 +732,7 @@ Rules:
     } finally {
       setGenerating(false);
     }
-  }, [allTxs, income, expenses, netProfit, surveyProfile, toast, orgId, authUid, queryClient, strategiesQueryKey]);
+  }, [allTxs, groundedProfileEntries, surveyProfile, toast, orgId, authUid, queryClient, strategiesQueryKey]);
 
   // ── Derived: deduction optimization score ────────────────────────────────
   const monthExpenseAmount = monthTxs

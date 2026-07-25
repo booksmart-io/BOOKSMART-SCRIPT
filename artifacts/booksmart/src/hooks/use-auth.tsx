@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { User, Session } from "@supabase/supabase-js";
+import { hasLegalConsent } from "@/lib/legal-consent";
 
 export type UserProfile = {
   id: string;          // Supabase auth UUID
@@ -21,6 +22,7 @@ type AuthContextType = {
   isLoading: boolean;
   signOut: () => Promise<void>;
   refreshProfile: () => Promise<void>;
+  requiresLegalConsent: boolean;
 };
 
 const AuthContext = createContext<AuthContextType>({
@@ -30,6 +32,7 @@ const AuthContext = createContext<AuthContextType>({
   isLoading: true,
   signOut: async () => {},
   refreshProfile: async () => {},
+  requiresLegalConsent: false,
 });
 
 export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
@@ -37,6 +40,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [requiresLegalConsent, setRequiresLegalConsent] = useState(false);
 
   useEffect(() => {
     // Mirrors the old Flutter app's `getInitialRoute()`: a single, sequential
@@ -140,6 +144,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
         .single();
 
       if (!appUserError && appUser) {
+        setRequiresLegalConsent(false);
         setAppUserProfile(authUuid, appUser as Parameters<typeof setAppUserProfile>[1]);
         return;
       }
@@ -189,6 +194,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
         .single();
 
       if (!profileError && profileRow) {
+        setRequiresLegalConsent(false);
         setProfile({
           ...(profileRow as Omit<UserProfile, "numericId">),
           numericId: null,
@@ -204,6 +210,23 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       // of silently staying null.
       const fullName: string = meta.full_name ?? meta.name ?? "";
       const [firstName, ...rest] = fullName.split(" ").filter(Boolean);
+
+      const isOAuthUser = authUser?.app_metadata?.provider
+        && authUser.app_metadata.provider !== "email";
+      if (isOAuthUser && !hasLegalConsent(meta)) {
+        setRequiresLegalConsent(true);
+        setProfile({
+          id: authUuid,
+          numericId: null,
+          email: authEmail,
+          full_name: fullName,
+          role: (meta.role as UserProfile["role"]) ?? "user",
+          token_balance: 0,
+          img_url: null,
+        });
+        return;
+      }
+      setRequiresLegalConsent(false);
 
       const { data: createdUser, error: createError } = await supabase
         .from("users")
@@ -292,7 +315,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   };
 
   return (
-    <AuthContext.Provider value={{ session, user, profile, isLoading, signOut, refreshProfile }}>
+    <AuthContext.Provider value={{ session, user, profile, isLoading, signOut, refreshProfile, requiresLegalConsent }}>
       {children}
     </AuthContext.Provider>
   );

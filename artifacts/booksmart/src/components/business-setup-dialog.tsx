@@ -1,8 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
-import { Loader2, Building2, MapPin, Landmark, BriefcaseBusiness, ShieldCheck, ChevronLeft, ChevronRight } from "lucide-react";
+import { Loader2, Building2, MapPin, Landmark, ChevronLeft, ChevronRight } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -10,6 +9,18 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { supabase } from "@/lib/supabase";
 import { checkAddBusiness } from "@/lib/plan-limits";
 import { cn } from "@/lib/utils";
+import {
+  BUSINESS_ENTITY_TYPES as ENTITY_TYPES,
+  BUSINESS_INDUSTRIES as INDUSTRIES,
+  NAICS_BY_INDUSTRY,
+} from "@/lib/business-information-options";
+import {
+  firstBusinessInformationError,
+  cpaQuestionVisibility,
+  validateBusinessInformation,
+  type BusinessInformationFormData,
+} from "@/lib/business-information-schema";
+import { buildBusinessInformationPayload } from "@/lib/business-information-payload";
 
 type StateRow = { id: number; name: string; code: string };
 
@@ -23,49 +34,7 @@ type BusinessSetupDialogProps = {
   onError?: (message: string) => void;
 };
 
-const ENTITY_TYPES = [
-  "Sole Proprietorship",
-  "Single Member LLC",
-  "Multi Member LLC",
-  "Partnership",
-  "Limited Partnership (LP)",
-  "Limited Liability Partnership (LLP)",
-  "S Corporation",
-  "C Corporation",
-  "Professional Corporation (PC)",
-  "Professional LLC (PLLC)",
-  "Nonprofit",
-  "Independent Contractor / Freelancer",
-  "Trust",
-  "Estate",
-  "Other",
-];
-
-const INDUSTRIES = [
-  "Construction", "Real Estate", "Restaurant", "Retail", "Medical", "Dental", "Legal", "Accounting",
-  "Financial Services", "Marketing", "Technology", "Consulting", "Insurance", "Manufacturing",
-  "Transportation", "Logistics", "Trucking", "Cleaning Services", "Landscaping", "HVAC", "Plumbing",
-  "Electrical", "Roofing", "Engineering", "Architecture", "Education", "Childcare", "Fitness",
-  "Beauty Salon", "Barber Shop", "E Commerce", "Online Business", "Photography", "Agriculture",
-  "Nonprofit", "Other",
-];
-
-const BUSINESS_STATUS = ["Startup", "Seasonal", "Temporarily Closed"];
-const EMPLOYEE_COUNTS = ["Just Me", "2 to 5", "6 to 10", "11 to 25", "26 to 50", "51 to 100", "100+"];
-const LOCATION_TYPES = ["Home Office", "Commercial Office", "Retail Store", "Warehouse", "Mobile Business", "Virtual Office"];
-const TAX_PREPARERS = ["Myself", "CPA", "Tax Preparer", "Bookkeeper"];
-const TAX_FILINGS = ["Federal", "State", "Sales Tax", "Payroll Tax", "1099"];
-const PAYMENT_PLATFORMS = ["Stripe", "Square", "PayPal", "Shopify", "Amazon", "Etsy", "Clover", "Toast", "Venmo", "Cash App", "Zelle", "Other"];
-const ACCOUNTING_SOFTWARE = ["QuickBooks", "Xero", "Wave", "FreshBooks", "Zoho", "Sage", "None"];
-const PAYROLL_PROVIDERS = ["Gusto", "ADP", "Paychex", "Rippling", "Justworks", "None"];
-const BUSINESS_OPERATIONS = ["Sell Products", "Sell Services", "Have Employees", "Issue 1099s"];
-const EMPLOYEE_TYPES = ["1099", "W-2 Employee", "Self / Single"];
-const REVENUE_RANGES = ["Under $25,000", "$25K to $50K", "$50K to $100K", "$100K to $250K", "$250K to $500K", "$500K to $1M", "$1M to $5M", "$5M+"];
-const PROFITABILITY = ["Profitable", "Breaking Even", "Losing Money", "Unsure"];
-const BUSINESS_GOALS = ["Bookkeeping", "Tax Savings", "AI Financial Insights", "Cash Flow", "Budgeting", "Financial Reports", "CPA Access", "Tax Preparation", "Loan Readiness", "Business Credit", "Financial Forecasting", "Expense Tracking", "Receipt Management", "Bank Reconciliation"];
-const FUNDING_PURPOSES = ["Working Capital", "Equipment", "Vehicle", "Commercial Property", "SBA Loan", "Line of Credit", "Expansion", "Startup", "Inventory"];
-
-const INITIAL_FORM = {
+const INITIAL_FORM: BusinessInformationFormData = {
   legalName: "",
   entityType: "",
   industry: "",
@@ -124,8 +93,8 @@ const INITIAL_FORM = {
   desiredFundingAmount: "",
   fundingTimeline: "",
   operationsNotes: "",
-  hasCpa: "no",
-  wantsCpaMatch: "yes",
+  hasCpa: "",
+  wantsCpaMatch: "",
   wantsBookkeeper: "no",
   certifyAccurate: false,
   authorizeAnalysis: false,
@@ -133,35 +102,12 @@ const INITIAL_FORM = {
   acceptPrivacy: false,
 };
 
-type FormState = typeof INITIAL_FORM;
-type MultiKey = {
-  [K in keyof FormState]: FormState[K] extends string[] ? K : never;
-}[keyof FormState];
-
+type FormState = BusinessInformationFormData;
 const STEPS = [
-  { title: "Company", icon: Building2 },
-  { title: "Address", icon: MapPin },
-  { title: "Tax", icon: Landmark },
-  { title: "Operations", icon: BriefcaseBusiness },
-  { title: "Legal", icon: ShieldCheck },
+  { title: "Company Identity", icon: Building2 },
+  { title: "Address & Ownership", icon: MapPin },
+  { title: "Tax / Registration", icon: Landmark },
 ];
-
-const NAICS_BY_INDUSTRY: Record<string, string> = {
-  Construction: "23",
-  "Real Estate": "531",
-  Restaurant: "722511",
-  Retail: "44-45",
-  Medical: "621",
-  Dental: "621210",
-  Legal: "541110",
-  Accounting: "541211",
-  Technology: "5415",
-  Consulting: "541611",
-  Transportation: "48-49",
-  Trucking: "484",
-  Manufacturing: "31-33",
-  Nonprofit: "813",
-};
 
 export default function BusinessSetupDialog({
   open,
@@ -178,6 +124,7 @@ export default function BusinessSetupDialog({
 
   const progress = ((step + 1) / STEPS.length) * 100;
   const CurrentIcon = STEPS[step].icon;
+  const cpaVisibility = cpaQuestionVisibility(form.hasCpa);
 
   useEffect(() => {
     if (!open) return;
@@ -194,35 +141,16 @@ export default function BusinessSetupDialog({
     setForm((current) => ({ ...current, [key]: value }));
   }
 
-  function toggleList(key: MultiKey, value: string) {
-    setForm((current) => {
-      const list = current[key] as string[];
-      return {
-        ...current,
-        [key]: list.includes(value) ? list.filter((item) => item !== value) : [...list, value],
-      };
-    });
-  }
-
   function validateStep() {
-    if (step === 0) {
-      if (!form.legalName.trim()) return "Legal business name is required.";
-      if (!form.entityType) return "Business entity type is required.";
-      if (!form.industry) return "Industry is required.";
-    }
-    if (step === 1) {
-      if (!form.state) return "Primary business state is required.";
-    }
-    if (step === 2) {
-      if (!form.einTin.trim()) return "EIN / Tax ID is required.";
-      if (!form.federalTaxClass) return "Federal tax classification is required.";
-    }
-    if (step === 4) {
-      if (!form.certifyAccurate || !form.authorizeAnalysis || !form.acceptTerms || !form.acceptPrivacy) {
-        return "Please complete all legal confirmations.";
-      }
-    }
-    return null;
+    const errors = validateBusinessInformation(form);
+    const fieldsByStep: Array<Array<keyof typeof errors>> = [
+      ["legalName", "entityType", "industry", "yearEstablished", "startDate", "website", "businessEmail"],
+      ["state", "zip", "ownershipPercent"],
+      ["einTin"],
+    ];
+    return firstBusinessInformationError(Object.fromEntries(
+      fieldsByStep[step].filter((key) => errors[key]).map((key) => [key, errors[key]]),
+    ));
   }
 
   function next() {
@@ -247,103 +175,14 @@ export default function BusinessSetupDialog({
     setSaving(true);
     try {
       await checkAddBusiness();
-      const onboardingProfile = {
-        naics_code: form.naics.trim() || null,
-        business_description: form.description.trim() || null,
-        business_status: form.status || null,
-        year_established: form.yearEstablished || null,
-        date_business_started: form.startDate || null,
-        employee_count: form.employees || null,
-        independent_contractor_count: form.contractors || null,
-        address: {
-          street: form.street.trim() || null,
-          suite: form.suite.trim() || null,
-          city: form.city.trim() || null,
-          state: selectedStateName || null,
-          zip: form.zip.trim() || null,
-          country: form.country.trim() || null,
-          mailing_same_as_business: form.mailingSame,
-          location_type: form.locationType || null,
-        },
-        ownership: {
-          owner_name: form.ownerName.trim() || null,
-          owner_title: form.ownerTitle.trim() || null,
-          ownership_percent: Number(form.ownershipPercent) || 100,
-          additional_owners_notes: form.additionalOwners.trim() || null,
-        },
-        tax: {
-          federal_tax_classification: form.federalTaxClass || null,
-          state_of_incorporation: form.stateIncorporation || null,
-          state_registration_number: form.stateRegistrationNumber.trim() || null,
-          business_license_number: form.businessLicenseNumber.trim() || null,
-          sales_tax_permit: form.salesTaxPermit === "yes",
-          sales_tax_number: form.salesTaxNumber.trim() || null,
-          payroll_tax_number: form.payrollTaxNumber.trim() || null,
-          tax_year: form.taxYear,
-          fiscal_year_end: form.fiscalYearEnd || null,
-          filings: form.operations.includes("Issue 1099s") ? [...TAX_FILINGS.filter((f) => f !== "1099"), "1099"] : [],
-          tax_preparer: form.taxPreparer || null,
-          current_cpa: form.currentCpa.trim() || null,
-          has_cpa: form.hasCpa === "yes",
-          wants_cpa_match: form.wantsCpaMatch === "yes",
-          wants_bookkeeper: form.wantsBookkeeper === "yes",
-        },
-        banking: {
-          connect_bank_now: false,
-          primary_bank: form.primaryBank.trim() || null,
-          bank_account_count: form.bankAccountCount || null,
-          business_credit_cards: form.businessCreditCards === "yes",
-          loans: form.loans === "yes",
-          line_of_credit: form.lineOfCredit === "yes",
-          payment_platforms: form.paymentPlatforms,
-          accounting_software: form.accountingSoftware || null,
-          payroll_provider: form.payrollProvider || null,
-        },
-        operations: form.operations,
-        employee_type: form.employeeType || null,
-        financial_snapshot: {
-          approximate_annual_revenue: form.annualRevenue || null,
-          average_monthly_revenue: Number(form.monthlyRevenue) || null,
-          average_monthly_expenses: Number(form.monthlyExpenses) || null,
-          profitability: form.profitability || null,
-        },
-        goals: form.goals,
-        funding: {
-          plans_to_apply: form.applyingFunding,
-          purposes: form.fundingPurposes,
-          desired_amount: Number(form.desiredFundingAmount) || null,
-          timeline: form.fundingTimeline.trim() || null,
-        },
-        operations_notes: form.operationsNotes.trim() || null,
-        legal: {
-          certified_accurate: form.certifyAccurate,
-          authorized_analysis: form.authorizeAnalysis,
-          accepted_terms: form.acceptTerms,
-          accepted_privacy: form.acceptPrivacy,
-        },
-        completed_at: new Date().toISOString(),
-      };
-
-      const payload = {
-        owner_id: ownerId,
-        name: form.legalName.trim(),
-        org_type: form.entityType,
-        industry: form.industry,
-        ein_tin: form.einTin.trim(),
-        state: Number(form.state),
-        street: [form.street.trim(), form.suite.trim()].filter(Boolean).join(", "),
-        city: form.city.trim(),
-        zip: form.zip.trim(),
-        phone: form.businessPhone.trim(),
-        email: form.businessEmail.trim(),
-        website: form.website.trim() || null,
-        primary_state: selectedStateName || null,
-        industry_niche: form.industry,
-        debts: {
-          onboarding_profile: onboardingProfile,
-          business_profile_completed: true,
-        },
-      };
+      const allErrors = validateBusinessInformation(form);
+      const allError = firstBusinessInformationError(allErrors);
+      if (allError) throw new Error(allError);
+      const payload = buildBusinessInformationPayload({
+        form,
+        stateName: selectedStateName || null,
+        ownerId,
+      });
 
       const { data, error: insertError } = await supabase
         .from("organizations")
@@ -402,15 +241,13 @@ export default function BusinessSetupDialog({
 
           {step === 0 && (
             <div className="grid min-w-0 gap-4 lg:grid-cols-2">
+              <p className="text-sm text-muted-foreground lg:col-span-2">Identify the registered business and provide contact details used for its BookSmart profile.</p>
               <Field label="Legal business name *"><Input value={form.legalName} onChange={(e) => update("legalName", e.target.value)} placeholder="Acme LLC" /></Field>
               <Field label="Entity type *"><SelectField value={form.entityType} onChange={(v) => update("entityType", v)} options={ENTITY_TYPES} placeholder="Select entity" /></Field>
               <Field label="Industry *"><SelectField value={form.industry} onChange={(v) => { update("industry", v); update("naics", NAICS_BY_INDUSTRY[v] ?? ""); }} options={INDUSTRIES} placeholder="Select industry" /></Field>
               <Field label="NAICS code"><Input value={form.naics} onChange={(e) => update("naics", e.target.value)} placeholder="Auto-filled when available" /></Field>
-              <Field label="Business status"><SelectField value={form.status} onChange={(v) => update("status", v)} options={BUSINESS_STATUS} placeholder="Select status" /></Field>
               <Field label="Year established"><Input type="number" value={form.yearEstablished} onChange={(e) => update("yearEstablished", e.target.value)} placeholder="2024" /></Field>
               <Field label="Date business started"><Input type="date" value={form.startDate} onChange={(e) => update("startDate", e.target.value)} /></Field>
-              <Field label="Number of employees"><SelectField value={form.employees} onChange={(v) => update("employees", v)} options={EMPLOYEE_COUNTS} placeholder="Select count" /></Field>
-              <Field label="Independent contractors"><Input type="number" min="0" value={form.contractors} onChange={(e) => update("contractors", e.target.value)} /></Field>
               <Field label="Business website"><Input value={form.website} onChange={(e) => update("website", e.target.value)} placeholder="https://acme.com" /></Field>
               <Field label="Business email"><Input type="email" value={form.businessEmail} onChange={(e) => update("businessEmail", e.target.value)} /></Field>
               <Field label="Business phone"><Input value={form.businessPhone} onChange={(e) => update("businessPhone", e.target.value)} /></Field>
@@ -420,75 +257,49 @@ export default function BusinessSetupDialog({
 
           {step === 1 && (
             <div className="grid min-w-0 gap-4 lg:grid-cols-2">
+              <p className="text-sm text-muted-foreground lg:col-span-2">Use the registered business address and identify the primary legal owner.</p>
               <Field label="Street"><Input value={form.street} onChange={(e) => update("street", e.target.value)} /></Field>
               <Field label="Suite"><Input value={form.suite} onChange={(e) => update("suite", e.target.value)} /></Field>
               <Field label="City"><Input value={form.city} onChange={(e) => update("city", e.target.value)} /></Field>
               <Field label="State *"><SelectField value={form.state} onChange={(v) => update("state", v)} options={states.map((s) => ({ value: String(s.id), label: s.name }))} placeholder="Select state" /></Field>
               <Field label="ZIP"><Input value={form.zip} onChange={(e) => update("zip", e.target.value)} /></Field>
               <Field label="Country"><Input value={form.country} onChange={(e) => update("country", e.target.value)} /></Field>
-              <Field label="Business location type"><SelectField value={form.locationType} onChange={(v) => update("locationType", v)} options={LOCATION_TYPES} placeholder="Select location" /></Field>
-              <CheckRow label="Mailing address is same as business address" checked={form.mailingSame} onChange={(v) => update("mailingSame", v)} />
-              <Field label="Owner full name"><Input value={form.ownerName} onChange={(e) => update("ownerName", e.target.value)} /></Field>
-              <Field label="Owner title"><Input value={form.ownerTitle} onChange={(e) => update("ownerTitle", e.target.value)} /></Field>
-              <Field label="Ownership percentage"><Input type="number" min="0" max="100" value={form.ownershipPercent} onChange={(e) => update("ownershipPercent", e.target.value)} /></Field>
+              <div className="grid min-w-0 gap-4 lg:col-span-2 sm:grid-cols-3">
+                <Field label="Owner full name"><Input value={form.ownerName} onChange={(e) => update("ownerName", e.target.value)} /></Field>
+                <Field label="Owner title"><Input value={form.ownerTitle} onChange={(e) => update("ownerTitle", e.target.value)} /></Field>
+                <Field label="Ownership percentage"><Input type="number" min="0" max="100" value={form.ownershipPercent} onChange={(e) => update("ownershipPercent", e.target.value)} /></Field>
+              </div>
               <div className="min-w-0 lg:col-span-2"><Field label="Additional owners"><Textarea value={form.additionalOwners} onChange={(e) => update("additionalOwners", e.target.value)} placeholder="Name, email, ownership %, role" /></Field></div>
             </div>
           )}
 
           {step === 2 && (
             <div className="grid min-w-0 gap-4 lg:grid-cols-2">
+              <p className="text-sm text-muted-foreground lg:col-span-2">Provide the identifiers used to match the business with its registration and tax records.</p>
               <Field label="EIN / Tax ID *"><Input value={form.einTin} onChange={(e) => update("einTin", e.target.value)} placeholder="12-3456789" /></Field>
-              <Field label="Federal tax classification *"><SelectField value={form.federalTaxClass} onChange={(v) => update("federalTaxClass", v)} options={["Sole Proprietor", "Single Member LLC", "Partnership", "S Corporation", "C Corporation", "Nonprofit"]} placeholder="Select class" /></Field>
               <Field label="State of incorporation"><SelectField value={form.stateIncorporation} onChange={(v) => update("stateIncorporation", v)} options={states.map((s) => ({ value: s.name, label: s.name }))} placeholder="Select state" /></Field>
-              <Field label="State registration number"><Input value={form.stateRegistrationNumber} onChange={(e) => update("stateRegistrationNumber", e.target.value)} /></Field>
-              <Field label="Business license number"><Input value={form.businessLicenseNumber} onChange={(e) => update("businessLicenseNumber", e.target.value)} /></Field>
-              <Field label="Sales tax permit"><SelectField value={form.salesTaxPermit} onChange={(v) => update("salesTaxPermit", v)} options={["no", "yes"]} /></Field>
-              {form.salesTaxPermit === "yes" && <Field label="Sales tax number"><Input value={form.salesTaxNumber} onChange={(e) => update("salesTaxNumber", e.target.value)} /></Field>}
-              <Field label="Payroll tax number"><Input value={form.payrollTaxNumber} onChange={(e) => update("payrollTaxNumber", e.target.value)} /></Field>
-              <Field label="Business tax year"><SelectField value={form.taxYear} onChange={(v) => update("taxYear", v)} options={["Calendar", "Fiscal"]} /></Field>
-              {form.taxYear === "Fiscal" && <Field label="Fiscal year end"><Input type="date" value={form.fiscalYearEnd} onChange={(e) => update("fiscalYearEnd", e.target.value)} /></Field>}
-              <Field label="Who prepares your taxes?"><SelectField value={form.taxPreparer} onChange={(v) => update("taxPreparer", v)} options={TAX_PREPARERS} placeholder="Select preparer" /></Field>
-              <Field label="Current CPA"><Input value={form.currentCpa} onChange={(e) => update("currentCpa", e.target.value)} /></Field>
-              <Field label="Do you have a CPA?"><SelectField value={form.hasCpa} onChange={(v) => update("hasCpa", v)} options={["no", "yes"]} /></Field>
-              <Field label="Match with BookSmart CPA?"><SelectField value={form.wantsCpaMatch} onChange={(v) => update("wantsCpaMatch", v)} options={["yes", "no"]} /></Field>
-              <Field label="BookSmart bookkeeper?"><SelectField value={form.wantsBookkeeper} onChange={(v) => update("wantsBookkeeper", v)} options={["no", "yes"]} /></Field>
+              <div className="min-w-0 space-y-4 rounded-lg border border-border/60 bg-card/40 p-4 lg:col-span-2">
+                <div>
+                  <h4 className="font-semibold text-foreground">CPA Information</h4>
+                  <p className="mt-1 text-sm text-muted-foreground">Tell us about your current CPA relationship so BookSmart can better support your accounting needs.</p>
+                </div>
+                <Field label="Do you currently have a CPA?">
+                  <SelectField value={form.hasCpa} onChange={(value) => update("hasCpa", value)} options={[{ value: "yes", label: "Yes" }, { value: "no", label: "No" }]} placeholder="Select Yes or No" />
+                </Field>
+                {cpaVisibility.showCurrentCpa && (
+                  <Field label="Current CPA">
+                    <Input value={form.currentCpa} onChange={(event) => update("currentCpa", event.target.value)} placeholder="CPA name" />
+                  </Field>
+                )}
+                {cpaVisibility.showCpaMatch && (
+                  <Field label="Would you like BookSmart to help you find a CPA?">
+                    <SelectField value={form.wantsCpaMatch} onChange={(value) => update("wantsCpaMatch", value)} options={[{ value: "yes", label: "Yes" }, { value: "no", label: "No" }]} placeholder="Select Yes or No" />
+                  </Field>
+                )}
+              </div>
             </div>
           )}
 
-          {step === 3 && (
-            <div className="space-y-5">
-              <MultiSection title="Business operations" options={BUSINESS_OPERATIONS} selected={form.operations} onToggle={(v) => toggleList("operations", v)} />
-              <div className="grid min-w-0 gap-4 lg:grid-cols-2">
-                <Field label="Employee type"><SelectField value={form.employeeType} onChange={(v) => update("employeeType", v)} options={EMPLOYEE_TYPES} placeholder="Select employee type" /></Field>
-                <Field label="Approximate annual revenue"><SelectField value={form.annualRevenue} onChange={(v) => update("annualRevenue", v)} options={REVENUE_RANGES} placeholder="Select range" /></Field>
-                <Field label="Average monthly revenue"><Input type="number" min="0" value={form.monthlyRevenue} onChange={(e) => update("monthlyRevenue", e.target.value)} /></Field>
-                <Field label="Average monthly expenses"><Input type="number" min="0" value={form.monthlyExpenses} onChange={(e) => update("monthlyExpenses", e.target.value)} /></Field>
-                <Field label="Profitability"><SelectField value={form.profitability} onChange={(v) => update("profitability", v)} options={PROFITABILITY} placeholder="Select status" /></Field>
-                <Field label="Accounting software"><SelectField value={form.accountingSoftware} onChange={(v) => update("accountingSoftware", v)} options={ACCOUNTING_SOFTWARE} placeholder="Select software" /></Field>
-                <Field label="Payroll provider"><SelectField value={form.payrollProvider} onChange={(v) => update("payrollProvider", v)} options={PAYROLL_PROVIDERS} placeholder="Select provider" /></Field>
-              </div>
-              <MultiSection title="Payment platforms" options={PAYMENT_PLATFORMS} selected={form.paymentPlatforms} onToggle={(v) => toggleList("paymentPlatforms", v)} />
-              <MultiSection title="Business goals" options={BUSINESS_GOALS} selected={form.goals} onToggle={(v) => toggleList("goals", v)} />
-              <div className="grid min-w-0 gap-4 lg:grid-cols-2">
-                <Field label="Applying for funding?"><SelectField value={form.applyingFunding} onChange={(v) => update("applyingFunding", v)} options={["yes", "no", "maybe"]} /></Field>
-                <Field label="Desired funding amount"><Input type="number" min="0" value={form.desiredFundingAmount} onChange={(e) => update("desiredFundingAmount", e.target.value)} /></Field>
-                <Field label="Expected timeline"><Input value={form.fundingTimeline} onChange={(e) => update("fundingTimeline", e.target.value)} placeholder="3-6 months" /></Field>
-              </div>
-              <MultiSection title="Funding purpose" options={FUNDING_PURPOSES} selected={form.fundingPurposes} onToggle={(v) => toggleList("fundingPurposes", v)} />
-              <Field label="Operations notes"><Textarea value={form.operationsNotes} onChange={(e) => update("operationsNotes", e.target.value)} placeholder="Describe sales channels, employees, contractors, products, services, or bookkeeping setup." /></Field>
-            </div>
-          )}
-
-          {step === 4 && (
-            <div className="space-y-5">
-              <div className="rounded-lg border border-border/60 p-4 space-y-3">
-                <CheckRow label="I certify that the information is accurate." checked={form.certifyAccurate} onChange={(v) => update("certifyAccurate", v)} />
-                <CheckRow label="I authorize BookSmart to analyze my financial data." checked={form.authorizeAnalysis} onChange={(v) => update("authorizeAnalysis", v)} />
-                <CheckRow label="I accept the Terms of Service." checked={form.acceptTerms} onChange={(v) => update("acceptTerms", v)} />
-                <CheckRow label="I accept the Privacy Policy." checked={form.acceptPrivacy} onChange={(v) => update("acceptPrivacy", v)} />
-              </div>
-            </div>
-          )}
         </div>
 
         <DialogFooter className="shrink-0 flex-col-reverse gap-2 border-t border-border/60 px-4 py-3 sm:flex-row sm:px-6 sm:py-4">
@@ -540,27 +351,5 @@ function SelectField({
         })}
       </SelectContent>
     </Select>
-  );
-}
-
-function CheckRow({ label, checked, onChange }: { label: string; checked: boolean; onChange: (checked: boolean) => void }) {
-  return (
-    <label className="flex items-center gap-3 rounded-md border border-border/50 px-3 py-2 text-sm">
-      <Checkbox checked={checked} onCheckedChange={(value) => onChange(value === true)} />
-      <span>{label}</span>
-    </label>
-  );
-}
-
-function MultiSection({ title, options, selected, onToggle }: { title: string; options: string[]; selected: string[]; onToggle: (value: string) => void }) {
-  return (
-    <div className="md:col-span-2">
-      <Label>{title}</Label>
-      <div className="mt-2 grid min-w-0 gap-2 sm:grid-cols-2 xl:grid-cols-3">
-        {options.map((option) => (
-          <CheckRow key={option} label={option} checked={selected.includes(option)} onChange={() => onToggle(option)} />
-        ))}
-      </div>
-    </div>
   );
 }

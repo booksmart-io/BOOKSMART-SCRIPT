@@ -5,7 +5,9 @@ import { supabase } from "@/lib/supabase";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Switch } from "@/components/ui/switch";
+import { createLegalConsentMetadata, LEGAL_CONSENT_REQUIRED_MESSAGE } from "@/lib/legal-consent";
 import { toast } from "sonner";
 
 export default function SignUp() {
@@ -16,6 +18,7 @@ export default function SignUp() {
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  const [agreedToLegal, setAgreedToLegal] = useState(false);
   const [, setLocation] = useLocation();
   const referralParam = typeof window !== "undefined"
     ? new URLSearchParams(window.location.search).get("ref")
@@ -51,6 +54,10 @@ export default function SignUp() {
       toast.error("Passwords do not match");
       return;
     }
+    if (!agreedToLegal) {
+      toast.error(LEGAL_CONSENT_REQUIRED_MESSAGE);
+      return;
+    }
 
     setLoading(true);
     try {
@@ -59,7 +66,7 @@ export default function SignUp() {
         email: cleanEmail,
         password,
         options: {
-          data: { role },
+          data: { role, ...createLegalConsentMetadata() },
         },
       });
 
@@ -183,6 +190,25 @@ export default function SignUp() {
                 onCheckedChange={(checked) => setRole(checked ? "cpa" : "user")}
               />
             </label>
+
+            <label
+              htmlFor="legal-consent"
+              className="flex min-w-0 cursor-pointer items-start gap-3 rounded-md border border-border/60 px-3 py-3 text-sm leading-5"
+            >
+              <Checkbox
+                id="legal-consent"
+                checked={agreedToLegal}
+                onCheckedChange={(checked) => setAgreedToLegal(checked === true)}
+                className="mt-0.5 shrink-0"
+              />
+              <span className="min-w-0 break-words">
+                I agree to the Terms of Service and Privacy Policy and authorize BookSmart to process my information to provide its services.
+              </span>
+            </label>
+
+            <Button type="button" variant="ghost" className="w-full" onClick={() => setLocation("/login")}>
+              I Don't Agree
+            </Button>
 
             <Button type="submit" className="mt-4 w-full rounded-[10px] text-base" disabled={loading}>
               {loading ? "Creating account..." : "Sign Up"}

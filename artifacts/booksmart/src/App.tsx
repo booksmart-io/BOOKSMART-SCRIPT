@@ -15,6 +15,7 @@ import Login from "@/pages/auth/login";
 import SignUp from "@/pages/auth/sign-up";
 import ForgotReset from "@/pages/auth/forgot-reset";
 import VerifyEmail from "@/pages/auth/verify-email";
+import OAuthConsent from "@/pages/auth/oauth-consent";
 
 // User Pages
 import UserDashboard from "@/pages/user/dashboard";
@@ -107,11 +108,19 @@ const ADMIN_ROUTES: Record<string, RouteEntry> = {
 const ALL_ROUTES = { ...USER_ROUTES, ...CPA_ROUTES, ...ADMIN_ROUTES };
 
 function Router() {
-  const { session, profile, isLoading } = useAuth();
+  const { session, profile, isLoading, requiresLegalConsent } = useAuth();
   const [location, setLocation] = useLocation();
 
   useEffect(() => {
     if (isLoading) return;
+    if (session && requiresLegalConsent && location !== "/oauth-consent") {
+      setLocation("/oauth-consent");
+      return;
+    }
+    if ((!session || !requiresLegalConsent) && location === "/oauth-consent") {
+      setLocation(session ? "/" : "/login");
+      return;
+    }
     if (session && location === "/") {
       if (!session.user.email_confirmed_at) setLocation("/verify-email");
       else if (profile?.role === "cpa") {
@@ -123,13 +132,14 @@ function Router() {
     } else if (!session && location === "/") {
       setLocation("/login");
     }
-  }, [isLoading, session, profile, location, setLocation]);
+  }, [isLoading, session, profile, requiresLegalConsent, location, setLocation]);
 
   // Auth routes (no guard)
   if (location === "/login") return <Login />;
   if (location === "/sign-up") return <SignUp />;
   if (location === "/forgot-reset") return <ForgotReset />;
   if (location === "/verify-email") return <VerifyEmail />;
+  if (location === "/oauth-consent") return <OAuthConsent />;
 
   // Dashboard routes
   const matched = ALL_ROUTES[location];

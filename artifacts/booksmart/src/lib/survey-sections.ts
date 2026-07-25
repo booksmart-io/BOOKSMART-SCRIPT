@@ -8,6 +8,12 @@ export const SURVEY_SECTIONS = [
     stepKeys: ["business.legal_tax", "business.income"],
   },
   {
+    key: "section.business_profile",
+    title: "Business Profile & Goals",
+    description: "Your business activity, reporting needs, goals, and funding interests.",
+    stepKeys: ["business.phase1_profile"],
+  },
+  {
     key: "section.team_accounting",
     title: "Team & Accounting",
     description: "How your business is staffed and how its books are maintained.",
@@ -57,8 +63,10 @@ export const SURVEY_SECTIONS = [
 
 export function sectionIndexForStep(stepKey: string | null | undefined) {
   if (!stepKey) return 0;
+  const registeredQuestion = QUESTIONS.find((question) => question.key === stepKey);
+  const resolvedStepKey = registeredQuestion?.stepKey ?? stepKey;
   const index = SURVEY_SECTIONS.findIndex((section) =>
-    (section.stepKeys as readonly string[]).includes(stepKey)
+    (section.stepKeys as readonly string[]).includes(resolvedStepKey)
   );
   return index < 0 ? 0 : index;
 }
@@ -69,6 +77,22 @@ export function questionsForSection(sectionIndex: number) {
   return QUESTIONS.filter((question) =>
     (section.stepKeys as readonly string[]).includes(question.stepKey)
   );
+}
+
+export function applicableQuestionsInDisplayOrder(answers: SurveyAnswers) {
+  return SURVEY_SECTIONS.flatMap((_section, index) =>
+    questionsForSection(index).filter((question) => isApplicable(question, answers))
+  );
+}
+
+export function adjacentApplicableQuestion(
+  currentKey: string,
+  answers: SurveyAnswers,
+  direction: 1 | -1,
+) {
+  const questions = applicableQuestionsInDisplayOrder(answers);
+  const index = questions.findIndex((question) => question.key === currentKey);
+  return index < 0 ? null : (questions[index + direction] ?? null);
 }
 
 export function sectionCompletion(

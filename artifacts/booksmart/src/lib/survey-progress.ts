@@ -1,4 +1,6 @@
-export const SURVEY_VERSION = 1;
+export const SURVEY_VERSION = 2;
+export const LEGACY_SURVEY_VERSION = 1;
+export const PRIMARY_WORK_LOCATION_OPTIONS = ["My Home", "Commercial Office", "Both (Home & Office)"] as const;
 export type SurveyKey = "business_survey" | "balance_sheet_profile";
 export type SurveyStatus = "not_started" | "in_progress" | "completed" | "completed_with_skips";
 
@@ -8,6 +10,7 @@ export type QuestionDefinition = {
   key: string;
   surveyKey: SurveyKey;
   stepKey: string;
+  introducedIn?: number;
   applicable?: (answers: SurveyAnswers) => boolean;
 };
 
@@ -19,14 +22,22 @@ const hasHomeOffice = (a: SurveyAnswers) =>
 const hasEquipment = (a: SurveyAnswers) => a["equipment.ownership"] === true;
 const hasSelectedDebt = (a: SurveyAnswers) =>
   Array.isArray(a["liabilities.selected"]) && a["liabilities.selected"].length > 0;
+const wantsFunding = (a: SurveyAnswers) =>
+  a["funding.interest"] === "Yes" || a["funding.interest"] === "Maybe / exploring options";
 
 export const QUESTIONS: QuestionDefinition[] = [
-  { key: "tax.filing_status", surveyKey: "business_survey", stepKey: "business.legal_tax" },
-  { key: "tax.primary_business_state", surveyKey: "business_survey", stepKey: "business.legal_tax" },
+  { key: "tax.filing_status", surveyKey: "business_survey", stepKey: "business.legal_tax", introducedIn: 1 },
+  { key: "tax.primary_business_state", surveyKey: "business_survey", stepKey: "business.legal_tax", introducedIn: 1 },
   { key: "tax.residency_status", surveyKey: "business_survey", stepKey: "business.legal_tax" },
   { key: "tax.multi_state_activity", surveyKey: "business_survey", stepKey: "business.legal_tax" },
   { key: "income.primary_types", surveyKey: "business_survey", stepKey: "business.income" },
   { key: "income.passive_types", surveyKey: "business_survey", stepKey: "business.income" },
+  { key: "business.activity_model", surveyKey: "business_survey", stepKey: "business.phase1_profile", introducedIn: 2 },
+  { key: "tax.issues_1099s", surveyKey: "business_survey", stepKey: "business.phase1_profile", introducedIn: 2 },
+  { key: "accounting.software", surveyKey: "business_survey", stepKey: "business.phase1_profile", introducedIn: 2 },
+  { key: "strategy.business_goals", surveyKey: "business_survey", stepKey: "business.phase1_profile", introducedIn: 2 },
+  { key: "funding.interest", surveyKey: "business_survey", stepKey: "business.phase1_profile", introducedIn: 2 },
+  { key: "funding.purposes", surveyKey: "business_survey", stepKey: "business.phase1_profile", introducedIn: 2, applicable: wantsFunding },
   { key: "team.structure", surveyKey: "business_survey", stepKey: "business.people_accounting" },
   { key: "accounting.method", surveyKey: "business_survey", stepKey: "business.people_accounting" },
   { key: "equipment.ownership", surveyKey: "business_survey", stepKey: "business.people_accounting" },
@@ -93,6 +104,44 @@ export type ProgressState = {
   answered: Set<string>;
   skipped: Set<string>;
 };
+
+export function progressAfterQuestionAnswer(progress: ProgressState, questionKey: string): ProgressState {
+  const answered = new Set(progress.answered);
+  const skipped = new Set(progress.skipped);
+  answered.add(questionKey);
+  skipped.delete(questionKey);
+  return { answered, skipped };
+}
+
+export function progressAfterQuestionSkip(progress: ProgressState, questionKey: string): ProgressState {
+  const answered = new Set(progress.answered);
+  const skipped = new Set(progress.skipped);
+  answered.delete(questionKey);
+  skipped.add(questionKey);
+  return { answered, skipped };
+}
+
+export type SurveySaveLock = { current: boolean };
+
+export function acquireSurveySaveLock(lock: SurveySaveLock) {
+  if (lock.current) return false;
+  lock.current = true;
+  return true;
+}
+
+export function releaseSurveySaveLock(lock: SurveySaveLock) {
+  lock.current = false;
+}
+
+export async function persistSurveyQuestionInOrder(options: {
+  saveAnswer: () => Promise<void>;
+  saveProgress: () => Promise<void>;
+  onSuccess: () => void;
+}) {
+  await options.saveAnswer();
+  await options.saveProgress();
+  options.onSuccess();
+}
 
 export function calculateSurveyStatus(
   surveyKey: SurveyKey,

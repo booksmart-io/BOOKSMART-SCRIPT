@@ -1,3 +1,19 @@
+export function dashboardSurveyRowsForCurrentVersion(
+  rows: Array<{ survey_version: number; status: string; current_section_key: string | null }>,
+  currentVersion: number,
+) {
+  const current = rows.filter((row) => row.survey_version === currentVersion);
+  if (current.length) return current;
+  const legacy = rows.filter((row) => row.survey_version < currentVersion);
+  if (!legacy.length || legacy.every((row) => row.status === "not_started")) return [];
+  return [{
+    survey_version: currentVersion,
+    status: "in_progress",
+    current_section_key: legacy.find((row) => row.current_section_key)?.current_section_key ?? null,
+    legacyUpgradeRequired: true,
+  }];
+}
+
 export function dashboardOnboarding(input: {
   accountExists: boolean;
   businessInformationComplete: boolean;

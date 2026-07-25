@@ -2483,8 +2483,22 @@ export default function Reports() {
   const [deletePlaidTarget, setDeletePlaidTarget] =
     useState<ConnectedBank | null>(null);
   const [deletePlaidRunning, setDeletePlaidRunning] = useState(false);
-  const [plaidConnecting, setPlaidConnecting] = useState(false);
-  const [plaidSyncing, setPlaidSyncing] = useState(false);
+const [plaidConnecting, setPlaidConnecting] = useState(false);
+const [plaidSyncing, setPlaidSyncing] = useState(false);
+
+type PlaidSyncStage =
+  | "idle"
+  | "connecting"
+  | "syncing"
+  | "categorizing"
+  | "refreshing"
+  | "complete"
+  | "error";
+
+const [plaidSyncStage, setPlaidSyncStage] =
+  useState<PlaidSyncStage>("idle");
+
+const [plaidSyncMessage, setPlaidSyncMessage] = useState("");
 
   // Transactions tab: search + add-transaction form
   const [txSearch, setTxSearch] = useState("");
@@ -3164,150 +3178,260 @@ Respond with ONLY valid JSON, no explanation:
     setAiCatSuggested(false);
   }
 
-  async function handleConnectBank() {
-    setPlaidConnecting(true);
-    try {
-      if (!orgId) throw new Error("No active organization found");
-      const { data: sessionData } = await supabase.auth.getSession();
-      const jwt = sessionData.session?.access_token;
-      if (!jwt) throw new Error("Not authenticated");
+async function handleConnectBank() {
+  setPlaidConnecting(true);
 
-      const tokenRes = await fetch("/api/plaid/link-token", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${jwt}`,
-        },
-        body: JSON.stringify({ org_id: orgId }),
-      });
-      const tokenJson = (await tokenRes.json()) as {
-        link_token?: string;
-        message?: string;
-        error?: string;
-      };
-      if (!tokenRes.ok || !tokenJson.link_token) {
-        throw new Error(
-          tokenJson.message ?? tokenJson.error ?? "Could not start Plaid Link",
+  setPlaidSyncStage("connecting");
+  setPlaidSyncMessage("Opening secure bank connection...");
+
+  try {
+    if (!orgId) throw new Error("No active organization found");
+
+    const { data: sessionData } = await supabase.auth.getSession();
+    const jwt = sessionData.session?.access_token;
+
+    if (!jwt) throw new Error("Not authenticated");
+
+    const tokenRes = await fetch("/api/plaid/link-token", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${jwt}`,
+      },
+      body: JSON.stringify({ org_id: orgId }),
+    });
+
+    const tokenJson = (await tokenRes.json()) as {
+      link_token?: string;
+      message?: string;
+      error?: string;
+    };
+
+    if (!tokenRes.ok || !tokenJson.link_token) {
+      throw new Error(
+        tokenJson.message ??
+          tokenJson.error ??
+          "Could not start Plaid Link",
+      );
+    }
+
+    await openPlaidLink({
+      token: tokenJson.link_token,
+
+      onSuccess: async (publicToken, metadata) => {
+        setPlaidSyncing(true);
+
+        setPlaidSyncStage("syncing");
+        setPlaidSyncMessage(
+          "Bank connected. Preparing transaction import...",
         );
-      }
 
-      await openPlaidLink({
-        token: tokenJson.link_token,
-        onSuccess: async (publicToken, metadata) => {
-          setPlaidSyncing(true);
-          try {
-            const exchangeRes = await fetch(
-              "/api/plaid/exchange-public-token",
-              {
-                method: "POST",
-                headers: {
-                  "Content-Type": "application/json",
-                  Authorization: `Bearer ${jwt}`,
-                },
-                body: JSON.stringify({
-                  public_token: publicToken,
-                  metadata,
-                  org_id: orgId,
-                }),
-              },
-            );
-            const exchangeJson = (await exchangeRes.json()) as {
-              item_id?: number;
-              message?: string;
-              error?: string;
-            };
-            if (!exchangeRes.ok)
-              throw new Error(
-                exchangeJson.message ??
-                  exchangeJson.error ??
-                  "Could not connect bank",
-              );
-            queryClient.invalidateQueries({ queryKey: ["plaid_accounts"] });
-            queryClient.invalidateQueries({ queryKey: ["dashboard_connected_banks", orgId] });
-
-            const syncRes = await fetch("/api/plaid/sync", {
+        try {
+          const exchangeRes = await fetch(
+            "/api/plaid/exchange-public-token",
+            {
               method: "POST",
               headers: {
                 "Content-Type": "application/json",
                 Authorization: `Bearer ${jwt}`,
               },
               body: JSON.stringify({
-                item_id: exchangeJson.item_id,
+                public_token: publicToken,
+                metadata,
                 org_id: orgId,
               }),
-            });
-            const syncJson = (await syncRes.json()) as {
-              added?: number;
-              modified?: number;
-              removed?: number;
-              message?: string;
-              error?: string;
-            };
-            if (!syncRes.ok)
-              throw new Error(
-                syncJson.message ??
-                  syncJson.error ??
-                  "Could not sync bank transactions",
-              );
+            },
+          );
 
-            const changed = (syncJson.added ?? 0) + (syncJson.modified ?? 0);
-            let categorized = 0;
-            const passes = Math.max(
-              1,
-              Math.ceil(
-                Math.max(changed, 1) / PLAID_CATEGORIZATION_BATCH_LIMIT,
-              ),
+          const exchangeJson = (await exchangeRes.json()) as {
+            item_id?: number;
+            message?: string;
+            error?: string;
+          };
+
+          if (!exchangeRes.ok) {
+            throw new Error(
+              exchangeJson.message ??
+                exchangeJson.error ??
+                "Could not connect bank",
             );
-            for (let i = 0; i < passes; i += 1) {
-              const categorization = await categorizeUncategorizedTransactions(
+          }
+
+          queryClient.invalidateQueries({
+            queryKey: ["plaid_accounts"],
+          });
+
+          queryClient.invalidateQueries({
+            queryKey: ["dashboard_connected_banks", orgId],
+          });
+
+          setPlaidSyncStage("syncing");
+          setPlaidSyncMessage(
+            "Importing transactions from your bank...",
+          );
+
+          const syncRes = await fetch("/api/plaid/sync", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${jwt}`,
+            },
+            body: JSON.stringify({
+              item_id: exchangeJson.item_id,
+              org_id: orgId,
+            }),
+          });
+
+          const syncJson = (await syncRes.json()) as {
+            added?: number;
+            modified?: number;
+            removed?: number;
+            message?: string;
+            error?: string;
+          };
+
+          if (!syncRes.ok) {
+            throw new Error(
+              syncJson.message ??
+                syncJson.error ??
+                "Could not sync bank transactions",
+            );
+          }
+
+          const changed =
+            (syncJson.added ?? 0) +
+            (syncJson.modified ?? 0);
+
+          let categorized = 0;
+
+          const passes = Math.max(
+            1,
+            Math.ceil(
+              Math.max(changed, 1) /
+                PLAID_CATEGORIZATION_BATCH_LIMIT,
+            ),
+          );
+
+          setPlaidSyncStage("categorizing");
+
+          setPlaidSyncMessage(
+            changed > 0
+              ? `${changed} transaction${
+                  changed === 1 ? "" : "s"
+                } received. Categorizing transactions...`
+              : "Transaction import complete. Checking categories...",
+          );
+
+          for (let i = 0; i < passes; i += 1) {
+            setPlaidSyncMessage(
+              passes > 1
+                ? `Categorizing transactions — batch ${
+                    i + 1
+                  } of ${passes}...`
+                : "Categorizing imported transactions...",
+            );
+
+            const categorization =
+              await categorizeUncategorizedTransactions(
                 Math.min(
                   Math.max(changed, 30),
                   PLAID_CATEGORIZATION_BATCH_LIMIT,
                 ),
                 orgId,
               );
-              categorized += categorization.updated;
-              if (categorization.updated === 0) break;
-            }
-            invalidateTransactionReports();
-            queryClient.invalidateQueries({ queryKey: ["tx_deductions"] });
-            queryClient.invalidateQueries({ queryKey: ["plaid_accounts"] });
-            queryClient.invalidateQueries({ queryKey: ["dashboard_connected_banks", orgId] });
-            queryClient.invalidateQueries({ queryKey: ["tx_count", orgId] });
-            toast({
-              title: "Bank connected",
-              description: `Synced ${syncJson.added ?? 0} new transaction${(syncJson.added ?? 0) === 1 ? "" : "s"}. Categorized ${categorized}.`,
-            });
-          } catch (err) {
-            toast({
-              title: "Bank sync failed",
-              description: String(err),
-              variant: "destructive",
-            });
-          } finally {
-            setPlaidSyncing(false);
+
+            categorized += categorization.updated;
+
+            if (categorization.updated === 0) break;
           }
-        },
-        onExit: (error) => {
-          if (error?.error_message) {
-            toast({
-              title: "Plaid Link closed",
-              description: error.error_message,
-              variant: "destructive",
-            });
-          }
-        },
-      });
-    } catch (err) {
-      toast({
-        title: "Could not connect bank",
-        description: String(err),
-        variant: "destructive",
-      });
-    } finally {
-      setPlaidConnecting(false);
-    }
+
+          setPlaidSyncStage("refreshing");
+          setPlaidSyncMessage(
+            "Updating your dashboard and financial reports...",
+          );
+
+          invalidateTransactionReports();
+
+          queryClient.invalidateQueries({
+            queryKey: ["tx_deductions"],
+          });
+
+          queryClient.invalidateQueries({
+            queryKey: ["plaid_accounts"],
+          });
+
+          queryClient.invalidateQueries({
+            queryKey: ["dashboard_connected_banks", orgId],
+          });
+
+          queryClient.invalidateQueries({
+            queryKey: ["tx_count", orgId],
+          });
+
+          setPlaidSyncStage("complete");
+
+          setPlaidSyncMessage(
+            `${syncJson.added ?? 0} new transaction${
+              (syncJson.added ?? 0) === 1 ? "" : "s"
+            } imported. ${categorized} categorized.`,
+          );
+
+          toast({
+            title: "Bank connected",
+            description: `Synced ${
+              syncJson.added ?? 0
+            } new transaction${
+              (syncJson.added ?? 0) === 1 ? "" : "s"
+            }. Categorized ${categorized}.`,
+          });
+        } catch (err) {
+          setPlaidSyncStage("error");
+          setPlaidSyncMessage(
+            "We couldn't finish importing your bank transactions.",
+          );
+
+          toast({
+            title: "Bank sync failed",
+            description: String(err),
+            variant: "destructive",
+          });
+        } finally {
+          setPlaidSyncing(false);
+        }
+      },
+
+      onExit: (error) => {
+        if (error?.error_message) {
+          setPlaidSyncStage("error");
+          setPlaidSyncMessage(error.error_message);
+
+          toast({
+            title: "Plaid Link closed",
+            description: error.error_message,
+            variant: "destructive",
+          });
+        } else if (!plaidSyncing) {
+          setPlaidSyncStage("idle");
+          setPlaidSyncMessage("");
+        }
+      },
+    });
+  } catch (err) {
+    setPlaidSyncStage("error");
+    setPlaidSyncMessage(
+      "We couldn't start the bank connection.",
+    );
+
+    toast({
+      title: "Could not connect bank",
+      description: String(err),
+      variant: "destructive",
+    });
+  } finally {
+    setPlaidConnecting(false);
   }
+}
+
 
   useEffect(() => {
     if (!orgId) return;
@@ -8127,32 +8251,119 @@ Respond with ONLY valid JSON, no explanation:
                 : "Delete document & transactions"}
             </Button>
           </DialogFooter>
-        </DialogContent>
-      </Dialog>
+     </DialogContent>
+</Dialog>
 
-      {/* ── Transactions tab ── */}
-      {tab === "transactions" && (
-        <div className="space-y-3 pb-20">
-          {/* Search bar — matches Flutter TransactionListScreen */}
-          <div className="flex justify-end">
-            <Button
-              size="sm"
-              onClick={handleConnectBank}
-              disabled={plaidConnecting || plaidSyncing}
-              className="gap-2 bg-primary text-primary-foreground hover:bg-primary/90"
-            >
-              {plaidConnecting || plaidSyncing ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <Wallet className="h-4 w-4" />
-              )}
-              {plaidSyncing
-                ? "Syncing..."
-                : plaidConnecting
-                  ? "Connecting..."
-                  : "Connect Bank"}
-            </Button>
-          </div>
+{/* GLOBAL BANK SYNC STATUS */}
+{plaidSyncStage !== "idle" && (
+  <div className="fixed top-4 left-1/2 z-[9999] w-[calc(100%-2rem)] max-w-xl -translate-x-1/2">
+    <div
+      className={`rounded-xl border p-4 shadow-lg backdrop-blur ${
+        plaidSyncStage === "complete"
+          ? "border-emerald-500/30 bg-background/95"
+          : plaidSyncStage === "error"
+            ? "border-destructive/30 bg-background/95"
+            : "border-primary/30 bg-background/95"
+      }`}
+    >
+      <div className="flex items-start gap-3">
+        {[
+          "connecting",
+          "syncing",
+          "categorizing",
+          "refreshing",
+        ].includes(plaidSyncStage) && (
+          <Loader2 className="mt-0.5 h-5 w-5 shrink-0 animate-spin text-primary" />
+        )}
+
+        {plaidSyncStage === "complete" && (
+          <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-emerald-500" />
+        )}
+
+        {plaidSyncStage === "error" && (
+          <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-destructive" />
+        )}
+
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-semibold">
+            {plaidSyncStage === "connecting" &&
+              "Connecting your bank"}
+
+            {plaidSyncStage === "syncing" &&
+              "Importing bank transactions"}
+
+            {plaidSyncStage === "categorizing" &&
+              "Categorizing transactions"}
+
+            {plaidSyncStage === "refreshing" &&
+              "Updating BookSmart"}
+
+            {plaidSyncStage === "complete" &&
+              "Bank import complete"}
+
+            {plaidSyncStage === "error" &&
+              "Bank import failed"}
+          </p>
+
+          <p className="mt-1 text-xs text-muted-foreground">
+            {plaidSyncMessage}
+          </p>
+
+          {[
+            "connecting",
+            "syncing",
+            "categorizing",
+            "refreshing",
+          ].includes(plaidSyncStage) && (
+            <div className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-muted">
+              <div className="h-full w-1/2 animate-pulse rounded-full bg-primary" />
+            </div>
+          )}
+
+          {[
+            "connecting",
+            "syncing",
+            "categorizing",
+            "refreshing",
+          ].includes(plaidSyncStage) && (
+            <p className="mt-2 text-[11px] text-muted-foreground">
+              Please keep this page open while BookSmart processes your bank data.
+            </p>
+          )}
+        </div>
+      </div>
+    </div>
+  </div>
+)}
+
+{/* ── Transactions tab ── */}
+{tab === "transactions" && (
+  <div className="space-y-3 pb-20">
+
+    {/* Connect Bank button */}
+    <div className="flex justify-end">
+      <Button
+        size="sm"
+        onClick={handleConnectBank}
+        disabled={plaidConnecting || plaidSyncing}
+        className="gap-2 bg-primary text-primary-foreground hover:bg-primary/90"
+      >
+        {plaidConnecting || plaidSyncing ? (
+          <Loader2 className="h-4 w-4 animate-spin" />
+        ) : (
+          <Wallet className="h-4 w-4" />
+        )}
+
+        {plaidSyncing
+          ? "Syncing..."
+          : plaidConnecting
+            ? "Connecting..."
+            : "Connect Bank"}
+      </Button>
+    </div>
+
+  
+
 
           <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />

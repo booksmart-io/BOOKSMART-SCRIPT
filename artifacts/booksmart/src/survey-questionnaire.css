@@ -1,0 +1,46 @@
+@keyframes survey-question-enter {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.question-enter {
+  animation: survey-question-enter 280ms ease-out both;
+}
+
+.survey-modal .survey-answer-option {
+  border-color: hsl(var(--border)) !important;
+  background: hsl(var(--background)) !important;
+  color: hsl(var(--foreground)) !important;
+}
+
+.survey-modal .survey-answer-option:hover {
+  border-color: hsl(var(--primary)) !important;
+  background: hsl(var(--muted)) !important;
+}
+
+.survey-modal .survey-answer-option[data-selected="true"] {
+  border-color: #60c14f !important;
+  background: #2f8a24 !important;
+  color: white !important;
+}
+
+.survey-modal .survey-answer-option > span:last-child {
+  color: inherit !important;
+}
+
+.survey-modal input,
+.survey-modal button {
+  max-width: 100%;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .question-enter {
+    animation: none;
+  }
+}

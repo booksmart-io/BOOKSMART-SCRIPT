@@ -8,7 +8,8 @@ import { useToast } from "@/hooks/use-toast";
 import { calculateFinancialReport } from "@/lib/financial-engine";
 import { pickActiveOrganization, useActiveOrganizationId } from "@/lib/active-organization";
 import BusinessSurveyDialog from "@/components/business-survey-dialog";
-import { dashboardOnboarding } from "@/lib/dashboard-onboarding";
+import { dashboardOnboarding, dashboardSurveyRowsForCurrentVersion } from "@/lib/dashboard-onboarding";
+import { SURVEY_VERSION } from "@/lib/survey-progress";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -186,19 +187,19 @@ export default function UserDashboard() {
     },
   });
   const orgId = orgData?.id ?? null;
-  const { data: surveyStatusRows = [] } = useQuery<Array<{ survey_key: string; status: string; current_section_key: string | null }>>({
+  const { data: storedSurveyStatusRows = [] } = useQuery<Array<{ survey_key: string; survey_version: number; status: string; current_section_key: string | null }>>({
     queryKey: ["survey_setup_status", orgId],
     enabled: orgId != null,
     queryFn: async () => {
       const { data, error } = await supabase
         .from("organization_survey_progress")
-        .select("survey_key,status,current_section_key")
-        .eq("organization_id", orgId!)
-        .eq("survey_version", 1);
+        .select("survey_key,survey_version,status,current_section_key")
+        .eq("organization_id", orgId!);
       if (error) throw error;
       return data ?? [];
     },
   });
+  const surveyStatusRows = dashboardSurveyRowsForCurrentVersion(storedSurveyStatusRows, SURVEY_VERSION);
 
   useEffect(() => { console.log("[dashboard] numericId:", numericId, "orgId:", orgId); }, [numericId, orgId]);
 

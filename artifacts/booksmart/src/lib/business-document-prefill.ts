@@ -8,6 +8,7 @@ export type BusinessDocumentPrefill = {
   stateId?: string;
   stateIncorporation?: string;
   yearEstablished?: string;
+  startDate?: string;
   street?: string;
   suite?: string;
   city?: string;
@@ -15,6 +16,19 @@ export type BusinessDocumentPrefill = {
   country?: string;
   stateRegistrationNumber?: string;
 };
+
+export function preserveEnteredBusinessDocumentFields(
+  current: BusinessDocumentPrefill,
+  extracted: BusinessDocumentPrefill,
+) {
+  const result = { ...current };
+  for (const [key, value] of Object.entries(extracted) as Array<
+    [keyof BusinessDocumentPrefill, string | undefined]
+  >) {
+    if (!result[key]?.trim() && value?.trim()) result[key] = value;
+  }
+  return result;
+}
 
 export function safelyMapEntityType(value: string | null) {
   if (!value) return null;
@@ -57,6 +71,7 @@ export function buildBusinessDocumentPrefill(
 
   if (extracted.formationDate && /^\d{4}-\d{2}-\d{2}$/.test(extracted.formationDate)) {
     prefill.yearEstablished = extracted.formationDate.slice(0, 4);
+    prefill.startDate = extracted.formationDate;
   }
 
   const address = extracted.principalAddress;

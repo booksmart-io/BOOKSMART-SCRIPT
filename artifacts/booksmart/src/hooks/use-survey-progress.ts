@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import {
   SURVEY_VERSION,
+  LEGACY_SURVEY_VERSION,
   QUESTIONS,
   calculateSurveyStatus,
   firstIncompleteStep,
@@ -13,6 +14,7 @@ import {
 } from "@/lib/survey-progress";
 
 type ProgressRow = {
+  survey_version: number;
   survey_key: SurveyKey;
   status: string;
   current_section_key: string | null;
@@ -21,7 +23,21 @@ type ProgressRow = {
   started_at?: string | null;
 };
 
+function inferProgressIncludingPersistedAnswers(answers: SurveyAnswers) {
+  const inferred = inferLegacyProgress(answers);
+  const persistedKeys = Array.isArray(answers.__persisted_question_keys)
+    ? answers.__persisted_question_keys
+    : [];
+  const registered = new Set(QUESTIONS.map((question) => question.key));
+  for (const key of persistedKeys) {
+    if (typeof key === "string" && registered.has(key)) inferred.answered.add(key);
+  }
+  return inferred;
+}
+
 export function useSurveyProgress(orgId: number | null, open: boolean, ready: boolean, answers: SurveyAnswers) {
+  const answersRef = useRef(answers);
+  answersRef.current = answers;
   const [progress, setProgress] = useState<ProgressState>({ answered: new Set(), skipped: new Set() });
   const [loading, setLoading] = useState(false);
   const [loaded, setLoaded] = useState(false);
@@ -35,26 +51,46 @@ export function useSurveyProgress(orgId: number | null, open: boolean, ready: bo
     setLoaded(false);
     supabase
       .from("organization_survey_progress")
-      .select("survey_key,status,current_section_key,answered_question_keys,skipped_question_keys,started_at")
+      .select("survey_key,survey_version,status,current_section_key,answered_question_keys,skipped_question_keys,started_at")
       .eq("organization_id", orgId)
-      .eq("survey_version", SURVEY_VERSION)
+      .in("survey_version", [LEGACY_SURVEY_VERSION, SURVEY_VERSION])
       .then(({ data, error }) => {
         if (cancelled) return;
         if (error) {
           console.warn("Unable to load survey progress:", error.message);
-          setProgress(inferLegacyProgress(answers));
+          setProgress(inferProgressIncludingPersistedAnswers(answersRef.current));
           setHasStoredProgress(false);
           setStartedAt({});
-        } else if (data?.length) {
-          const rows = data as ProgressRow[];
+        } else if (data?.some((row) => row.survey_version === SURVEY_VERSION)) {
+          const rows = (data as ProgressRow[]).filter((row) => row.survey_version === SURVEY_VERSION);
+          const inferred = inferProgressIncludingPersistedAnswers(answersRef.current);
           setProgress({
-            answered: new Set(rows.flatMap((row) => row.answered_question_keys ?? [])),
-            skipped: new Set(rows.flatMap((row) => row.skipped_question_keys ?? [])),
+            answered: new Set([
+              ...rows.flatMap((row) => row.answered_question_keys ?? []),
+              ...inferred.answered,
+            ]),
+            skipped: new Set(
+              rows.flatMap((row) => row.skipped_question_keys ?? [])
+                .filter((key) => !inferred.answered.has(key)),
+            ),
           });
           setStartedAt(Object.fromEntries(rows.flatMap((row) => row.started_at ? [[row.survey_key, row.started_at]] : [])));
           setHasStoredProgress(true);
+        } else if (data?.some((row) => row.survey_version === LEGACY_SURVEY_VERSION)) {
+          const rows = (data as ProgressRow[]).filter((row) => row.survey_version === LEGACY_SURVEY_VERSION);
+          const inferred = inferProgressIncludingPersistedAnswers(answersRef.current);
+          const v1Keys = new Set(QUESTIONS.filter((question) => (question.introducedIn ?? 1) <= 1).map((question) => question.key));
+          setProgress({
+            answered: new Set([
+              ...[...inferred.answered].filter((key) => v1Keys.has(key)),
+              ...rows.flatMap((row) => row.answered_question_keys ?? []).filter((key) => v1Keys.has(key)),
+            ]),
+            skipped: new Set(rows.flatMap((row) => row.skipped_question_keys ?? []).filter((key) => v1Keys.has(key))),
+          });
+          setStartedAt(Object.fromEntries(rows.flatMap((row) => row.started_at ? [[row.survey_key, row.started_at]] : [])));
+          setHasStoredProgress(false);
         } else {
-          setProgress(inferLegacyProgress(answers));
+          setProgress(inferProgressIncludingPersistedAnswers(answersRef.current));
           setHasStoredProgress(false);
           setStartedAt({});
         }
@@ -77,7 +113,9 @@ export function useSurveyProgress(orgId: number | null, open: boolean, ready: bo
       const keysForSurvey = new Set(
         QUESTIONS.filter((question) => question.surveyKey === surveyKey).map((question) => question.key),
       );
-      const currentQuestion = currentStepKey ? questionsForStep(currentStepKey)[0] : undefined;
+      const currentQuestion = currentStepKey
+        ? (QUESTIONS.find((question) => question.key === currentStepKey) ?? questionsForStep(currentStepKey)[0])
+        : undefined;
       return {
         organization_id: orgId,
         survey_key: surveyKey,

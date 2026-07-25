@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useLocation } from "wouter";
-import { BriefcaseBusiness, Building2, FileUp, Landmark, MapPin, PenLine, ShieldCheck } from "lucide-react";
+import { Building2, FileUp, Landmark, MapPin, PenLine } from "lucide-react";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -15,7 +15,22 @@ import { supabase } from "@/lib/supabase";
 import { pickActiveOrganization, useActiveOrganizationId } from "@/lib/active-organization";
 import { checkAddBusiness } from "@/lib/plan-limits";
 import BusinessDocumentUpload, { type ExtractedBusinessDocument } from "@/components/business-document-upload";
-import { buildBusinessDocumentPrefill } from "@/lib/business-document-prefill";
+import {
+  buildBusinessDocumentPrefill,
+  preserveEnteredBusinessDocumentFields,
+} from "@/lib/business-document-prefill";
+import {
+  BUSINESS_ENTITY_TYPES as ENTITY_TYPES,
+  BUSINESS_INDUSTRIES as INDUSTRIES,
+  NAICS_BY_INDUSTRY,
+} from "@/lib/business-information-options";
+import {
+  firstBusinessInformationError,
+  cpaQuestionVisibility,
+  validateBusinessInformation,
+  type BusinessInformationFormData,
+} from "@/lib/business-information-schema";
+import { buildBusinessInformationPayload, businessAddressForReload, cpaInformationForReload } from "@/lib/business-information-payload";
 
 type UserRow = {
   id: number;
@@ -45,59 +60,13 @@ type OrgRow = {
 
 type StateRow = { id: number; name: string; code: string };
 
-const ENTITY_TYPES = [
-  "Sole Proprietorship",
-  "Single Member LLC",
-  "Multi Member LLC",
-  "Partnership",
-  "S Corporation",
-  "C Corporation",
-  "Independent Contractor / Freelancer",
-  "Nonprofit",
-  "Other",
-];
-
-const INDUSTRIES = [
-  "Construction",
-  "Real Estate",
-  "Restaurant",
-  "Retail",
-  "Medical",
-  "Legal",
-  "Accounting",
-  "Financial Services",
-  "Marketing",
-  "Technology",
-  "Consulting",
-  "Transportation",
-  "Cleaning Services",
-  "E Commerce",
-  "Online Business",
-  "Other",
-];
-
-const TAX_PREPARERS = ["Myself", "CPA", "Tax Preparer", "Bookkeeper"];
-const BUSINESS_STATUS = ["Startup", "Seasonal", "Temporarily Closed"];
-const EMPLOYEE_COUNTS = ["Just Me", "2 to 5", "6 to 10", "11 to 25", "26 to 50", "51 to 100", "100+"];
-const LOCATION_TYPES = ["Home Office", "Commercial Office", "Retail Store", "Warehouse", "Mobile Business", "Virtual Office"];
-const PAYMENT_PLATFORMS = ["Stripe", "Square", "PayPal", "Shopify", "Amazon", "Etsy", "Clover", "Toast", "Venmo", "Cash App", "Zelle", "Other"];
-const ACCOUNTING_SOFTWARE = ["QuickBooks", "Xero", "Wave", "FreshBooks", "Zoho", "Sage", "None"];
-const PAYROLL_PROVIDERS = ["Gusto", "ADP", "Paychex", "Rippling", "Justworks", "None"];
-const BUSINESS_OPERATIONS = ["Sell Products", "Sell Services", "Have Employees", "Issue 1099s"];
-const REVENUE_RANGES = ["Under $25,000", "$25K to $50K", "$50K to $100K", "$100K to $250K", "$250K to $500K", "$500K to $1M", "$1M to $5M", "$5M+"];
-const PROFITABILITY = ["Profitable", "Breaking Even", "Losing Money", "Unsure"];
-const BUSINESS_GOALS = ["Bookkeeping", "Tax Savings", "AI Financial Insights", "Cash Flow", "Budgeting", "Financial Reports", "CPA Access", "Tax Preparation", "Loan Readiness", "Business Credit", "Financial Forecasting", "Expense Tracking", "Receipt Management", "Bank Reconciliation"];
-const FUNDING_PURPOSES = ["Working Capital", "Equipment", "Vehicle", "Commercial Property", "SBA Loan", "Line of Credit", "Expansion", "Startup", "Inventory"];
 const AI_NOTIFICATIONS = ["Tax Savings", "Missing Deductions", "Large Expenses", "Cash Flow Issues", "Upcoming Tax Deadlines", "Funding Opportunities", "Business Health Score Changes", "Monthly Reports"];
 const DOCUMENT_TYPES = ["Prior Tax Return", "Bank Statements", "Credit Card Statements", "Profit & Loss", "Balance Sheet", "Articles of Incorporation", "EIN Letter", "Business License", "Sales Tax Permit"];
-const EMPLOYEE_TYPES = ["1099", "W-2 Employee", "Self / Single"];
 
 const BUSINESS_STEPS = [
-  { title: "Company", icon: Building2 },
-  { title: "Address", icon: MapPin },
-  { title: "Tax", icon: Landmark },
-  { title: "Operations", icon: BriefcaseBusiness },
-  { title: "Legal", icon: ShieldCheck },
+  { title: "Company Identity", icon: Building2 },
+  { title: "Address & Ownership", icon: MapPin },
+  { title: "Tax / Registration", icon: Landmark },
 ];
 
 const profileSurveyKey = "booksmart:start-business-survey";
@@ -174,29 +143,18 @@ export default function Profile() {
   const [website, setWebsite] = useState("");
   const [businessDescription, setBusinessDescription] = useState("");
   const [naics, setNaics] = useState("");
-  const [businessStatus, setBusinessStatus] = useState("");
   const [yearEstablished, setYearEstablished] = useState("");
   const [startDate, setStartDate] = useState("");
-  const [employees, setEmployees] = useState("");
-  const [contractors, setContractors] = useState("");
   const [suite, setSuite] = useState("");
   const [country, setCountry] = useState("United States");
-  const [locationType, setLocationType] = useState("");
-  const [mailingSame, setMailingSame] = useState(true);
   const [ownerName, setOwnerName] = useState("");
   const [ownerTitle, setOwnerTitle] = useState("Owner");
   const [ownershipPercent, setOwnershipPercent] = useState("100");
   const [additionalOwners, setAdditionalOwners] = useState("");
-  const [federalTaxClass, setFederalTaxClass] = useState("");
   const [stateIncorporation, setStateIncorporation] = useState("");
   const [stateRegistrationNumber, setStateRegistrationNumber] = useState("");
-  const [businessLicenseNumber, setBusinessLicenseNumber] = useState("");
-  const [salesTaxPermit, setSalesTaxPermit] = useState("no");
-  const [salesTaxNumber, setSalesTaxNumber] = useState("");
-  const [payrollTaxNumber, setPayrollTaxNumber] = useState("");
-  const [taxYear, setTaxYear] = useState("Calendar");
-  const [fiscalYearEnd, setFiscalYearEnd] = useState("");
-  const [taxPreparer, setTaxPreparer] = useState("");
+  const [hasCpa, setHasCpa] = useState("");
+  const [wantsCpaMatch, setWantsCpaMatch] = useState("");
   const [currentCpa, setCurrentCpa] = useState("");
   const [primaryBank, setPrimaryBank] = useState("");
   const [bankAccountCount, setBankAccountCount] = useState("");
@@ -204,33 +162,11 @@ export default function Profile() {
   const [businessCreditCards, setBusinessCreditCards] = useState("no");
   const [loans, setLoans] = useState("no");
   const [lineOfCredit, setLineOfCredit] = useState("no");
-  const [accountingSoftware, setAccountingSoftware] = useState("");
-  const [payrollProvider, setPayrollProvider] = useState("");
-  const [paymentPlatforms, setPaymentPlatforms] = useState<string[]>([]);
-  const [operations, setOperations] = useState<string[]>([]);
-  const [employeeType, setEmployeeType] = useState("");
-  const [annualRevenue, setAnnualRevenue] = useState("");
-  const [monthlyRevenue, setMonthlyRevenue] = useState("");
-  const [monthlyExpenses, setMonthlyExpenses] = useState("");
-  const [profitability, setProfitability] = useState("");
-  const [goals, setGoals] = useState<string[]>([]);
-  const [applyingFunding, setApplyingFunding] = useState("maybe");
-  const [fundingPurposes, setFundingPurposes] = useState<string[]>([]);
-  const [desiredFundingAmount, setDesiredFundingAmount] = useState("");
-  const [fundingTimeline, setFundingTimeline] = useState("");
-  const [operationsNotes, setOperationsNotes] = useState("");
-  const [hasCpa, setHasCpa] = useState("no");
-  const [wantsCpaMatch, setWantsCpaMatch] = useState("yes");
-  const [wantsBookkeeper, setWantsBookkeeper] = useState("no");
   const [aiNotifications, setAiNotifications] = useState<string[]>([]);
   const [uploadDocumentsNow, setUploadDocumentsNow] = useState("later");
   const [documents, setDocuments] = useState<string[]>([]);
   const [enableMfa, setEnableMfa] = useState("no");
   const [inviteTeamMembers, setInviteTeamMembers] = useState("no");
-  const [certifyAccurate, setCertifyAccurate] = useState(false);
-  const [authorizeAnalysis, setAuthorizeAnalysis] = useState(false);
-  const [acceptTerms, setAcceptTerms] = useState(false);
-  const [acceptPrivacy, setAcceptPrivacy] = useState(false);
 
   useEffect(() => {
     if (!userRow) return;
@@ -264,6 +200,7 @@ export default function Profile() {
       employee_count?: string | null;
       independent_contractor_count?: string | null;
       address?: {
+        street?: string | null;
         suite?: string | null;
         country?: string | null;
         location_type?: string | null;
@@ -315,71 +252,44 @@ export default function Profile() {
         timeline?: string | null;
       };
       operations_notes?: string | null;
-      cpa_profile?: { has_cpa?: boolean | null; wants_cpa_match?: boolean | null; wants_bookkeeper?: boolean | null };
+      cpa_profile?: { has_cpa?: boolean | null; wants_cpa_match?: boolean | null; current_cpa?: string | null; wants_bookkeeper?: boolean | null };
       ai_preferences?: string[] | null;
       documents?: { upload_now?: boolean | null; requested_documents?: string[] | null };
       security?: { enable_mfa?: boolean | null; invite_team_members?: boolean | null };
       legal?: { certified_accurate?: boolean | null; authorized_analysis?: boolean | null; accepted_terms?: boolean | null; accepted_privacy?: boolean | null };
     } | undefined;
     setBusinessDescription(onboarding?.business_description ?? "");
+    const reloadedAddress = businessAddressForReload({
+      coreStreet: orgRow.street,
+      onboardingProfile: onboarding as Record<string, unknown> | undefined,
+    });
+    setStreet(reloadedAddress.street);
     setNaics(onboarding?.naics_code ?? "");
-    setBusinessStatus(onboarding?.business_status ?? "");
     setYearEstablished(onboarding?.year_established ?? "");
     setStartDate(onboarding?.date_business_started ?? "");
-    setEmployees(onboarding?.employee_count ?? "");
-    setContractors(onboarding?.independent_contractor_count ?? "");
-    setSuite(onboarding?.address?.suite ?? "");
+    setSuite(reloadedAddress.suite);
     setCountry(onboarding?.address?.country ?? "United States");
-    setLocationType(onboarding?.address?.location_type ?? "");
-    setMailingSame(onboarding?.address?.mailing_same_as_business ?? true);
     setOwnerName(onboarding?.ownership?.owner_name ?? "");
     setOwnerTitle(onboarding?.ownership?.owner_title ?? "Owner");
     setOwnershipPercent(String(onboarding?.ownership?.ownership_percent ?? 100));
     setAdditionalOwners(onboarding?.ownership?.additional_owners_notes ?? "");
-    setFederalTaxClass(onboarding?.tax?.federal_tax_classification ?? orgRow.org_type ?? "");
     setStateIncorporation(onboarding?.tax?.state_of_incorporation ?? "");
     setStateRegistrationNumber(onboarding?.tax?.state_registration_number ?? "");
-    setBusinessLicenseNumber(onboarding?.tax?.business_license_number ?? "");
-    setSalesTaxPermit(onboarding?.tax?.sales_tax_permit ? "yes" : "no");
-    setSalesTaxNumber(onboarding?.tax?.sales_tax_number ?? "");
-    setPayrollTaxNumber(onboarding?.tax?.payroll_tax_number ?? "");
-    setTaxYear(onboarding?.tax?.tax_year ?? "Calendar");
-    setFiscalYearEnd(onboarding?.tax?.fiscal_year_end ?? "");
-    setTaxPreparer(onboarding?.tax?.tax_preparer ?? "");
-    setCurrentCpa(onboarding?.tax?.current_cpa ?? "");
+    const cpaInformation = cpaInformationForReload(onboarding as Record<string, unknown> | undefined);
+    setHasCpa(cpaInformation.hasCpa);
+    setWantsCpaMatch(cpaInformation.wantsCpaMatch);
+    setCurrentCpa(cpaInformation.currentCpa);
     setConnectBankNow(onboarding?.banking?.connect_bank_now ? "yes" : "later");
     setPrimaryBank(onboarding?.banking?.primary_bank ?? "");
     setBankAccountCount(onboarding?.banking?.bank_account_count ?? "");
     setBusinessCreditCards(onboarding?.banking?.business_credit_cards ? "yes" : "no");
     setLoans(onboarding?.banking?.loans ? "yes" : "no");
     setLineOfCredit(onboarding?.banking?.line_of_credit ? "yes" : "no");
-    setPaymentPlatforms(onboarding?.banking?.payment_platforms ?? []);
-    setAccountingSoftware(onboarding?.banking?.accounting_software ?? "");
-    setPayrollProvider(onboarding?.banking?.payroll_provider ?? "");
-    setOperations(onboarding?.operations ?? []);
-    setEmployeeType(onboarding?.employee_type ?? "");
-    setAnnualRevenue(onboarding?.financial_snapshot?.approximate_annual_revenue ?? "");
-    setMonthlyRevenue(String(onboarding?.financial_snapshot?.average_monthly_revenue ?? ""));
-    setMonthlyExpenses(String(onboarding?.financial_snapshot?.average_monthly_expenses ?? ""));
-    setProfitability(onboarding?.financial_snapshot?.profitability ?? "");
-    setGoals(onboarding?.goals ?? []);
-    setApplyingFunding(onboarding?.funding?.plans_to_apply ?? "maybe");
-    setFundingPurposes(onboarding?.funding?.purposes ?? []);
-    setDesiredFundingAmount(String(onboarding?.funding?.desired_amount ?? ""));
-    setFundingTimeline(onboarding?.funding?.timeline ?? "");
-    setOperationsNotes(onboarding?.operations_notes ?? "");
-    setHasCpa(onboarding?.cpa_profile?.has_cpa ? "yes" : "no");
-    setWantsCpaMatch(onboarding?.cpa_profile?.wants_cpa_match === false ? "no" : "yes");
-    setWantsBookkeeper(onboarding?.cpa_profile?.wants_bookkeeper ? "yes" : "no");
     setAiNotifications(onboarding?.ai_preferences ?? []);
     setUploadDocumentsNow(onboarding?.documents?.upload_now ? "now" : "later");
     setDocuments(onboarding?.documents?.requested_documents ?? []);
     setEnableMfa(onboarding?.security?.enable_mfa ? "yes" : "no");
     setInviteTeamMembers(onboarding?.security?.invite_team_members ? "yes" : "no");
-    setCertifyAccurate(onboarding?.legal?.certified_accurate ?? false);
-    setAuthorizeAnalysis(onboarding?.legal?.authorized_analysis ?? false);
-    setAcceptTerms(onboarding?.legal?.accepted_terms ?? false);
-    setAcceptPrivacy(onboarding?.legal?.accepted_privacy ?? false);
   }, [orgRow, userRow?.email, profile?.email]);
 
   const validatePersonal = () => {
@@ -389,18 +299,23 @@ export default function Profile() {
   };
 
   const applyExtractedBusiness = (extracted: ExtractedBusinessDocument) => {
-    const prefill = buildBusinessDocumentPrefill(extracted, states);
-    if (prefill.businessName) setBusinessName(prefill.businessName);
-    if (prefill.orgType) setOrgType(prefill.orgType);
-    if (prefill.stateId) setStateId(prefill.stateId);
-    if (prefill.stateIncorporation) setStateIncorporation(prefill.stateIncorporation);
-    if (prefill.yearEstablished) setYearEstablished(prefill.yearEstablished);
-    if (prefill.street) setStreet(prefill.street);
-    if (prefill.suite) setSuite(prefill.suite);
-    if (prefill.city) setCity(prefill.city);
-    if (prefill.zip) setZip(prefill.zip);
-    if (prefill.country) setCountry(prefill.country);
-    if (prefill.stateRegistrationNumber) setStateRegistrationNumber(prefill.stateRegistrationNumber);
+    const extractedPrefill = buildBusinessDocumentPrefill(extracted, states);
+    const prefill = preserveEnteredBusinessDocumentFields({
+      businessName, orgType, stateId, stateIncorporation, yearEstablished, startDate,
+      street, suite, city, zip, country, stateRegistrationNumber,
+    }, extractedPrefill);
+    setBusinessName(prefill.businessName ?? "");
+    setOrgType(prefill.orgType ?? "");
+    setStateId(prefill.stateId ?? "");
+    setStateIncorporation(prefill.stateIncorporation ?? "");
+    setYearEstablished(prefill.yearEstablished ?? "");
+    setStartDate(prefill.startDate ?? "");
+    setStreet(prefill.street ?? "");
+    setSuite(prefill.suite ?? "");
+    setCity(prefill.city ?? "");
+    setZip(prefill.zip ?? "");
+    setCountry(prefill.country ?? "");
+    setStateRegistrationNumber(prefill.stateRegistrationNumber ?? "");
 
     setExtractionContext({
       registeredAgent: extracted.registeredAgent?.name ?? null,
@@ -412,29 +327,35 @@ export default function Profile() {
     setBusinessStep(0);
   };
 
-  const validateBusiness = () => {
-    if (!businessName.trim()) return "Business name is required.";
-    if (!orgType) return "Business type is required.";
-    if (!industry) return "Industry is required.";
-    if (!einTin.trim()) return "EIN / TIN is required.";
-    if (!stateId) return "Business state is required.";
-    if (!certifyAccurate) return "Please certify that the business information is accurate.";
-    return null;
-  };
+  const businessInformationForm = (): BusinessInformationFormData => ({
+    legalName: businessName, entityType: orgType, industry, naics, description: businessDescription,
+    status: "", yearEstablished, startDate, employees: "", contractors: "", website,
+    businessEmail, businessPhone, street, suite, city, state: stateId, zip, country,
+    mailingSame: true, locationType: "", ownerName, ownerTitle, ownershipPercent, additionalOwners,
+    einTin, federalTaxClass: "", stateIncorporation, stateRegistrationNumber, businessLicenseNumber: "",
+    salesTaxPermit: "no", salesTaxNumber: "", payrollTaxNumber: "", taxYear: "Calendar",
+    fiscalYearEnd: "", taxPreparer: "", currentCpa, connectBankNow, primaryBank,
+    bankAccountCount, businessCreditCards, loans, lineOfCredit, paymentPlatforms: [],
+    accountingSoftware: "", payrollProvider: "", operations: [], employeeType: "",
+    annualRevenue: "", monthlyRevenue: "", monthlyExpenses: "", profitability: "", goals: [],
+    applyingFunding: "maybe", fundingPurposes: [], desiredFundingAmount: "", fundingTimeline: "",
+    operationsNotes: "", hasCpa, wantsCpaMatch, wantsBookkeeper: "no",
+    certifyAccurate: false, authorizeAnalysis: false, acceptTerms: false, acceptPrivacy: false,
+  });
+
+  const validateBusiness = () =>
+    firstBusinessInformationError(validateBusinessInformation(businessInformationForm()));
 
   const validateBusinessStep = () => {
-    if (businessStep === 0) {
-      if (!businessName.trim()) return "Business name is required.";
-      if (!orgType) return "Business type is required.";
-      if (!industry) return "Industry is required.";
-    }
-    if (businessStep === 1 && !stateId) return "Business state is required.";
-    if (businessStep === 2) {
-      if (!einTin.trim()) return "EIN / TIN is required.";
-      if (!federalTaxClass) return "Federal tax classification is required.";
-    }
-    if (businessStep === 4 && (!certifyAccurate || !authorizeAnalysis || !acceptTerms || !acceptPrivacy)) return "Please complete all legal confirmations.";
-    return null;
+    const errors = validateBusinessInformation(businessInformationForm());
+    const fieldsByStep: Array<Array<keyof typeof errors>> = [
+      ["legalName", "entityType", "industry", "yearEstablished", "startDate", "website", "businessEmail"],
+      ["state", "zip", "ownershipPercent"],
+      ["einTin"],
+    ];
+    return firstBusinessInformationError(Object.fromEntries(
+      fieldsByStep[businessStep].filter((key) => errors[key]).map((key) => [key, errors[key]]),
+    ));
   };
 
   const saveMutation = useMutation({
@@ -459,115 +380,23 @@ export default function Profile() {
 
       const selectedStateName = states.find((state) => String(state.id) === stateId)?.name ?? null;
       const existingDebts = orgRow?.debts && typeof orgRow.debts === "object" ? orgRow.debts : {};
-      const onboardingProfile = {
-        ...(existingDebts.onboarding_profile as Record<string, unknown> | undefined),
-        business_description: businessDescription.trim() || null,
-        naics_code: naics.trim() || null,
-        business_status: businessStatus || null,
-        year_established: yearEstablished || null,
-        date_business_started: startDate || null,
-        employee_count: employees || null,
-        independent_contractor_count: contractors || null,
-        address: {
-          street: street.trim() || null,
-          suite: suite.trim() || null,
-          city: city.trim() || null,
-          state: selectedStateName,
-          zip: zip.trim() || null,
-          country: country.trim() || null,
-          mailing_same_as_business: mailingSame,
-          location_type: locationType || null,
+      const payload = buildBusinessInformationPayload({
+        form: businessInformationForm(),
+        stateName: selectedStateName,
+        existingDebts,
+        completedFromProfile: true,
+        onboardingExtras: {
+          ai_preferences: aiNotifications,
+          documents: {
+            upload_now: uploadDocumentsNow === "now",
+            requested_documents: documents,
+          },
+          security: {
+            enable_mfa: enableMfa === "yes",
+            invite_team_members: inviteTeamMembers === "yes",
+          },
         },
-        ownership: {
-          owner_name: ownerName.trim() || null,
-          owner_title: ownerTitle.trim() || null,
-          ownership_percent: Number(ownershipPercent) || 100,
-          additional_owners_notes: additionalOwners.trim() || null,
-        },
-        tax: {
-          federal_tax_classification: federalTaxClass || null,
-          state_of_incorporation: stateIncorporation || null,
-          state_registration_number: stateRegistrationNumber.trim() || null,
-          business_license_number: businessLicenseNumber.trim() || null,
-          sales_tax_permit: salesTaxPermit === "yes",
-          sales_tax_number: salesTaxNumber.trim() || null,
-          payroll_tax_number: payrollTaxNumber.trim() || null,
-          tax_year: taxYear,
-          fiscal_year_end: fiscalYearEnd || null,
-          tax_preparer: taxPreparer || null,
-          current_cpa: currentCpa.trim() || null,
-        },
-        banking: {
-          connect_bank_now: connectBankNow === "yes",
-          primary_bank: primaryBank.trim() || null,
-          bank_account_count: bankAccountCount.trim() || null,
-          business_credit_cards: businessCreditCards === "yes",
-          loans: loans === "yes",
-          line_of_credit: lineOfCredit === "yes",
-          payment_platforms: paymentPlatforms,
-          accounting_software: accountingSoftware || null,
-          payroll_provider: payrollProvider || null,
-        },
-        operations,
-        employee_type: employeeType || null,
-        financial_snapshot: {
-          approximate_annual_revenue: annualRevenue || null,
-          average_monthly_revenue: Number(monthlyRevenue) || null,
-          average_monthly_expenses: Number(monthlyExpenses) || null,
-          profitability: profitability || null,
-        },
-        goals,
-        funding: {
-          plans_to_apply: applyingFunding,
-          purposes: fundingPurposes,
-          desired_amount: Number(desiredFundingAmount) || null,
-          timeline: fundingTimeline.trim() || null,
-        },
-        operations_notes: operationsNotes.trim() || null,
-        cpa_profile: {
-          has_cpa: hasCpa === "yes",
-          wants_cpa_match: wantsCpaMatch === "yes",
-          wants_bookkeeper: wantsBookkeeper === "yes",
-        },
-        ai_preferences: aiNotifications,
-        documents: {
-          upload_now: uploadDocumentsNow === "now",
-          requested_documents: documents,
-        },
-        security: {
-          enable_mfa: enableMfa === "yes",
-          invite_team_members: inviteTeamMembers === "yes",
-        },
-        legal: {
-          certified_accurate: certifyAccurate,
-          authorized_analysis: authorizeAnalysis,
-          accepted_terms: acceptTerms,
-          accepted_privacy: acceptPrivacy,
-        },
-        business_profile_completed: true,
-        completed_from_profile: true,
-        completed_at: new Date().toISOString(),
-      };
-      const payload = {
-        name: businessName.trim(),
-        org_type: orgType,
-        industry,
-        ein_tin: einTin.trim(),
-        state: Number(stateId),
-        street: [street.trim(), suite.trim()].filter(Boolean).join(", "),
-        city: city.trim(),
-        zip: zip.trim(),
-        phone: businessPhone.trim() || null,
-        email: businessEmail.trim() || null,
-        website: website.trim() || null,
-        primary_state: selectedStateName,
-        industry_niche: industry,
-        debts: {
-          ...existingDebts,
-          onboarding_profile: onboardingProfile,
-          business_profile_completed: true,
-        },
-      };
+      });
 
       // Initial onboarding is allowed to create only the first organization.
       // Re-query at save time so a refresh, prior attempt, or another completed
@@ -646,6 +475,7 @@ export default function Profile() {
   const isLoading = userLoading || orgLoading;
   const initials = `${firstName?.[0] ?? ""}${lastName?.[0] ?? ""}`.toUpperCase() || "?";
   const CurrentBusinessIcon = BUSINESS_STEPS[businessStep].icon;
+  const cpaVisibility = cpaQuestionVisibility(hasCpa);
 
   return (
     <div className="min-w-0 animate-in fade-in slide-in-from-bottom-4 duration-500">
@@ -754,7 +584,7 @@ export default function Profile() {
                   </div>
                 )}
                 <div>
-                  <div className="hidden gap-2 text-xs font-medium text-muted-foreground sm:grid sm:grid-cols-3 xl:grid-cols-5">
+                  <div className="hidden gap-2 text-xs font-medium text-muted-foreground sm:grid sm:grid-cols-2 xl:grid-cols-4">
                     {BUSINESS_STEPS.map((item, index) => (
                       <button
                         key={item.title}
@@ -793,15 +623,13 @@ export default function Profile() {
 
                 {businessStep === 0 && (
                   <div className="grid min-w-0 gap-4 xl:grid-cols-2">
+                    <p className="text-sm text-muted-foreground xl:col-span-2">Identify the registered business and provide contact details used for its BookSmart profile.</p>
                     <TextField label="Legal Business Name *" value={businessName} onChange={setBusinessName} hideLabel />
                     <SelectField label="Business Type *" value={orgType} onChange={setOrgType} options={ENTITY_TYPES} placeholder="Select business type" />
-                    <SelectField label="Industry *" value={industry} onChange={setIndustry} options={INDUSTRIES} placeholder="Select industry" />
+                    <SelectField label="Industry *" value={industry} onChange={(value) => { setIndustry(value); setNaics(NAICS_BY_INDUSTRY[value] ?? ""); }} options={INDUSTRIES} placeholder="Select industry" />
                     <TextField label="NAICS Code" value={naics} onChange={setNaics} hideLabel />
-                    <SelectField label="Business Status" value={businessStatus} onChange={setBusinessStatus} options={BUSINESS_STATUS} placeholder="Select status" />
                     <TextField label="Year Established" value={yearEstablished} onChange={setYearEstablished} type="number" hideLabel />
                     <TextField label="Date Business Started" value={startDate} onChange={setStartDate} type="date" />
-                    <SelectField label="Number of Employees" value={employees} onChange={setEmployees} options={EMPLOYEE_COUNTS} placeholder="Select count" />
-                    <TextField label="Independent Contractors" value={contractors} onChange={setContractors} type="number" hideLabel />
                     <TextField label="Website" value={website} onChange={setWebsite} hideLabel />
                     <TextField label="Business Email" value={businessEmail} onChange={setBusinessEmail} type="email" hideLabel />
                     <TextField label="Business Phone" value={businessPhone} onChange={setBusinessPhone} type="tel" hideLabel />
@@ -819,6 +647,7 @@ export default function Profile() {
 
                 {businessStep === 1 && (
                   <div className="grid min-w-0 gap-4 xl:grid-cols-2">
+                    <p className="text-sm text-muted-foreground xl:col-span-2">Use the registered business address and identify the primary legal owner.</p>
                     <TextField label="Street" value={street} onChange={setStreet} hideLabel />
                     <TextField label="Suite" value={suite} onChange={setSuite} hideLabel />
                     <TextField label="City" value={city} onChange={setCity} hideLabel />
@@ -831,11 +660,11 @@ export default function Profile() {
                     />
                     <TextField label="ZIP Code" value={zip} onChange={setZip} hideLabel />
                     <TextField label="Country" value={country} onChange={setCountry} hideLabel />
-                    <SelectField label="Business Location Type" value={locationType} onChange={setLocationType} options={LOCATION_TYPES} placeholder="Select location" />
-                    <CheckRow label="Mailing address is same as business address" checked={mailingSame} onChange={setMailingSame} className="self-end" />
-                    <TextField label="Owner Full Name" value={ownerName} onChange={setOwnerName} hideLabel />
-                    <TextField label="Owner Title" value={ownerTitle} onChange={setOwnerTitle} hideLabel />
-                    <TextField label="Ownership Percentage" value={ownershipPercent} onChange={setOwnershipPercent} type="number" hideLabel />
+                    <div className="grid min-w-0 gap-4 xl:col-span-2 sm:grid-cols-3">
+                      <TextField label="Owner Full Name" value={ownerName} onChange={setOwnerName} hideLabel />
+                      <TextField label="Owner Title" value={ownerTitle} onChange={setOwnerTitle} hideLabel />
+                      <TextField label="Ownership Percentage" value={ownershipPercent} onChange={setOwnershipPercent} type="number" hideLabel />
+                    </div>
                     <div className="min-w-0 space-y-2 xl:col-span-2">
                       <Label>Additional owners</Label>
                       <Textarea
@@ -850,14 +679,8 @@ export default function Profile() {
 
                 {businessStep === 2 && (
                   <div className="grid min-w-0 gap-4 xl:grid-cols-2">
+                    <p className="text-sm text-muted-foreground xl:col-span-2">Provide the identifiers used to match the business with its registration and tax records.</p>
                     <TextField label="EIN / TIN *" value={einTin} onChange={setEinTin} hideLabel />
-                    <SelectField
-                      label="Federal Tax Classification *"
-                      value={federalTaxClass}
-                      onChange={setFederalTaxClass}
-                      options={["Sole Proprietor", "Single Member LLC", "Partnership", "S Corporation", "C Corporation", "Nonprofit"]}
-                      placeholder="Select classification"
-                    />
                     <SelectField
                       label="State of Incorporation"
                       value={stateIncorporation}
@@ -865,60 +688,22 @@ export default function Profile() {
                       options={states.map((state) => ({ value: state.name, label: state.name }))}
                       placeholder="Select state"
                     />
-                    <TextField label="State Registration Number" value={stateRegistrationNumber} onChange={setStateRegistrationNumber} hideLabel />
-                    <TextField label="Business License Number" value={businessLicenseNumber} onChange={setBusinessLicenseNumber} hideLabel />
-                    <SelectField label="Sales Tax Permit" value={salesTaxPermit} onChange={setSalesTaxPermit} options={["no", "yes"]} />
-                    {salesTaxPermit === "yes" && <TextField label="Sales Tax Number" value={salesTaxNumber} onChange={setSalesTaxNumber} hideLabel />}
-                    <TextField label="Payroll Tax Number" value={payrollTaxNumber} onChange={setPayrollTaxNumber} hideLabel />
-                    <SelectField label="Business Tax Year" value={taxYear} onChange={setTaxYear} options={["Calendar", "Fiscal"]} />
-                    {taxYear === "Fiscal" && <TextField label="Fiscal Year End" value={fiscalYearEnd} onChange={setFiscalYearEnd} type="date" />}
-                    <SelectField label="Who Prepares Your Taxes?" value={taxPreparer} onChange={setTaxPreparer} options={TAX_PREPARERS} placeholder="Select preparer" />
-                    <TextField label="Current CPA" value={currentCpa} onChange={setCurrentCpa} hideLabel />
-                    <SelectField label="Do You Have a CPA?" value={hasCpa} onChange={setHasCpa} options={["no", "yes"]} />
-                    <SelectField label="Match with BookSmart CPA?" value={wantsCpaMatch} onChange={setWantsCpaMatch} options={["yes", "no"]} />
-                    <SelectField label="BookSmart Bookkeeper?" value={wantsBookkeeper} onChange={setWantsBookkeeper} options={["no", "yes"]} />
-                  </div>
-                )}
-
-                {businessStep === 3 && (
-                  <div className="space-y-5">
-                    <MultiSection title="Business Operations" options={BUSINESS_OPERATIONS} selected={operations} onToggle={(value) => toggleList(operations, setOperations, value)} />
-                    <div className="grid min-w-0 gap-4 xl:grid-cols-2">
-                      <SelectField label="Employee Type" value={employeeType} onChange={setEmployeeType} options={EMPLOYEE_TYPES} placeholder="Select employee type" />
-                      <SelectField label="Approximate Annual Revenue" value={annualRevenue} onChange={setAnnualRevenue} options={REVENUE_RANGES} placeholder="Select range" />
-                      <TextField label="Average Monthly Revenue" value={monthlyRevenue} onChange={setMonthlyRevenue} type="number" hideLabel />
-                      <TextField label="Average Monthly Expenses" value={monthlyExpenses} onChange={setMonthlyExpenses} type="number" hideLabel />
-                      <SelectField label="Profitability" value={profitability} onChange={setProfitability} options={PROFITABILITY} placeholder="Select status" />
-                    </div>
-                    <MultiSection title="Business Goals" options={BUSINESS_GOALS} selected={goals} onToggle={(value) => toggleList(goals, setGoals, value)} />
-                    <div className="grid min-w-0 gap-4 xl:grid-cols-2">
-                      <SelectField label="Applying for Funding?" value={applyingFunding} onChange={setApplyingFunding} options={["yes", "no", "maybe"]} />
-                      <TextField label="Desired Funding Amount" value={desiredFundingAmount} onChange={setDesiredFundingAmount} type="number" hideLabel />
-                      <TextField label="Expected Timeline" value={fundingTimeline} onChange={setFundingTimeline} hideLabel />
-                    </div>
-                    <MultiSection title="Funding Purpose" options={FUNDING_PURPOSES} selected={fundingPurposes} onToggle={(value) => toggleList(fundingPurposes, setFundingPurposes, value)} />
-                    <div className="space-y-2">
-                      <Label>Operations notes</Label>
-                      <Textarea
-                        value={operationsNotes}
-                        onChange={(event) => setOperationsNotes(event.target.value)}
-                        placeholder="Describe sales channels, employees, contractors, products, services, or bookkeeping setup."
-                        className="min-h-32 bg-card text-base"
-                      />
+                    <div className="min-w-0 space-y-4 rounded-lg border border-border/60 bg-card/40 p-4 xl:col-span-2">
+                      <div>
+                        <h4 className="font-semibold text-foreground">CPA Information</h4>
+                        <p className="mt-1 text-sm text-muted-foreground">Tell us about your current CPA relationship so BookSmart can better support your accounting needs.</p>
+                      </div>
+                      <SelectField label="Do you currently have a CPA?" value={hasCpa} onChange={setHasCpa} options={[{ value: "yes", label: "Yes" }, { value: "no", label: "No" }]} placeholder="Select Yes or No" />
+                      {cpaVisibility.showCurrentCpa && (
+                        <TextField label="Current CPA" value={currentCpa} onChange={setCurrentCpa} hideLabel />
+                      )}
+                      {cpaVisibility.showCpaMatch && (
+                        <SelectField label="Would you like BookSmart to help you find a CPA?" value={wantsCpaMatch} onChange={setWantsCpaMatch} options={[{ value: "yes", label: "Yes" }, { value: "no", label: "No" }]} placeholder="Select Yes or No" />
+                      )}
                     </div>
                   </div>
                 )}
 
-                {businessStep === 4 && (
-                  <div className="space-y-5">
-                    <div className="space-y-3 rounded-lg border border-border/60 p-4">
-                      <CheckRow label="I certify that the information is accurate." checked={certifyAccurate} onChange={setCertifyAccurate} />
-                      <CheckRow label="I authorize BookSmart to analyze my financial data." checked={authorizeAnalysis} onChange={setAuthorizeAnalysis} />
-                      <CheckRow label="I accept the Terms of Service." checked={acceptTerms} onChange={setAcceptTerms} />
-                      <CheckRow label="I accept the Privacy Policy." checked={acceptPrivacy} onChange={setAcceptPrivacy} />
-                    </div>
-                  </div>
-                )}
 
                 <div className="flex flex-col-reverse gap-3 pt-1 sm:flex-row sm:justify-end">
                   {businessStep === 0 ? (
@@ -1003,57 +788,6 @@ function SelectField({
       </Select>
     </div>
   );
-}
-
-function CheckRow({
-  label,
-  checked,
-  onChange,
-  className = "",
-}: {
-  label: string;
-  checked: boolean;
-  onChange: (checked: boolean) => void;
-  className?: string;
-}) {
-  return (
-    <label className={`flex min-h-12 items-center gap-3 rounded-md border border-border/50 bg-card px-3 py-2 text-sm ${className}`}>
-      <input
-        type="checkbox"
-        checked={checked}
-        onChange={(event) => onChange(event.target.checked)}
-        className="h-4 w-4 accent-primary"
-      />
-      <span className="min-w-0 break-words">{label}</span>
-    </label>
-  );
-}
-
-function MultiSection({
-  title,
-  options,
-  selected,
-  onToggle,
-}: {
-  title: string;
-  options: string[];
-  selected: string[];
-  onToggle: (value: string) => void;
-}) {
-  return (
-    <div className="min-w-0 space-y-2 xl:col-span-2">
-      <Label>{title}</Label>
-      <div className="grid min-w-0 gap-2 sm:grid-cols-2 xl:grid-cols-3">
-        {options.map((option) => (
-          <CheckRow key={option} label={option} checked={selected.includes(option)} onChange={() => onToggle(option)} />
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function toggleList(current: string[], setValue: (next: string[]) => void, value: string) {
-  setValue(current.includes(value) ? current.filter((item) => item !== value) : [...current, value]);
 }
 
 function ProfileSection({
