@@ -6,12 +6,12 @@ export const BUSINESS_ENTITY_TYPES = [
 ];
 
 export const BUSINESS_INDUSTRIES = [
-  "Construction", "Real Estate", "Restaurant", "Retail", "Medical", "Dental", "Legal",
-  "Accounting", "Financial Services", "Marketing", "Technology", "Consulting", "Insurance",
-  "Manufacturing", "Transportation", "Logistics", "Trucking", "Cleaning Services",
-  "Landscaping", "HVAC", "Plumbing", "Electrical", "Roofing", "Engineering", "Architecture",
-  "Education", "Childcare", "Fitness", "Beauty Salon", "Barber Shop", "E Commerce",
-  "Online Business", "Photography", "Agriculture", "Nonprofit", "Other",
+  "Accounting", "Agriculture", "Architecture", "Barber Shop", "Beauty Salon", "Childcare",
+  "Cleaning Services", "Construction", "Consulting", "Dental", "E Commerce", "Education",
+  "Electrical", "Engineering", "Financial Services", "Fitness", "HVAC", "Insurance",
+  "Landscaping", "Legal", "Logistics", "Manufacturing", "Marketing", "Medical", "Nonprofit",
+  "Online Business", "Other", "Photography", "Plumbing", "Real Estate", "Restaurant", "Retail",
+  "Roofing", "Technology", "Transportation", "Trucking",
 ];
 
 export const NAICS_BY_INDUSTRY: Record<string, string> = {
@@ -20,4 +20,3 @@ export const NAICS_BY_INDUSTRY: Record<string, string> = {
   Technology: "5415", Consulting: "541611", Transportation: "48-49", Trucking: "484",
   Manufacturing: "31-33", Nonprofit: "813",
 };
-

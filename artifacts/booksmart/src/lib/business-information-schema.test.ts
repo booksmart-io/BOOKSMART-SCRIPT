@@ -20,7 +20,7 @@ function validForm(overrides: Partial<BusinessInformationFormData> = {}): Busine
     federalTaxClass: "Single Member LLC", stateIncorporation: "Texas",
     stateRegistrationNumber: "", businessLicenseNumber: "", salesTaxPermit: "no",
     salesTaxNumber: "", payrollTaxNumber: "", taxYear: "Calendar", fiscalYearEnd: "",
-    taxPreparer: "", currentCpa: "", connectBankNow: "later", primaryBank: "",
+    taxPreparer: "", currentCpa: "", currentCpaCompany: "", currentCpaPhone: "", connectBankNow: "later", primaryBank: "",
     bankAccountCount: "", businessCreditCards: "no", loans: "no", lineOfCredit: "no",
     paymentPlatforms: [], accountingSoftware: "", payrollProvider: "", operations: [],
     employeeType: "", annualRevenue: "", monthlyRevenue: "", monthlyExpenses: "",
@@ -145,6 +145,8 @@ test("a new business can persist an existing CPA in canonical cpa_profile", () =
   assert.deepEqual(onboarding.cpa_profile, {
     has_cpa: true,
     current_cpa: "Jordan Smith, CPA",
+    current_cpa_company: null,
+    current_cpa_phone: null,
   });
   assert.equal(Object.hasOwn(onboarding.tax, "current_cpa"), false);
 });
@@ -169,11 +171,15 @@ test("canonical CPA data hydrates, and legacy current CPA is a read-only fallbac
     hasCpa: "no",
     wantsCpaMatch: "yes",
     currentCpa: "Preserved custom value",
+    currentCpaCompany: "",
+    currentCpaPhone: "",
   });
   assert.deepEqual(cpaInformationForReload({ tax: { current_cpa: "Legacy CPA" } }), {
     hasCpa: "yes",
     wantsCpaMatch: "",
     currentCpa: "Legacy CPA",
+    currentCpaCompany: "",
+    currentCpaPhone: "",
   });
 
   const payload = buildBusinessInformationPayload({

@@ -438,7 +438,7 @@ export default function UserDashboard() {
     {
       icon: <Landmark className="h-[17px] w-[17px] text-emerald-200" />,
       iconBg: "bg-emerald-600/90",
-      title: connectedBankCount > 0 ? "Manage bank connections" : "Connect bank account",
+      title: connectedBankCount > 0 ? "Manage bank connections" : "link bank account",
       detail: connectedBankCount > 0 ? `${connectedBankCount} active bank connection${connectedBankCount === 1 ? "" : "s"}` : "Import transactions automatically with Plaid.",
       href: "/user/reports?action=accounts",
       cta: connectedBankCount > 0 ? "View" : "Connect",
@@ -482,7 +482,7 @@ export default function UserDashboard() {
     { label: "Account created", detail: user && numericId ? "Your BookSmart account is active" : "Finish creating your account", complete: !!user && numericId !== null },
     { label: "Business information", detail: orgId ? "Active business profile completed" : "Complete your business profile", complete: orgId !== null },
     { label: "Business survey", detail: onboarding.surveyLabel, complete: onboarding.surveyComplete },
-    { label: "Connect bank account", detail: connectedBankCount > 0 ? `${connectedBankCount} active connection${connectedBankCount === 1 ? "" : "s"}` : "No business bank connected", complete: connectedBankCount > 0 },
+    { label: "link bank account", detail: connectedBankCount > 0 ? `${connectedBankCount} active connection${connectedBankCount === 1 ? "" : "s"}` : "No business bank connected", complete: connectedBankCount > 0 },
     { label: "Import first transactions", detail: allTxCount > 0 ? `${allTxCount} transaction${allTxCount === 1 ? "" : "s"} available` : "Waiting for a bank sync or statement import", complete: allTxCount > 0 },
   ];
   const readinessComplete = onboarding.completedCount;
@@ -655,33 +655,35 @@ difficulty must be "Easy", "Medium", or "Hard". savings is a USD number.`;
                     type="button"
                     onClick={() => setSurveyOpen(true)}
                     disabled={!orgId}
-                    className="grid w-full grid-cols-[auto_minmax(0,1fr)] items-center gap-x-3 gap-y-1 rounded-xl bg-muted/12 px-3 py-2.5 text-left transition-colors hover:bg-muted/20 disabled:cursor-not-allowed disabled:opacity-50 sm:grid-cols-[auto_minmax(0,1fr)_auto]"
+                    className="group grid w-full grid-cols-[auto_minmax(0,1fr)] items-center gap-x-3 gap-y-2 rounded-xl border border-transparent bg-muted/12 px-3 py-2.5 text-left transition-colors hover:border-primary/25 hover:bg-muted/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:cursor-not-allowed disabled:opacity-50 sm:grid-cols-[auto_minmax(0,1fr)_auto]"
                   >
                     <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg bg-primary/15 text-primary">
                       <ClipboardList className="h-5 w-5" />
                     </div>
                     <div className="min-w-0 flex-1">
-                      <p className="break-words text-[13px] font-semibold">Complete your BookSmart setup</p>
+                      <p className="break-words text-[13px] font-semibold group-hover:text-primary">Complete your BookSmart setup</p>
                       <p className="mt-0.5 line-clamp-2 text-[11px] text-muted-foreground">
                         {onboarding.surveyComplete ? "Business Survey and Balance Sheet Profile complete" : "Continue your organization-specific survey"}
                       </p>
                     </div>
-                    <span className="col-start-2 text-[12px] font-semibold text-primary sm:col-start-auto">
+                    <span className="col-start-2 text-[12px] font-semibold text-primary underline decoration-primary/40 underline-offset-4 transition-colors group-hover:decoration-primary sm:col-start-auto">
                       {onboarding.surveyComplete ? "Review Answers" : "Continue Survey"}
                     </span>
                   </button>
                   {actionItems.map(item => (
-                    <Link key={item.title} href={item.href}>
-                      <div className="grid cursor-pointer grid-cols-[auto_minmax(0,1fr)] items-center gap-x-3 gap-y-1 rounded-xl bg-muted/12 px-3 py-2.5 transition-colors hover:bg-muted/20 sm:grid-cols-[auto_minmax(0,1fr)_auto]">
+                    <Link
+                      key={item.title}
+                      href={item.href}
+                      className="group grid cursor-pointer grid-cols-[auto_minmax(0,1fr)] items-center gap-x-3 gap-y-2 rounded-xl border border-transparent bg-muted/12 px-3 py-2.5 transition-colors hover:border-primary/25 hover:bg-muted/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary sm:grid-cols-[auto_minmax(0,1fr)_auto]"
+                    >
                         <div className={`h-9 w-9 flex-shrink-0 rounded-lg flex items-center justify-center ${item.iconBg}`}>
                           {item.icon}
                         </div>
                         <div className="min-w-0 flex-1">
-                          <p className="break-words text-[13px] font-semibold">{item.title}</p>
+                          <p className="break-words text-[13px] font-semibold group-hover:text-primary">{item.title}</p>
                           <p className="mt-0.5 line-clamp-2 text-[11px] text-muted-foreground">{item.detail}</p>
                         </div>
-                        <span className="col-start-2 text-[12px] font-semibold text-primary sm:col-start-auto">{item.cta}</span>
-                      </div>
+                        <span className="col-start-2 text-[12px] font-semibold text-primary underline decoration-primary/40 underline-offset-4 transition-colors group-hover:decoration-primary sm:col-start-auto">{item.cta}</span>
                     </Link>
                   ))}
                 </div>
@@ -804,7 +806,7 @@ difficulty must be "Easy", "Medium", or "Hard". savings is a USD number.`;
                       </p>
                       <div className="mt-2.5 flex flex-col gap-2 sm:flex-row">
                         <Button onClick={() => setLocation("/user/reports?tab=transactions&setupAction=connect-bank")}>
-                          Connect Bank Account
+                          link Bank Account
                         </Button>
                         <Button variant="outline" onClick={() => setLocation("/user/reports?tab=transactions&setupAction=upload-statement")}>
                           Upload Bank Statement

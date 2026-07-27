@@ -3,6 +3,8 @@ import { Loader2, Building2, MapPin, Landmark, ChevronLeft, ChevronRight } from 
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { PhoneInput } from "@/components/ui/phone-input";
+import { AdditionalOwnersInput } from "@/components/additional-owners-input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -72,6 +74,8 @@ const INITIAL_FORM: BusinessInformationFormData = {
   fiscalYearEnd: "",
   taxPreparer: "",
   currentCpa: "",
+  currentCpaCompany: "",
+  currentCpaPhone: "",
   connectBankNow: "later",
   primaryBank: "",
   bankAccountCount: "",
@@ -144,7 +148,7 @@ export default function BusinessSetupDialog({
   function validateStep() {
     const errors = validateBusinessInformation(form);
     const fieldsByStep: Array<Array<keyof typeof errors>> = [
-      ["legalName", "entityType", "industry", "yearEstablished", "startDate", "website", "businessEmail"],
+      ["legalName", "entityType", "industry", "yearEstablished", "startDate", "website", "businessEmail", "businessPhone"],
       ["state", "zip", "ownershipPercent"],
       ["einTin"],
     ];
@@ -244,13 +248,13 @@ export default function BusinessSetupDialog({
               <p className="text-sm text-muted-foreground lg:col-span-2">Identify the registered business and provide contact details used for its BookSmart profile.</p>
               <Field label="Legal business name *"><Input value={form.legalName} onChange={(e) => update("legalName", e.target.value)} placeholder="Acme LLC" /></Field>
               <Field label="Entity type *"><SelectField value={form.entityType} onChange={(v) => update("entityType", v)} options={ENTITY_TYPES} placeholder="Select entity" /></Field>
-              <Field label="Industry *"><SelectField value={form.industry} onChange={(v) => { update("industry", v); update("naics", NAICS_BY_INDUSTRY[v] ?? ""); }} options={INDUSTRIES} placeholder="Select industry" /></Field>
+              <Field label="Industry *"><SelectField value={form.industry} onChange={(v) => { update("industry", v); update("naics", NAICS_BY_INDUSTRY[v] ?? ""); }} options={INDUSTRIES} placeholder="Select industry" openDownward /></Field>
               <Field label="NAICS code"><Input value={form.naics} onChange={(e) => update("naics", e.target.value)} placeholder="Auto-filled when available" /></Field>
               <Field label="Year established"><Input type="number" value={form.yearEstablished} onChange={(e) => update("yearEstablished", e.target.value)} placeholder="2024" /></Field>
               <Field label="Date business started"><Input type="date" value={form.startDate} onChange={(e) => update("startDate", e.target.value)} /></Field>
               <Field label="Business website"><Input value={form.website} onChange={(e) => update("website", e.target.value)} placeholder="https://acme.com" /></Field>
               <Field label="Business email"><Input type="email" value={form.businessEmail} onChange={(e) => update("businessEmail", e.target.value)} /></Field>
-              <Field label="Business phone"><Input value={form.businessPhone} onChange={(e) => update("businessPhone", e.target.value)} /></Field>
+              <Field label="Business phone"><PhoneInput value={form.businessPhone} onChange={(value) => update("businessPhone", value)} /></Field>
               <div className="min-w-0 lg:col-span-2"><Field label="Products or services"><Textarea value={form.description} onChange={(e) => update("description", e.target.value)} placeholder="Describe what this business sells or provides." /></Field></div>
             </div>
           )}
@@ -269,7 +273,9 @@ export default function BusinessSetupDialog({
                 <Field label="Owner title"><Input value={form.ownerTitle} onChange={(e) => update("ownerTitle", e.target.value)} /></Field>
                 <Field label="Ownership percentage"><Input type="number" min="0" max="100" value={form.ownershipPercent} onChange={(e) => update("ownershipPercent", e.target.value)} /></Field>
               </div>
-              <div className="min-w-0 lg:col-span-2"><Field label="Additional owners"><Textarea value={form.additionalOwners} onChange={(e) => update("additionalOwners", e.target.value)} placeholder="Name, email, ownership %, role" /></Field></div>
+              <div className="min-w-0 lg:col-span-2">
+                <AdditionalOwnersInput value={form.additionalOwners} onChange={(value) => update("additionalOwners", value)} />
+              </div>
             </div>
           )}
 
@@ -287,9 +293,17 @@ export default function BusinessSetupDialog({
                   <SelectField value={form.hasCpa} onChange={(value) => update("hasCpa", value)} options={[{ value: "yes", label: "Yes" }, { value: "no", label: "No" }]} placeholder="Select Yes or No" />
                 </Field>
                 {cpaVisibility.showCurrentCpa && (
-                  <Field label="Current CPA">
-                    <Input value={form.currentCpa} onChange={(event) => update("currentCpa", event.target.value)} placeholder="CPA name" />
-                  </Field>
+                  <div className="grid min-w-0 gap-4 lg:grid-cols-3">
+                    <Field label="CPA name (optional)">
+                      <Input value={form.currentCpa} onChange={(event) => update("currentCpa", event.target.value)} placeholder="CPA name" />
+                    </Field>
+                    <Field label="CPA company (optional)">
+                      <Input value={form.currentCpaCompany} onChange={(event) => update("currentCpaCompany", event.target.value)} placeholder="CPA company" />
+                    </Field>
+                    <Field label="CPA phone number (optional)">
+                      <PhoneInput value={form.currentCpaPhone} onChange={(value) => update("currentCpaPhone", value)} />
+                    </Field>
+                  </div>
                 )}
                 {cpaVisibility.showCpaMatch && (
                   <Field label="Would you like BookSmart to help you find a CPA?">
@@ -334,17 +348,29 @@ function SelectField({
   onChange,
   options,
   placeholder = "Select",
+  openDownward = false,
 }: {
   value: string;
   onChange: (value: string) => void;
   options: Array<string | { value: string; label: string }>;
   placeholder?: string;
+  openDownward?: boolean;
 }) {
+  const sortedOptions = [...options].sort((a, b) => {
+    const aLabel = typeof a === "string" ? a : a.label;
+    const bLabel = typeof b === "string" ? b : b.label;
+    return aLabel.localeCompare(bLabel, undefined, { sensitivity: "base" });
+  });
   return (
     <Select value={value} onValueChange={onChange}>
       <SelectTrigger className="min-w-0"><SelectValue placeholder={placeholder} /></SelectTrigger>
-      <SelectContent className="max-h-72">
-        {options.map((option) => {
+      <SelectContent
+        className="max-h-72 overflow-y-auto overscroll-contain"
+        side={openDownward ? "bottom" : undefined}
+        align={openDownward ? "start" : undefined}
+        avoidCollisions={!openDownward}
+      >
+        {sortedOptions.map((option) => {
           const value = typeof option === "string" ? option : option.value;
           const label = typeof option === "string" ? option : option.label;
           return <SelectItem key={value} value={value}>{label}</SelectItem>;

@@ -17,7 +17,7 @@ import {
 } from "./survey-progress";
 
 test("stable definition covers the v2 business and balance steps", () => {
-  assert.equal(STEP_KEYS.filter((key) => key.startsWith("business.")).length, 11);
+  assert.equal(STEP_KEYS.filter((key) => key.startsWith("business.")).length, 10);
   assert.equal(STEP_KEYS.filter((key) => key.startsWith("balance.")).length, 16);
   assert.equal(new Set(QUESTIONS.map((question) => question.key)).size, QUESTIONS.length);
 });

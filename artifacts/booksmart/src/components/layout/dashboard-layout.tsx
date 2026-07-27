@@ -1,4 +1,5 @@
 import { ReactNode } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Link, useLocation } from "wouter";
 import {
   Sidebar, SidebarContent, SidebarMenu, SidebarMenuButton, SidebarMenuItem,
@@ -8,6 +9,8 @@ import { useAuth } from "@/hooks/use-auth";
 import { useTheme } from "@/components/theme-provider";
 import { useUnreadCount } from "@/hooks/use-unread-count";
 import { SubscriptionUpgradePrompt } from "@/components/subscription-upgrade-prompt";
+import { supabase } from "@/lib/supabase";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
@@ -29,6 +32,33 @@ export function DashboardLayout({ children, role }: DashboardLayoutProps) {
   const { theme, setTheme } = useTheme();
   const isDark = theme === "dark" || (theme === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);
   const unreadCount = useUnreadCount();
+
+  const { data: organizationCount, isLoading: organizationCountLoading } = useQuery<number>({
+    queryKey: ["auth_guard_organization_count", profile?.numericId ?? null],
+    enabled: role === "user" && profile?.numericId != null,
+    queryFn: async () => {
+      const { count, error } = await supabase
+        .from("organizations")
+        .select("id", { count: "exact", head: true })
+        .eq("owner_id", profile!.numericId!);
+      if (error) throw error;
+      return count ?? 0;
+    },
+  });
+
+  const registrationInProgress =
+    (role === "user" && (organizationCountLoading || (organizationCount ?? 0) === 0)) ||
+    (role === "cpa" && !profile?.full_name?.trim());
+
+  const allowNavigation = (target: string) => {
+    if (!registrationInProgress || target === location) return true;
+    toast.info("Finish and save your registration before opening another page.");
+    return false;
+  };
+
+  const navigateSafely = (target: string) => {
+    if (allowNavigation(target)) navigate(target);
+  };
 
   const fullName = profile?.full_name || profile?.email || "User";
   const avatarInitials = fullName
@@ -137,6 +167,9 @@ export function DashboardLayout({ children, role }: DashboardLayoutProps) {
                       >
                         <Link
                           href={item.url}
+                          onClick={(event) => {
+                            if (!allowNavigation(item.url)) event.preventDefault();
+                          }}
                           className="flex items-center gap-3 w-full h-full"
                           style={{ color: active ? "hsl(var(--primary))" : "hsl(var(--sidebar-foreground) / 0.65)" }}
                         >
@@ -184,7 +217,7 @@ export function DashboardLayout({ children, role }: DashboardLayoutProps) {
                 <p className="text-[13px] font-semibold text-sidebar-foreground">Professional</p>
                 <p className="text-[9px] text-sidebar-foreground/50 mb-2">Renews on Jun 1, 2025</p>
                 <button
-                  onClick={() => navigate("/cpa/settings")}
+                  onClick={() => navigateSafely("/cpa/settings")}
                   className="w-full h-7 rounded-lg bg-sidebar-primary/20 hover:bg-sidebar-primary/30 text-sidebar-foreground text-[10px] font-semibold transition-colors"
                 >
                   View Plan
@@ -208,6 +241,9 @@ export function DashboardLayout({ children, role }: DashboardLayoutProps) {
                         >
                           <Link
                             href={item.url}
+                            onClick={(event) => {
+                              if (!allowNavigation(item.url)) event.preventDefault();
+                            }}
                             className="flex items-center gap-3 w-full h-full"
                             style={{ color: active ? "hsl(var(--primary))" : "hsl(var(--sidebar-foreground) / 0.65)" }}
                           >
@@ -243,7 +279,7 @@ export function DashboardLayout({ children, role }: DashboardLayoutProps) {
               <div className="border-t border-sidebar-border">
                 {/* User profile row */}
                 <div className="flex items-center gap-2.5 px-3 py-3 cursor-pointer hover:bg-sidebar-accent/50 transition-colors"
-                  onClick={() => navigate("/cpa/profile")}>
+                  onClick={() => navigateSafely("/cpa/profile")}>
                   <Avatar className="w-8 h-8 border border-primary/30 flex-shrink-0">
                     {profile?.img_url && <AvatarImage src={profile.img_url} alt="" className="object-cover" />}
                     <AvatarFallback className="bg-primary/20 text-[11px] font-bold text-primary">{avatarInitials}</AvatarFallback>
@@ -290,14 +326,20 @@ export function DashboardLayout({ children, role }: DashboardLayoutProps) {
                   size="sm"
                   variant="outline"
                   className="gap-1.5 text-xs border-border/60 text-foreground hidden sm:flex"
-                  onClick={() => navigate("/cpa/referrals")}
+                  onClick={() => navigateSafely("/cpa/referrals")}
                 >
                   <LinkIcon className="h-3.5 w-3.5" /> Refer a Client
                 </Button>
               )}
 
               {/* Bell */}
-              <Link href={role === "user" ? "/user/chat" : role === "cpa" ? "/cpa/chat" : "/admin/chat"}>
+              <Link
+                href={role === "user" ? "/user/chat" : role === "cpa" ? "/cpa/chat" : "/admin/chat"}
+                onClick={(event) => {
+                  const target = role === "user" ? "/user/chat" : role === "cpa" ? "/cpa/chat" : "/admin/chat";
+                  if (!allowNavigation(target)) event.preventDefault();
+                }}
+              >
                 <Button variant="ghost" size="icon" className="rounded-full text-muted-foreground hover:text-primary relative">
                   <Bell className="h-[18px] w-[18px]" />
                   {unreadCount > 0 && (
@@ -321,7 +363,7 @@ export function DashboardLayout({ children, role }: DashboardLayoutProps) {
               {/* CPA: user avatar + name */}
               {role === "cpa" && (
                 <button
-                  onClick={() => navigate("/cpa/profile")}
+                  onClick={() => navigateSafely("/cpa/profile")}
                   className="hidden md:flex items-center gap-2 pl-2 pr-3 py-1.5 rounded-full border border-border/40 hover:border-border/80 transition-colors"
                 >
                   <Avatar className="w-6 h-6">

@@ -4,6 +4,8 @@ import { ArrowLeft, BriefcaseBusiness, Check, ChevronDown, FileText, Loader2, Se
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
+import { PhoneInput } from "@/components/ui/phone-input";
+import { isValidUsPhone } from "@/lib/phone-validation";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { ProfileAvatarUploader } from "@/components/profile-avatar-uploader";
@@ -81,7 +83,7 @@ function careerStartFromYears(value: string) {
 }
 
 export default function CpaProfile() {
-  const { profile } = useAuth();
+  const { profile, refreshProfile } = useAuth();
   const numericId = profile?.numericId ?? null;
   const queryClient = useQueryClient();
   const [, setLocation] = useLocation();
@@ -139,6 +141,7 @@ export default function CpaProfile() {
     if (targetStep === 0) {
       if (!firstName.trim() || !lastName.trim()) return "First and last name are required.";
       if (!email.trim() || !email.includes("@")) return "Valid email required.";
+      if (phone.trim() && !isValidUsPhone(phone)) return "Enter a valid 10-digit U.S. phone number.";
     }
     if (targetStep === 1) {
       if (!licenseNumber.trim()) return "License number is required for CPA.";
@@ -216,9 +219,10 @@ export default function CpaProfile() {
       const { error } = await supabase.from("users").update(payload).eq("id", numericId);
       if (error) throw error;
     },
-    onSuccess: () => {
+    onSuccess: async () => {
       toast.success("Profile saved successfully");
       queryClient.invalidateQueries({ queryKey: ["cpa_profile", numericId] });
+      await refreshProfile();
       if (cpaRow?.verification_status !== "approved") {
         setLocation("/cpa/under-review");
       }
@@ -267,7 +271,7 @@ export default function CpaProfile() {
                 <Field label="Last Name *" value={lastName} onChange={setLastName} hideLabel />
               </div>
               <Field label="Email *" value={email} onChange={setEmail} type="email" hideLabel />
-              <Field label="Phone Number" value={phone} onChange={setPhone} hideLabel />
+              <PhoneField label="Phone Number" value={phone} onChange={setPhone} />
 
               <div className="flex justify-end">
                 <Button type="button" onClick={continueStep} className="w-full sm:w-auto">Next Step</Button>
@@ -399,6 +403,16 @@ function Field({
   );
 }
 
+function PhoneField({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
+  const id = label.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+  return (
+    <div className="min-w-0 space-y-2">
+      <Label htmlFor={id} className="sr-only">{label}</Label>
+      <PhoneInput id={id} value={value} onChange={onChange} className="h-12 min-w-0 bg-card text-base" />
+    </div>
+  );
+}
+
 function CpaSection({
   index,
   title,
@@ -512,7 +526,9 @@ function MultiSelectField({
 }) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
-  const filteredOptions = options.filter((option) => option.toLowerCase().includes(search.toLowerCase()));
+  const filteredOptions = options
+    .filter((option) => option.toLowerCase().includes(search.toLowerCase()))
+    .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
 
   const toggleOption = (option: string) => {
     onChange(selected.includes(option)

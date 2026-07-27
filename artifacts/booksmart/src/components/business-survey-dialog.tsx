@@ -30,7 +30,6 @@ import { useSurveyProgress } from "@/hooks/use-survey-progress";
 import {
   QUESTIONS,
   PRIMARY_WORK_LOCATION_OPTIONS,
-  STEP_KEYS,
   acquireSurveySaveLock,
   isApplicable,
   meaningfulAnswer,
@@ -977,36 +976,9 @@ export default function BusinessSurveyDialog({ orgId, open, onOpenChange, initia
     },
     {
       part: "business",
-      icon: Ruler,
-      title: "Deduction Percentages",
-      description: "Use practical percentages to estimate mixed personal and business use.",
-      render: () => (
-        <div className="space-y-4">
-          {(homeOfficeType === "Dedicated Room (Exclusive Use)" || homeOfficeType === "Shared Space (Non-Exclusive)") && <SurveyQuestionCard icon={Home} title="What percentage of your home is business use?" description="This estimates the business-use percentage of your home.">
-            <PercentSlider value={homeBusinessPct} onChange={(value) => { setHomeBusinessPct(value); setTouchedQuestionKeys((keys) => new Set(keys).add("workspace.home_business_use_percent")); }} />
-          </SurveyQuestionCard>}
-          {vehicleOwnership && vehicleOwnership !== "No Business Vehicle" && <SurveyQuestionCard icon={Car} title="What percentage of vehicle use is business related?" description="Estimate the business share based on mileage or usage logs.">
-            <PercentSlider value={vehiclePct} onChange={(value) => { setVehiclePct(value); setTouchedQuestionKeys((keys) => new Set(keys).add("vehicle.business_use_percent")); }} />
-          </SurveyQuestionCard>}
-          {(homeOfficeType === "Dedicated Room (Exclusive Use)" || homeOfficeType === "Shared Space (Non-Exclusive)") && <SurveyQuestionCard icon={Lightbulb} title="What percentage of utilities support the business?" description="Estimate the household utility share used for business.">
-            <PercentSlider value={utilityPct} onChange={(value) => { setUtilityPct(value); setTouchedQuestionKeys((keys) => new Set(keys).add("workspace.utility_business_use_percent")); }} />
-          </SurveyQuestionCard>}
-        </div>
-      ),
-      payload: () => {
-        const totalArea = parseFloat(totalHouseArea) || 0;
-        return {
-          dedicated_office_area_sqft: totalArea > 0 ? Math.round(totalArea * (homeBusinessPct / 100)) : null,
-          business_vehicle_percent: Math.round(vehiclePct),
-          business_utility_percent: Math.round(utilityPct),
-        };
-      },
-    },
-    {
-      part: "business",
       icon: ClipboardList,
-      title: "Equipment and Debts",
-      description: "Finish with major equipment costs and business liabilities.",
+      title: "Equipment",
+      description: "Capture business equipment ownership and spending.",
       render: () => (
         <div className="space-y-4">
           <SurveyQuestionCard icon={Wrench} title="Do you own business equipment?" description="Examples include computers, tools, furniture, hardware, and machinery.">
@@ -1122,15 +1094,6 @@ export default function BusinessSurveyDialog({ orgId, open, onOpenChange, initia
     },
     {
       part: "balance",
-      icon: Wrench,
-      image: equipmentIcon,
-      title: "Do you own any business equipment?",
-      description: "Examples: Computers, machinery, tools, furniture, etc.",
-      render: () => <YesNoToggle value={balanceEquipmentOwnership} onChange={setBalanceEquipmentOwnership} />,
-      payload: () => debtExtras({ balance_equipment_ownership: balanceEquipmentOwnership }),
-    },
-    {
-      part: "balance",
       icon: DollarSign,
       image: equipmentIcon,
       title: "What is the estimated value of your equipment?",
@@ -1176,7 +1139,43 @@ export default function BusinessSurveyDialog({ orgId, open, onOpenChange, initia
       image: cashIcon,
       title: "Does your business owe money to anyone?",
       description: "Choose Yes if the business currently has any debts or liabilities.",
-      render: () => <YesNoToggle value={hasDebt} onChange={setHasDebt} />,
+      render: () => <YesNoToggle value={hasDebt} onChange={(value) => {
+        setHasDebt(value);
+        if (value === false) setDebts({});
+      }} />,
+      payload: () => debtExtras(),
+    },
+    {
+      part: "balance",
+      icon: CreditCard,
+      image: cashIcon,
+      title: "Which business debts or liabilities do you have?",
+      description: "Select every type that currently applies.",
+      render: () => (
+        <div className="grid grid-cols-1 gap-2">
+          {DEBT_CATEGORIES.map(({ key, label }) => (
+            <ChoicePill
+              key={key}
+              label={label}
+              selected={(debts[key] ?? "") !== "" || debts[`__${key}_selected`] === "1"}
+              onToggle={() => {
+                setTouchedQuestionKeys((keys) => new Set(keys).add("liabilities.selected"));
+                setDebts((currentDebts) => {
+                  const selected = (currentDebts[key] ?? "") !== "" || currentDebts[`__${key}_selected`] === "1";
+                  const next = { ...currentDebts };
+                  if (selected) {
+                    delete next[key];
+                    delete next[`__${key}_selected`];
+                  } else {
+                    next[`__${key}_selected`] = "1";
+                  }
+                  return next;
+                });
+              }}
+            />
+          ))}
+        </div>
+      ),
       payload: () => debtExtras(),
     },
     {
@@ -1248,7 +1247,23 @@ export default function BusinessSurveyDialog({ orgId, open, onOpenChange, initia
     ownerDraws, additionalCategories,
   ]);
 
-  const SOURCE_STEPS = useMemo(() => [...BUSINESS_STEPS, ...BALANCE_STEPS], [BUSINESS_STEPS, BALANCE_STEPS]);
+  const SOURCE_BY_STEP = useMemo(() => {
+    const businessKeys = [
+      "business.legal_tax", "business.income", "business.phase1_profile", "business.people_accounting",
+      "business.vehicle", "business.workspace", "business.real_estate", "business.health_family",
+      "business.strategy", "business.equipment_debts",
+    ];
+    const balanceKeys = [
+      "balance.work_location", "balance.home_sqft", "balance.home_percent", "balance.vehicle_percent",
+      "balance.phone_percent", "balance.internet_percent", "balance.utility_percent", "balance.equipment_value",
+      "balance.receivables", "balance.inventory", "balance.debt_presence", "balance.debt_types",
+      "balance.debt_balances", "balance.owner_contribution", "balance.owner_contribution_details", "balance.owner_draws",
+    ];
+    return new globalThis.Map<string, StepDef>([
+      ...businessKeys.map((key, index) => [key, BUSINESS_STEPS[index]] as const),
+      ...balanceKeys.map((key, index) => [key, BALANCE_STEPS[index]] as const),
+    ]);
+  }, [BUSINESS_STEPS, BALANCE_STEPS]);
   const SECTION_ICONS: Record<string, React.ElementType> = {
     "section.tax_basics": Gavel,
     "section.business_profile": ClipboardList,
@@ -1270,9 +1285,10 @@ export default function BusinessSurveyDialog({ orgId, open, onOpenChange, initia
     "section.tax_strategy": completeIcon,
   };
   const STEPS: StepDef[] = useMemo(() => SURVEY_SECTIONS.map((section) => {
-    const sourceEntries = section.stepKeys
-      .map((stepKey) => ({ stepKey, source: SOURCE_STEPS[STEP_KEYS.indexOf(stepKey)] }))
-      .filter(({ source }) => source);
+    const sourceEntries = section.stepKeys.flatMap((stepKey) => {
+      const source = SOURCE_BY_STEP.get(stepKey);
+      return source ? [{ stepKey, source }] : [];
+    });
     return {
       part: "business" as const,
       icon: SECTION_ICONS[section.key] ?? ClipboardList,
@@ -1287,48 +1303,6 @@ export default function BusinessSurveyDialog({ orgId, open, onOpenChange, initia
               return null;
             }
             if (source.part === "business") {
-              if (stepKey === "business.people_accounting") {
-                const equipmentOwnershipCard = questionCardsIn(BUSINESS_STEPS[10].render())[0];
-                return <div key={stepKey}>{source.render()}{equipmentOwnershipCard}</div>;
-              }
-              if (stepKey === "business.equipment_debts") {
-                const equipmentCards = questionCardsIn(source.render());
-                return (
-                  <div key={stepKey} className="space-y-4">
-                    {equipmentCards.slice(1)}
-                    <SurveyQuestionCard
-                      icon={CreditCard}
-                      image={cashIcon}
-                      title="Which business debts or liabilities do you have?"
-                      description="Select every type that currently applies."
-                    >
-                      <div className="grid grid-cols-1 gap-2">
-                        {DEBT_CATEGORIES.map(({ key, label }) => (
-                          <ChoicePill
-                            key={key}
-                            label={label}
-                            selected={(debts[key] ?? "") !== "" || debts[`__${key}_selected`] === "1"}
-                            onToggle={() => {
-                              setTouchedQuestionKeys((keys) => new Set(keys).add("liabilities.selected"));
-                              setDebts((currentDebts) => {
-                                const selected = (currentDebts[key] ?? "") !== "" || currentDebts[`__${key}_selected`] === "1";
-                                const next = { ...currentDebts };
-                                if (selected) {
-                                  delete next[key];
-                                  delete next[`__${key}_selected`];
-                                } else {
-                                  next[`__${key}_selected`] = "1";
-                                }
-                                return next;
-                              });
-                            }}
-                          />
-                        ))}
-                      </div>
-                    </SurveyQuestionCard>
-                  </div>
-                );
-              }
               return <div key={stepKey}>{source.render()}</div>;
             }
             return (
@@ -1360,7 +1334,7 @@ export default function BusinessSurveyDialog({ orgId, open, onOpenChange, initia
       payload: () => Object.assign({}, ...sourceEntries.map(({ source }) => source.payload())),
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }), [SOURCE_STEPS, vehicleOwnership, industryNiche, orgData?.industry]);
+  }), [SOURCE_BY_STEP, vehicleOwnership, industryNiche, orgData?.industry]);
   const TOTAL_STEPS = STEPS.length;
   const DEFAULT_SENSITIVE_KEYS = new Set([
     "workspace.home_business_use_percent",
@@ -1431,7 +1405,7 @@ export default function BusinessSurveyDialog({ orgId, open, onOpenChange, initia
 
   function payloadForQuestion(question: (typeof QUESTIONS)[number]) {
     if (question.key === "liabilities.selected") return debtExtras();
-    const source = SOURCE_STEPS[STEP_KEYS.indexOf(question.stepKey)];
+    const source = SOURCE_BY_STEP.get(question.stepKey);
     const sourcePayload = source?.payload() ?? {};
     if (DEBT_QUESTION_KEYS.has(question.key)) {
       return sourcePayload.debts ? { debts: sourcePayload.debts } : debtExtras();

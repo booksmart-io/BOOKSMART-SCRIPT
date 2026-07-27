@@ -4,6 +4,9 @@ import { useLocation } from "wouter";
 import { Building2, FileUp, Landmark, MapPin, PenLine } from "lucide-react";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
+import { PhoneInput } from "@/components/ui/phone-input";
+import { AdditionalOwnersInput } from "@/components/additional-owners-input";
+import { isValidUsPhone } from "@/lib/phone-validation";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
@@ -156,6 +159,8 @@ export default function Profile() {
   const [hasCpa, setHasCpa] = useState("");
   const [wantsCpaMatch, setWantsCpaMatch] = useState("");
   const [currentCpa, setCurrentCpa] = useState("");
+  const [currentCpaCompany, setCurrentCpaCompany] = useState("");
+  const [currentCpaPhone, setCurrentCpaPhone] = useState("");
   const [primaryBank, setPrimaryBank] = useState("");
   const [bankAccountCount, setBankAccountCount] = useState("");
   const [connectBankNow, setConnectBankNow] = useState("later");
@@ -252,7 +257,7 @@ export default function Profile() {
         timeline?: string | null;
       };
       operations_notes?: string | null;
-      cpa_profile?: { has_cpa?: boolean | null; wants_cpa_match?: boolean | null; current_cpa?: string | null; wants_bookkeeper?: boolean | null };
+      cpa_profile?: { has_cpa?: boolean | null; wants_cpa_match?: boolean | null; current_cpa?: string | null; current_cpa_company?: string | null; current_cpa_phone?: string | null; wants_bookkeeper?: boolean | null };
       ai_preferences?: string[] | null;
       documents?: { upload_now?: boolean | null; requested_documents?: string[] | null };
       security?: { enable_mfa?: boolean | null; invite_team_members?: boolean | null };
@@ -279,6 +284,8 @@ export default function Profile() {
     setHasCpa(cpaInformation.hasCpa);
     setWantsCpaMatch(cpaInformation.wantsCpaMatch);
     setCurrentCpa(cpaInformation.currentCpa);
+    setCurrentCpaCompany(cpaInformation.currentCpaCompany);
+    setCurrentCpaPhone(cpaInformation.currentCpaPhone);
     setConnectBankNow(onboarding?.banking?.connect_bank_now ? "yes" : "later");
     setPrimaryBank(onboarding?.banking?.primary_bank ?? "");
     setBankAccountCount(onboarding?.banking?.bank_account_count ?? "");
@@ -295,6 +302,7 @@ export default function Profile() {
   const validatePersonal = () => {
     if (!firstName.trim()) return "First name is required.";
     if (!lastName.trim()) return "Last name is required.";
+    if (phone.trim() && !isValidUsPhone(phone)) return "Enter a valid 10-digit U.S. phone number.";
     return null;
   };
 
@@ -334,7 +342,7 @@ export default function Profile() {
     mailingSame: true, locationType: "", ownerName, ownerTitle, ownershipPercent, additionalOwners,
     einTin, federalTaxClass: "", stateIncorporation, stateRegistrationNumber, businessLicenseNumber: "",
     salesTaxPermit: "no", salesTaxNumber: "", payrollTaxNumber: "", taxYear: "Calendar",
-    fiscalYearEnd: "", taxPreparer: "", currentCpa, connectBankNow, primaryBank,
+    fiscalYearEnd: "", taxPreparer: "", currentCpa, currentCpaCompany, currentCpaPhone, connectBankNow, primaryBank,
     bankAccountCount, businessCreditCards, loans, lineOfCredit, paymentPlatforms: [],
     accountingSoftware: "", payrollProvider: "", operations: [], employeeType: "",
     annualRevenue: "", monthlyRevenue: "", monthlyExpenses: "", profitability: "", goals: [],
@@ -349,7 +357,7 @@ export default function Profile() {
   const validateBusinessStep = () => {
     const errors = validateBusinessInformation(businessInformationForm());
     const fieldsByStep: Array<Array<keyof typeof errors>> = [
-      ["legalName", "entityType", "industry", "yearEstablished", "startDate", "website", "businessEmail"],
+      ["legalName", "entityType", "industry", "yearEstablished", "startDate", "website", "businessEmail", "businessPhone"],
       ["state", "zip", "ownershipPercent"],
       ["einTin"],
     ];
@@ -502,7 +510,7 @@ export default function Profile() {
                   <TextField label="Middle Name" value={middleName} onChange={setMiddleName} hideLabel />
                   <TextField label="Last Name *" value={lastName} onChange={setLastName} hideLabel />
                 </div>
-                <TextField label="Phone Number" value={phone} onChange={setPhone} type="tel" hideLabel />
+                <PhoneField label="Phone Number" value={phone} onChange={setPhone} />
 
                 <div className="flex justify-end">
                   <Button type="button" onClick={continuePersonal} className="w-full sm:w-auto">Next Step</Button>
@@ -626,13 +634,13 @@ export default function Profile() {
                     <p className="text-sm text-muted-foreground xl:col-span-2">Identify the registered business and provide contact details used for its BookSmart profile.</p>
                     <TextField label="Legal Business Name *" value={businessName} onChange={setBusinessName} hideLabel />
                     <SelectField label="Business Type *" value={orgType} onChange={setOrgType} options={ENTITY_TYPES} placeholder="Select business type" />
-                    <SelectField label="Industry *" value={industry} onChange={(value) => { setIndustry(value); setNaics(NAICS_BY_INDUSTRY[value] ?? ""); }} options={INDUSTRIES} placeholder="Select industry" />
+                    <SelectField label="Industry *" value={industry} onChange={(value) => { setIndustry(value); setNaics(NAICS_BY_INDUSTRY[value] ?? ""); }} options={INDUSTRIES} placeholder="Select industry" openDownward />
                     <TextField label="NAICS Code" value={naics} onChange={setNaics} hideLabel />
                     <TextField label="Year Established" value={yearEstablished} onChange={setYearEstablished} type="number" hideLabel />
                     <TextField label="Date Business Started" value={startDate} onChange={setStartDate} type="date" />
                     <TextField label="Website" value={website} onChange={setWebsite} hideLabel />
                     <TextField label="Business Email" value={businessEmail} onChange={setBusinessEmail} type="email" hideLabel />
-                    <TextField label="Business Phone" value={businessPhone} onChange={setBusinessPhone} type="tel" hideLabel />
+                    <PhoneField label="Business Phone" value={businessPhone} onChange={setBusinessPhone} />
                     <div className="min-w-0 space-y-2 xl:col-span-2">
                       <Label>Products or services</Label>
                       <Textarea
@@ -665,14 +673,8 @@ export default function Profile() {
                       <TextField label="Owner Title" value={ownerTitle} onChange={setOwnerTitle} hideLabel />
                       <TextField label="Ownership Percentage" value={ownershipPercent} onChange={setOwnershipPercent} type="number" hideLabel />
                     </div>
-                    <div className="min-w-0 space-y-2 xl:col-span-2">
-                      <Label>Additional owners</Label>
-                      <Textarea
-                        value={additionalOwners}
-                        onChange={(event) => setAdditionalOwners(event.target.value)}
-                        placeholder="Name, email, ownership %, role"
-                        className="min-h-24 bg-card text-base"
-                      />
+                    <div className="min-w-0 xl:col-span-2">
+                      <AdditionalOwnersInput value={additionalOwners} onChange={setAdditionalOwners} />
                     </div>
                   </div>
                 )}
@@ -695,7 +697,11 @@ export default function Profile() {
                       </div>
                       <SelectField label="Do you currently have a CPA?" value={hasCpa} onChange={setHasCpa} options={[{ value: "yes", label: "Yes" }, { value: "no", label: "No" }]} placeholder="Select Yes or No" />
                       {cpaVisibility.showCurrentCpa && (
-                        <TextField label="Current CPA" value={currentCpa} onChange={setCurrentCpa} hideLabel />
+                        <div className="grid min-w-0 gap-4 xl:grid-cols-3">
+                          <TextField label="CPA Name (optional)" value={currentCpa} onChange={setCurrentCpa} hideLabel />
+                          <TextField label="CPA Company (optional)" value={currentCpaCompany} onChange={setCurrentCpaCompany} hideLabel />
+                          <PhoneField label="CPA Phone Number (optional)" value={currentCpaPhone} onChange={setCurrentCpaPhone} />
+                        </div>
                       )}
                       {cpaVisibility.showCpaMatch && (
                         <SelectField label="Would you like BookSmart to help you find a CPA?" value={wantsCpaMatch} onChange={setWantsCpaMatch} options={[{ value: "yes", label: "Yes" }, { value: "no", label: "No" }]} placeholder="Select Yes or No" />
@@ -759,20 +765,34 @@ function TextField({
   );
 }
 
+function PhoneField({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
+  const id = label.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+  return (
+    <div className="min-w-0 space-y-2">
+      <Label htmlFor={id}>{label}</Label>
+      <PhoneInput id={id} value={value} onChange={onChange} className="h-12 min-w-0 bg-card text-base" />
+    </div>
+  );
+}
+
 function SelectField({
   label,
   value,
   onChange,
   options,
   placeholder,
+  openDownward = false,
 }: {
   label: string;
   value: string;
   onChange: (value: string) => void;
   options: Array<string | { value: string; label: string }>;
   placeholder?: string;
+  openDownward?: boolean;
 }) {
-  const normalized = options.map((option) => typeof option === "string" ? { value: option, label: option } : option);
+  const normalized = options
+    .map((option) => typeof option === "string" ? { value: option, label: option } : option)
+    .sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: "base" }));
   return (
     <div className="min-w-0 space-y-2">
       <Label>{label}</Label>
@@ -780,7 +800,12 @@ function SelectField({
         <SelectTrigger className="h-12 min-w-0 bg-card text-base">
           <SelectValue placeholder={placeholder ?? label} />
         </SelectTrigger>
-        <SelectContent>
+        <SelectContent
+          className={openDownward ? "max-h-72 overflow-y-auto overscroll-contain" : undefined}
+          side={openDownward ? "bottom" : undefined}
+          align={openDownward ? "start" : undefined}
+          avoidCollisions={!openDownward}
+        >
           {normalized.map((option) => (
             <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
           ))}

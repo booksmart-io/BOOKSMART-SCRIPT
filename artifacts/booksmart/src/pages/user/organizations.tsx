@@ -3,6 +3,8 @@ import { useLocation } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { PhoneInput } from "@/components/ui/phone-input";
+import { isValidUsPhone } from "@/lib/phone-validation";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -23,6 +25,7 @@ import { checkAddBusiness } from "@/lib/plan-limits";
 import BusinessSurveyDialog from "@/components/business-survey-dialog";
 import BusinessSetupDialog from "@/components/business-setup-dialog";
 import { useActiveOrganizationId, clearStoredActiveOrganizationId } from "@/lib/active-organization";
+import { BUSINESS_INDUSTRIES } from "@/lib/business-information-options";
 
 type StateRow = { id: number; name: string; code: string };
 
@@ -147,6 +150,7 @@ export default function Organizations() {
       if (!form.org_type) throw new Error("Business type is required");
       if (!form.ein_tin.trim()) throw new Error("EIN / TIN is required");
       if (!form.state) throw new Error("State is required");
+      if (form.phone.trim() && !isValidUsPhone(form.phone)) throw new Error("Enter a valid 10-digit U.S. phone number.");
 
       const payload = {
         name: form.name.trim(),
@@ -328,13 +332,18 @@ export default function Organizations() {
                 <Select value={form.org_type} onValueChange={(v) => setForm((f) => ({ ...f, org_type: v }))}>
                   <SelectTrigger><SelectValue placeholder="Select type" /></SelectTrigger>
                   <SelectContent>
-                    {ORG_TYPES.map((t) => <SelectItem key={t} value={t}>{t}</SelectItem>)}
+                    {[...ORG_TYPES].sort((a, b) => a.localeCompare(b)).map((t) => <SelectItem key={t} value={t}>{t}</SelectItem>)}
                   </SelectContent>
                 </Select>
               </div>
               <div className="space-y-2">
-                <Label htmlFor="org-industry">Industry</Label>
-                <Input id="org-industry" value={form.industry} onChange={(e) => setForm((f) => ({ ...f, industry: e.target.value }))} placeholder="Consulting" />
+                <Label>Industry</Label>
+                <Select value={form.industry} onValueChange={(industry) => setForm((f) => ({ ...f, industry }))}>
+                  <SelectTrigger><SelectValue placeholder="Select industry" /></SelectTrigger>
+                  <SelectContent side="bottom" align="start" avoidCollisions={false} className="max-h-72 overflow-y-auto overscroll-contain">
+                    {[...BUSINESS_INDUSTRIES].sort((a, b) => a.localeCompare(b)).map((industry) => <SelectItem key={industry} value={industry}>{industry}</SelectItem>)}
+                  </SelectContent>
+                </Select>
               </div>
               <div className="space-y-2">
                 <Label htmlFor="org-ein">EIN / TIN *</Label>
@@ -345,7 +354,7 @@ export default function Organizations() {
                 <Select value={form.state} onValueChange={(v) => setForm((f) => ({ ...f, state: v }))}>
                   <SelectTrigger><SelectValue placeholder="Select state" /></SelectTrigger>
                   <SelectContent className="max-h-64">
-                    {states.map((s) => <SelectItem key={s.id} value={String(s.id)}>{s.name}</SelectItem>)}
+                    {[...states].sort((a, b) => a.name.localeCompare(b.name)).map((s) => <SelectItem key={s.id} value={String(s.id)}>{s.name}</SelectItem>)}
                   </SelectContent>
                 </Select>
               </div>
@@ -363,7 +372,7 @@ export default function Organizations() {
               </div>
               <div className="space-y-2">
                 <Label htmlFor="org-phone">Phone</Label>
-                <Input id="org-phone" value={form.phone} onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value }))} placeholder="(555) 123-4567" />
+                <PhoneInput id="org-phone" value={form.phone} onChange={(phone) => setForm((f) => ({ ...f, phone }))} />
               </div>
               <div className="space-y-2">
                 <Label htmlFor="org-email">Business Email</Label>

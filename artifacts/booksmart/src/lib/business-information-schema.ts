@@ -1,3 +1,6 @@
+
+import { isValidUsPhone } from "@/lib/phone-validation";
+
 export type BusinessInformationFormData = {
   legalName: string;
   entityType: string;
@@ -36,6 +39,8 @@ export type BusinessInformationFormData = {
   fiscalYearEnd: string;
   taxPreparer: string;
   currentCpa: string;
+  currentCpaCompany: string;
+  currentCpaPhone: string;
   connectBankNow: string;
   primaryBank: string;
   bankAccountCount: string;
@@ -148,6 +153,12 @@ export function validateBusinessInformation(
   if (trim(form.businessEmail) && !emailPattern.test(trim(form.businessEmail))) {
     errors.businessEmail = "Enter a valid business email address.";
   }
+  if (trim(form.businessPhone) && !isValidUsPhone(form.businessPhone)) {
+    errors.businessPhone = "Enter a valid 10-digit U.S. phone number.";
+  }
+  if (form.hasCpa === "yes" && trim(form.currentCpaPhone) && !isValidUsPhone(form.currentCpaPhone)) {
+    errors.currentCpaPhone = "Enter a valid 10-digit U.S. CPA phone number.";
+  }
   if (trim(form.website) && normalizeWebsite(form.website) === null) {
     errors.website = "Enter a valid HTTP or HTTPS website.";
   }
@@ -198,6 +209,8 @@ export function normalizeBusinessInformation(form: BusinessInformationFormData):
     salesTaxNumber: trim(form.salesTaxNumber),
     payrollTaxNumber: trim(form.payrollTaxNumber),
     currentCpa: trim(form.currentCpa),
+    currentCpaCompany: trim(form.currentCpaCompany),
+    currentCpaPhone: trim(form.currentCpaPhone),
     primaryBank: trim(form.primaryBank),
     bankAccountCount: trim(form.bankAccountCount),
     fundingTimeline: trim(form.fundingTimeline),

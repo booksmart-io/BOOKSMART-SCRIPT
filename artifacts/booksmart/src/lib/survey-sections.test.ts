@@ -28,12 +28,14 @@ test("completion counts applicable questions only", () => {
     "vehicle.ownership": "No Business Vehicle",
     "workspace.home_office_type": "No Home Office",
     "equipment.ownership": false,
+    "liabilities.has_debt": false,
     "liabilities.selected": [],
   };
   const resolved = new Set([
     "vehicle.ownership",
     "workspace.home_office_type",
     "equipment.ownership",
+    "liabilities.has_debt",
     "liabilities.selected",
   ]);
   const result = applicableSurveyCompletion(answers, { answered: resolved, skipped: new Set() });
@@ -53,6 +55,7 @@ test("every registered question has exactly one card position", async () => {
     "workspace.tech_usage": ["Personal Phone for Business", "Home Internet for Business"],
     "equipment.ownership": true,
     "liabilities.selected": ["credit_cards"],
+    "liabilities.has_debt": true,
     "equity.owner_contributed": true,
   };
   const visible = applicableQuestionsInDisplayOrder(allApplicableAnswers);
@@ -78,5 +81,37 @@ test("back crosses a section boundary to the previous applicable card", () => {
 
 test("question-key resume values resolve to their owning section", () => {
   assert.equal(sectionIndexForStep("workspace.primary_work_location"), 3);
-  assert.equal(sectionIndexForStep("equipment.balance_ownership"), 5);
+  assert.equal(sectionIndexForStep("equipment.current_value"), 5);
+});
+
+test("parent questions precede their conditional follow-ups without duplicate concepts", async () => {
+  const { QUESTIONS, isApplicable } = await import("./survey-progress");
+  const keys = new Set(QUESTIONS.map((question) => question.key));
+  assert.equal(keys.has("equipment.balance_ownership"), false);
+  assert.equal(keys.has("workspace.home_business_use_percent"), false);
+  assert.equal(keys.has("vehicle.business_use_percent"), false);
+  assert.equal(keys.has("workspace.utility_business_use_percent"), false);
+
+  const answers = {
+    "vehicle.ownership": "Own Personally",
+    "workspace.home_office_type": "Dedicated Room (Exclusive Use)",
+    "workspace.tech_usage": ["Personal Phone for Business", "Home Internet for Business"],
+    "equipment.ownership": true,
+    "liabilities.has_debt": true,
+    "liabilities.selected": ["credit_cards"],
+    "equity.owner_contributed": true,
+  };
+  const order = applicableQuestionsInDisplayOrder(answers).map((question) => question.key);
+  const precedes = (parent: string, child: string) => assert.ok(order.indexOf(parent) < order.indexOf(child));
+  precedes("workspace.home_office_type", "workspace.home_allocation_percent");
+  precedes("vehicle.ownership", "vehicle.balance_business_use_percent");
+  precedes("equipment.ownership", "equipment.spending_this_year");
+  precedes("equipment.ownership", "equipment.current_value");
+  precedes("liabilities.has_debt", "liabilities.selected");
+  precedes("liabilities.selected", "liabilities.balances");
+  precedes("equity.owner_contributed", "equity.owner_contribution_details");
+
+  const debtTypes = QUESTIONS.find((question) => question.key === "liabilities.selected")!;
+  assert.equal(isApplicable(debtTypes, { "liabilities.has_debt": false }), false);
+  assert.equal(isApplicable(debtTypes, { "liabilities.has_debt": true }), true);
 });

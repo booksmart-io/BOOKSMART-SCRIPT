@@ -128,7 +128,7 @@ class _BanksListScreenState extends State<BanksListScreen> {
           bottom: MediaQuery.of(context).padding.bottom + 10,
         ),
         child: AppButton(
-          buttonText: "Connect Bank Account",
+          buttonText: "link Bank Account",
           fontSize: 14,
           onTapFunction: () {
             hanldePlaidBankConnection();

@@ -32,6 +32,8 @@ export function cpaInformationForReload(onboardingProfile?: JsonRecord | null) {
   const currentCpa = typeof canonicalCurrentCpa === "string"
     ? canonicalCurrentCpa
     : typeof legacyCurrentCpa === "string" ? legacyCurrentCpa : "";
+  const currentCpaCompany = typeof canonical.current_cpa_company === "string" ? canonical.current_cpa_company : "";
+  const currentCpaPhone = typeof canonical.current_cpa_phone === "string" ? canonical.current_cpa_phone : "";
 
   return {
     hasCpa: typeof canonicalHasCpa === "boolean"
@@ -41,6 +43,8 @@ export function cpaInformationForReload(onboardingProfile?: JsonRecord | null) {
       ? (canonicalWantsMatch ? "yes" : "no")
       : "",
     currentCpa,
+    currentCpaCompany,
+    currentCpaPhone,
   };
 }
 
@@ -113,7 +117,11 @@ export function buildBusinessInformationPayload(input: {
         ...existingCpaProfile,
         has_cpa: value.hasCpa === "yes",
         ...(value.hasCpa === "yes"
-          ? { current_cpa: value.currentCpa || null }
+          ? {
+              current_cpa: value.currentCpa || null,
+              current_cpa_company: value.currentCpaCompany || null,
+              current_cpa_phone: value.currentCpaPhone || null,
+            }
           : value.wantsCpaMatch === "yes" || value.wantsCpaMatch === "no"
             ? { wants_cpa_match: value.wantsCpaMatch === "yes" }
             : {}),

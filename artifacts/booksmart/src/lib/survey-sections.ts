@@ -1,4 +1,4 @@
-import { QUESTIONS, isApplicable, type ProgressState, type SurveyAnswers } from "./survey-progress";
+import { QUESTIONS, isApplicable, questionsForStep, type ProgressState, type SurveyAnswers } from "./survey-progress";
 
 export const SURVEY_SECTIONS = [
   {
@@ -24,8 +24,8 @@ export const SURVEY_SECTIONS = [
     title: "Workspace & Property",
     description: "Your work location, home-office allocation, technology, and property.",
     stepKeys: [
-      "business.workspace", "business.real_estate", "business.deduction_percentages",
-      "balance.work_location", "balance.home_sqft", "balance.home_percent",
+      "balance.work_location", "business.workspace", "balance.home_sqft", "balance.home_percent",
+      "business.real_estate",
       "balance.phone_percent", "balance.internet_percent", "balance.utility_percent",
     ],
   },
@@ -40,8 +40,7 @@ export const SURVEY_SECTIONS = [
     title: "Equipment & Assets",
     description: "Equipment spending and value, receivables, and inventory.",
     stepKeys: [
-      "business.equipment_debts", "balance.equipment_ownership",
-      "balance.equipment_value", "balance.receivables", "balance.inventory",
+      "business.equipment_debts", "balance.equipment_value", "balance.receivables", "balance.inventory",
     ],
   },
   {
@@ -49,7 +48,7 @@ export const SURVEY_SECTIONS = [
     title: "Debts & Owner Equity",
     description: "Business liabilities, owner contributions, and owner draws.",
     stepKeys: [
-      "balance.debt_presence", "balance.debt_balances", "balance.owner_contribution",
+      "balance.debt_presence", "balance.debt_types", "balance.debt_balances", "balance.owner_contribution",
       "balance.owner_contribution_details", "balance.owner_draws",
     ],
   },
@@ -74,9 +73,7 @@ export function sectionIndexForStep(stepKey: string | null | undefined) {
 export function questionsForSection(sectionIndex: number) {
   const section = SURVEY_SECTIONS[sectionIndex];
   if (!section) return [];
-  return QUESTIONS.filter((question) =>
-    (section.stepKeys as readonly string[]).includes(question.stepKey)
-  );
+  return section.stepKeys.flatMap((stepKey) => questionsForStep(stepKey));
 }
 
 export function applicableQuestionsInDisplayOrder(answers: SurveyAnswers) {

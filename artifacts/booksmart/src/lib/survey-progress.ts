@@ -22,6 +22,7 @@ const hasHomeOffice = (a: SurveyAnswers) =>
 const hasEquipment = (a: SurveyAnswers) => a["equipment.ownership"] === true;
 const hasSelectedDebt = (a: SurveyAnswers) =>
   Array.isArray(a["liabilities.selected"]) && a["liabilities.selected"].length > 0;
+const hasDebt = (a: SurveyAnswers) => a["liabilities.has_debt"] === true;
 const wantsFunding = (a: SurveyAnswers) =>
   a["funding.interest"] === "Yes" || a["funding.interest"] === "Maybe / exploring options";
 
@@ -40,7 +41,7 @@ export const QUESTIONS: QuestionDefinition[] = [
   { key: "funding.purposes", surveyKey: "business_survey", stepKey: "business.phase1_profile", introducedIn: 2, applicable: wantsFunding },
   { key: "team.structure", surveyKey: "business_survey", stepKey: "business.people_accounting" },
   { key: "accounting.method", surveyKey: "business_survey", stepKey: "business.people_accounting" },
-  { key: "equipment.ownership", surveyKey: "business_survey", stepKey: "business.people_accounting" },
+  { key: "equipment.ownership", surveyKey: "business_survey", stepKey: "business.equipment_debts" },
   { key: "vehicle.ownership", surveyKey: "business_survey", stepKey: "business.vehicle" },
   { key: "vehicle.deduction_method", surveyKey: "business_survey", stepKey: "business.vehicle", applicable: hasVehicle },
   { key: "vehicle.over_6000_lbs", surveyKey: "business_survey", stepKey: "business.vehicle", applicable: hasVehicle },
@@ -55,11 +56,7 @@ export const QUESTIONS: QuestionDefinition[] = [
   { key: "strategy.tax_goal", surveyKey: "business_survey", stepKey: "business.strategy" },
   { key: "strategy.retirement", surveyKey: "business_survey", stepKey: "business.strategy" },
   { key: "strategy.audit_appetite", surveyKey: "business_survey", stepKey: "business.strategy" },
-  { key: "workspace.home_business_use_percent", surveyKey: "business_survey", stepKey: "business.deduction_percentages", applicable: hasHomeOffice },
-  { key: "vehicle.business_use_percent", surveyKey: "business_survey", stepKey: "business.deduction_percentages", applicable: hasVehicle },
-  { key: "workspace.utility_business_use_percent", surveyKey: "business_survey", stepKey: "business.deduction_percentages", applicable: hasHomeOffice },
   { key: "equipment.spending_this_year", surveyKey: "business_survey", stepKey: "business.equipment_debts", applicable: hasEquipment },
-  { key: "liabilities.selected", surveyKey: "business_survey", stepKey: "business.equipment_debts" },
 
   { key: "workspace.primary_work_location", surveyKey: "balance_sheet_profile", stepKey: "balance.work_location" },
   { key: "workspace.total_home_sqft", surveyKey: "balance_sheet_profile", stepKey: "balance.home_sqft", applicable: hasHomeOffice },
@@ -68,11 +65,11 @@ export const QUESTIONS: QuestionDefinition[] = [
   { key: "workspace.phone_business_use_percent", surveyKey: "balance_sheet_profile", stepKey: "balance.phone_percent", applicable: (a) => Array.isArray(a["workspace.tech_usage"]) && a["workspace.tech_usage"].includes("Personal Phone for Business") },
   { key: "workspace.internet_business_use_percent", surveyKey: "balance_sheet_profile", stepKey: "balance.internet_percent", applicable: (a) => Array.isArray(a["workspace.tech_usage"]) && a["workspace.tech_usage"].includes("Home Internet for Business") },
   { key: "workspace.balance_utility_percent", surveyKey: "balance_sheet_profile", stepKey: "balance.utility_percent", applicable: hasHomeOffice },
-  { key: "equipment.balance_ownership", surveyKey: "balance_sheet_profile", stepKey: "balance.equipment_ownership" },
   { key: "equipment.current_value", surveyKey: "balance_sheet_profile", stepKey: "balance.equipment_value", applicable: hasEquipment },
   { key: "assets.has_receivables", surveyKey: "balance_sheet_profile", stepKey: "balance.receivables" },
   { key: "assets.has_inventory", surveyKey: "balance_sheet_profile", stepKey: "balance.inventory" },
   { key: "liabilities.has_debt", surveyKey: "balance_sheet_profile", stepKey: "balance.debt_presence" },
+  { key: "liabilities.selected", surveyKey: "balance_sheet_profile", stepKey: "balance.debt_types", applicable: hasDebt },
   { key: "liabilities.balances", surveyKey: "balance_sheet_profile", stepKey: "balance.debt_balances", applicable: hasSelectedDebt },
   { key: "equity.owner_contributed", surveyKey: "balance_sheet_profile", stepKey: "balance.owner_contribution" },
   { key: "equity.owner_contribution_details", surveyKey: "balance_sheet_profile", stepKey: "balance.owner_contribution_details", applicable: (a) => a["equity.owner_contributed"] === true },
