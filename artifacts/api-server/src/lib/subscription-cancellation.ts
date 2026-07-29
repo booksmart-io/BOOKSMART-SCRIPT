@@ -15,10 +15,19 @@ type UserRow = {
 type LocalSubscriptionRow = {
   id: number;
   stripe_subscription_id: string;
+  stripe_price_id: string;
   status: string;
   current_period_end: string;
   cancel_at_period_end: boolean;
 };
+
+const ADMIN_OVERRIDE_SUBSCRIPTION_PREFIX = "admin_override_subscription_";
+
+function planKeyForPriceId(priceId: string): PlanKey | null {
+  if (priceId === SUBSCRIPTION_PLANS.plus.priceId) return "plus";
+  if (priceId === SUBSCRIPTION_PLANS.pro.priceId) return "pro";
+  return null;
+}
 
 export type SubscriptionCancellationResult = {
   status: Stripe.Subscription.Status;
@@ -55,9 +64,52 @@ export function planKeyForSubscription(
   subscription: Stripe.Subscription,
 ): PlanKey | null {
   const priceId = subscription.items.data[0]?.price.id;
-  if (priceId === SUBSCRIPTION_PLANS.plus.priceId) return "plus";
-  if (priceId === SUBSCRIPTION_PLANS.pro.priceId) return "pro";
-  return null;
+  return priceId ? planKeyForPriceId(priceId) : null;
+}
+
+async function setAdminOverrideCancellation(
+  admin: SupabaseAdmin,
+  local: LocalSubscriptionRow,
+  userId: string,
+  cancelAtPeriodEnd: boolean,
+): Promise<SubscriptionCancellationResult> {
+  const tier = planKeyForPriceId(local.stripe_price_id);
+  if (!tier) {
+    throw new SubscriptionActionError(
+      "unsupported_subscription_price",
+      409,
+      "The admin override does not match a BookSmart paid plan.",
+    );
+  }
+
+  const alreadyInRequestedState =
+    local.cancel_at_period_end === cancelAtPeriodEnd;
+  if (!alreadyInRequestedState) {
+    const { error } = await admin
+      .from("subscriptions")
+      .update({
+        cancel_at_period_end: cancelAtPeriodEnd,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", local.id)
+      .eq("user_id", userId);
+
+    if (error) {
+      throw new SubscriptionActionError(
+        "subscription_sync_failed",
+        502,
+        `BookSmart could not update the admin override: ${error.message}`,
+      );
+    }
+  }
+
+  return {
+    status: "active",
+    cancelAtPeriodEnd,
+    currentPeriodEnd: local.current_period_end,
+    tier,
+    alreadyInRequestedState,
+  };
 }
 
 export function assertSubscriptionOwnership(
@@ -167,34 +219,10 @@ export async function setSubscriptionCancellation(
   userId: string,
   cancelAtPeriodEnd: boolean,
 ): Promise<SubscriptionCancellationResult> {
-  const { data: userRow, error: userError } = await admin
-    .from("users")
-    .select("stripe_customer_id")
-    .eq("auth_id", userId)
-    .maybeSingle();
-
-  if (userError) {
-    throw new SubscriptionActionError(
-      "user_lookup_failed",
-      500,
-      userError.message,
-    );
-  }
-
-  const expectedCustomerId =
-    (userRow as UserRow | null)?.stripe_customer_id;
-  if (!expectedCustomerId) {
-    throw new SubscriptionActionError(
-      "stripe_customer_missing",
-      404,
-      "No Stripe customer exists for this account.",
-    );
-  }
-
   const { data: localRow, error: subscriptionError } = await admin
     .from("subscriptions")
     .select(
-      "id, stripe_subscription_id, status, current_period_end, cancel_at_period_end",
+      "id, stripe_subscription_id, stripe_price_id, status, current_period_end, cancel_at_period_end",
     )
     .eq("user_id", userId)
     .eq("status", "active")
@@ -219,6 +247,39 @@ export async function setSubscriptionCancellation(
   }
 
   const local = localRow as LocalSubscriptionRow;
+  if (local.stripe_subscription_id.startsWith(ADMIN_OVERRIDE_SUBSCRIPTION_PREFIX)) {
+    return setAdminOverrideCancellation(
+      admin,
+      local,
+      userId,
+      cancelAtPeriodEnd,
+    );
+  }
+
+  const { data: userRow, error: userError } = await admin
+    .from("users")
+    .select("stripe_customer_id")
+    .eq("auth_id", userId)
+    .maybeSingle();
+
+  if (userError) {
+    throw new SubscriptionActionError(
+      "user_lookup_failed",
+      500,
+      userError.message,
+    );
+  }
+
+  const expectedCustomerId =
+    (userRow as UserRow | null)?.stripe_customer_id;
+  if (!expectedCustomerId) {
+    throw new SubscriptionActionError(
+      "stripe_customer_missing",
+      404,
+      "No Stripe customer exists for this account.",
+    );
+  }
+
   let subscription: Stripe.Subscription;
   try {
     subscription = await stripe.subscriptions.retrieve(

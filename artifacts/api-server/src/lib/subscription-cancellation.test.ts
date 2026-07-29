@@ -103,7 +103,7 @@ function actionableSubscription(
   });
 }
 
-function fakeAdmin() {
+function fakeAdmin(options?: { adminOverride?: boolean; cancelAtPeriodEnd?: boolean }) {
   const updates: Record<string, unknown>[] = [];
   return {
     updates,
@@ -138,10 +138,13 @@ function fakeAdmin() {
           return {
             data: {
               id: 42,
-              stripe_subscription_id: "sub_booksmart",
+              stripe_subscription_id: options?.adminOverride
+                ? "admin_override_subscription_user-booksmart"
+                : "sub_booksmart",
+              stripe_price_id: SUBSCRIPTION_PLANS.plus.priceId,
               status: "active",
               current_period_end: "2025-08-14T00:00:00.000Z",
-              cancel_at_period_end: false,
+              cancel_at_period_end: options?.cancelAtPeriodEnd ?? false,
             },
             error: null,
           };
@@ -224,4 +227,53 @@ test("resumes a scheduled subscription without changing its paid tier", async ()
 
   assert.equal(result.cancelAtPeriodEnd, false);
   assert.equal(result.tier, "plus");
+});
+
+test("schedules an admin override downgrade locally without calling Stripe", async () => {
+  const admin = fakeAdmin({ adminOverride: true });
+  let stripeCalls = 0;
+  const stripe = {
+    subscriptions: {
+      retrieve: async () => {
+        stripeCalls += 1;
+        throw new Error("Stripe must not be called for an admin override");
+      },
+    },
+  };
+
+  const result = await setSubscriptionCancellation(
+    stripe as unknown as Stripe,
+    admin as never,
+    "user-booksmart",
+    true,
+  );
+
+  assert.equal(stripeCalls, 0);
+  assert.equal(result.cancelAtPeriodEnd, true);
+  assert.equal(result.tier, "plus");
+  assert.equal(admin.updates.at(-1)?.cancel_at_period_end, true);
+});
+
+test("resumes an admin override locally without calling Stripe", async () => {
+  const admin = fakeAdmin({
+    adminOverride: true,
+    cancelAtPeriodEnd: true,
+  });
+  const stripe = {
+    subscriptions: {
+      retrieve: async () => {
+        throw new Error("Stripe must not be called for an admin override");
+      },
+    },
+  };
+
+  const result = await setSubscriptionCancellation(
+    stripe as unknown as Stripe,
+    admin as never,
+    "user-booksmart",
+    false,
+  );
+
+  assert.equal(result.cancelAtPeriodEnd, false);
+  assert.equal(admin.updates.at(-1)?.cancel_at_period_end, false);
 });
