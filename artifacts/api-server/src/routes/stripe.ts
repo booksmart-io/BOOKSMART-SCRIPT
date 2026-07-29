@@ -1,5 +1,6 @@
 import { Router, type Request, type Response } from "express";
 import { createClient } from "@supabase/supabase-js";
+import type Stripe from "stripe";
 
 import { requireAuth } from "../middlewares/require-auth";
 import { getStripeClient } from "../lib/stripe-client";
@@ -287,11 +288,12 @@ router.post(
   "/stripe/create-checkout-session",
   requireAuth,
   async (req, res) => {
-    const { planKey, successUrl, cancelUrl, checkoutAttemptId } = req.body as {
+    const { planKey, successUrl, cancelUrl, checkoutAttemptId, uiMode } = req.body as {
       planKey?: string;
       successUrl?: string;
       cancelUrl?: string;
       checkoutAttemptId?: string;
+      uiMode?: "hosted" | "embedded";
     };
 
     if (
@@ -377,8 +379,7 @@ router.post(
         return;
       }
 
-      const session =
-        await stripe.checkout.sessions.create({
+      const commonSession: Stripe.Checkout.SessionCreateParams = {
           mode: "subscription",
           customer: customerId,
           line_items: [
@@ -387,10 +388,6 @@ router.post(
               quantity: 1,
             },
           ],
-          success_url: `${checkedSuccessUrl}${
-            checkedSuccessUrl.includes("?") ? "&" : "?"
-          }session_id={CHECKOUT_SESSION_ID}`,
-          cancel_url: checkedCancelUrl,
           metadata: {
             user_id: userId,
             plan_key: planKey,
@@ -402,12 +399,37 @@ router.post(
               plan_key: planKey,
             },
           },
-        }, {
+        };
+      const session = await stripe.checkout.sessions.create(
+        uiMode === "embedded"
+          ? {
+              ...commonSession,
+              ui_mode: "embedded_page",
+              redirect_on_completion: "if_required",
+              return_url: `${checkedSuccessUrl}${
+                checkedSuccessUrl.includes("?") ? "&" : "?"
+              }session_id={CHECKOUT_SESSION_ID}`,
+            }
+          : {
+              ...commonSession,
+              success_url: `${checkedSuccessUrl}${
+                checkedSuccessUrl.includes("?") ? "&" : "?"
+              }session_id={CHECKOUT_SESSION_ID}`,
+              cancel_url: checkedCancelUrl,
+            }, {
           idempotencyKey:
             `booksmart:subscription:${userId}:${checkoutAttemptId}`,
         });
 
-      if (!session.url) {
+      if (uiMode === "embedded" && !session.client_secret) {
+        res.status(502).json({
+          error: "checkout_client_secret_missing",
+          message: "Stripe did not return an embedded Checkout client secret.",
+        });
+        return;
+      }
+
+      if (uiMode !== "embedded" && !session.url) {
         res.status(502).json({
           error: "checkout_url_missing",
           message: "Stripe did not return a checkout URL.",
@@ -417,6 +439,8 @@ router.post(
 
       res.json({
         url: session.url,
+        clientSecret: session.client_secret,
+        sessionId: session.id,
       });
     } catch (error) {
       console.error(
@@ -439,12 +463,13 @@ router.post(
   "/stripe/create-token-checkout",
   requireAuth,
   async (req, res) => {
-    const { packageKey, successUrl, cancelUrl, checkoutAttemptId } =
+    const { packageKey, successUrl, cancelUrl, checkoutAttemptId, uiMode } =
       req.body as {
         packageKey?: string;
         successUrl?: string;
         cancelUrl?: string;
         checkoutAttemptId?: string;
+        uiMode?: "hosted" | "embedded";
       };
 
     if (
@@ -512,8 +537,7 @@ router.post(
           userRow,
         );
 
-      const session =
-        await stripe.checkout.sessions.create({
+      const commonSession: Stripe.Checkout.SessionCreateParams = {
           mode: "payment",
           customer: customerId,
           line_items: [
@@ -522,10 +546,6 @@ router.post(
               quantity: 1,
             },
           ],
-          success_url: `${checkedSuccessUrl}${
-            checkedSuccessUrl.includes("?") ? "&" : "?"
-          }session_id={CHECKOUT_SESSION_ID}`,
-          cancel_url: checkedCancelUrl,
           metadata: {
             user_id: userId,
             package_key: packageKey,
@@ -533,12 +553,37 @@ router.post(
             purchase_type: "token_package",
             checkout_attempt_id: checkoutAttemptId,
           },
-        }, {
+        };
+      const session = await stripe.checkout.sessions.create(
+        uiMode === "embedded"
+          ? {
+              ...commonSession,
+              ui_mode: "embedded_page",
+              redirect_on_completion: "if_required",
+              return_url: `${checkedSuccessUrl}${
+                checkedSuccessUrl.includes("?") ? "&" : "?"
+              }session_id={CHECKOUT_SESSION_ID}`,
+            }
+          : {
+              ...commonSession,
+              success_url: `${checkedSuccessUrl}${
+                checkedSuccessUrl.includes("?") ? "&" : "?"
+              }session_id={CHECKOUT_SESSION_ID}`,
+              cancel_url: checkedCancelUrl,
+            }, {
           idempotencyKey:
             `booksmart:tokens:${userId}:${checkoutAttemptId}`,
         });
 
-      if (!session.url) {
+      if (uiMode === "embedded" && !session.client_secret) {
+        res.status(502).json({
+          error: "checkout_client_secret_missing",
+          message: "Stripe did not return an embedded Checkout client secret.",
+        });
+        return;
+      }
+
+      if (uiMode !== "embedded" && !session.url) {
         res.status(502).json({
           error: "checkout_url_missing",
           message: "Stripe did not return a checkout URL.",
@@ -548,6 +593,8 @@ router.post(
 
       res.json({
         url: session.url,
+        clientSecret: session.client_secret,
+        sessionId: session.id,
       });
     } catch (error) {
       console.error(

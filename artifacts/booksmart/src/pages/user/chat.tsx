@@ -159,7 +159,8 @@ export default function Chat() {
   const qc = useQueryClient();
 
   const params = new URLSearchParams(window.location.search);
-  const cpaNaturalId = params.get("cpa_id") ? Number(params.get("cpa_id")) : null;
+  const contactParam = params.get("contact_id") ?? params.get("cpa_id");
+  const contactId = contactParam ? Number(contactParam) : null;
 
   const [activeChatId, setActiveChatId] = useState<number | null>(null);
   const [mobileListOpen, setMobileListOpen] = useState(true);
@@ -209,17 +210,17 @@ export default function Chat() {
   // ── Handle ?cpa_id param ──────────────────────────────────────────────────
 
   useEffect(() => {
-    if (!cpaNaturalId || !numericId || chatsLoading) return;
+    if (!contactId || !numericId || chatsLoading) return;
     const existing = chats.find(c =>
-      (c.sender_id === numericId && c.receiver_id === cpaNaturalId) ||
-      (c.receiver_id === numericId && c.sender_id === cpaNaturalId)
+      (c.sender_id === numericId && c.receiver_id === contactId) ||
+      (c.receiver_id === numericId && c.sender_id === contactId)
     );
     if (existing) {
       setActiveChatId(existing.id);
       setMobileListOpen(false);
     } else {
       supabase.from("chats").insert({
-        sender_id: numericId, receiver_id: cpaNaturalId,
+        sender_id: numericId, receiver_id: contactId,
         last_message: "", last_message_time: new Date().toISOString(),
       }).select().single().then(({ data, error }) => {
         if (!error && data) {
@@ -229,9 +230,9 @@ export default function Chat() {
         }
       });
     }
-    navigate("/user/chat", { replace: true });
+    navigate(profile?.role === "cpa" ? "/cpa/chat" : "/user/chat", { replace: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cpaNaturalId, numericId, chatsLoading]);
+  }, [contactId, numericId, chatsLoading]);
 
   // ── Load messages ─────────────────────────────────────────────────────────
 

@@ -14,6 +14,10 @@ import { supabase } from "@/lib/supabase";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { invalidatePaymentQueries } from "@/lib/payment-query-cache";
+import {
+  embeddedCheckoutAvailable,
+  StripeCheckoutModal,
+} from "@/components/stripe-checkout-modal";
 
 type PlanKey = "plus" | "pro";
 type SubscriptionStatus = {
@@ -88,6 +92,8 @@ export default function Subscription() {
   const [downgradeOpen, setDowngradeOpen] = useState(false);
   const [subscriptionAction, setSubscriptionAction] =
     useState<"cancel" | "resume" | null>(null);
+  const [checkoutClientSecret, setCheckoutClientSecret] = useState<string | null>(null);
+  const [checkoutSessionId, setCheckoutSessionId] = useState<string | null>(null);
   const checkoutInFlight = useRef(false);
   const subscriptionActionInFlight = useRef(false);
 
@@ -129,6 +135,29 @@ export default function Subscription() {
     })();
   }, [queryClient]);
 
+  async function completeEmbeddedCheckout() {
+    if (!checkoutSessionId) return;
+    const token = await getAuthToken();
+    if (!token) {
+      toast.error("Please sign in again.");
+      return;
+    }
+    const res = await fetch("/api/stripe/confirm-checkout", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ sessionId: checkoutSessionId }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      toast.error(data.error === "payment_not_completed" ? "Payment not completed yet." : "Could not confirm subscription.");
+      return;
+    }
+    setCheckoutClientSecret(null);
+    setCheckoutSessionId(null);
+    toast.success("Subscription activated!");
+    invalidatePaymentQueries(queryClient);
+  }
+
   async function handleUpgrade(planKey: PlanKey) {
     if (checkoutInFlight.current) return;
     checkoutInFlight.current = true;
@@ -157,14 +186,22 @@ export default function Subscription() {
           successUrl,
           cancelUrl,
           checkoutAttemptId,
+          uiMode: embeddedCheckoutAvailable ? "embedded" : "hosted",
         }),
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok || !data.url) {
+      if (!res.ok) {
         toast.error(data.message ?? data.error ?? "Could not start checkout.");
         return;
       }
-      window.location.href = data.url;
+      if (embeddedCheckoutAvailable && data.clientSecret && data.sessionId) {
+        setCheckoutClientSecret(data.clientSecret);
+        setCheckoutSessionId(data.sessionId);
+      } else if (data.url) {
+        window.location.href = data.url;
+      } else {
+        toast.error("Stripe did not return a checkout session.");
+      }
     } finally {
       checkoutInFlight.current = false;
       setLoadingPlan(null);
@@ -218,6 +255,15 @@ export default function Subscription() {
 
   return (
     <div className="mx-auto max-w-6xl space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500 sm:space-y-8">
+      <StripeCheckoutModal
+        clientSecret={checkoutClientSecret}
+        title="Complete Your Subscription"
+        onClose={() => {
+          setCheckoutClientSecret(null);
+          setCheckoutSessionId(null);
+        }}
+        onComplete={completeEmbeddedCheckout}
+      />
       <div className="text-center space-y-2">
         <h1 className="text-2xl font-bold tracking-tight sm:text-3xl">Upgrade Your Command Center</h1>
         <p className="text-muted-foreground max-w-2xl mx-auto">

@@ -18,6 +18,7 @@ import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/hooks/use-auth";
 import { formatDistanceToNow } from "date-fns";
 import { toast } from "sonner";
+import { apiErrorMessage, authenticatedApi } from "@/lib/authenticated-api";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -64,6 +65,12 @@ function fmtCurrency(n: number) {
 }
 
 const STATUS_OPTIONS = ["pending", "active", "completed", "cancelled"];
+
+function allowedStatusOptions(currentStatus: string) {
+  if (currentStatus === "pending") return ["pending", "active", "cancelled"];
+  if (["active", "in_progress", "in-progress"].includes(currentStatus)) return [currentStatus, "completed", "cancelled"];
+  return [currentStatus];
+}
 
 const statusColor = (s: string) => {
   if (s === "completed") return "text-emerald-500 border-emerald-500/30 bg-emerald-500/10";
@@ -134,8 +141,11 @@ export default function CpaOrders() {
   // ── Update order (status + amount) ───────────────────────────────────────
   const updateOrder = useMutation({
     mutationFn: async ({ id, status, amount }: { id: number; status: string; amount: number }) => {
-      const { error } = await supabase.from("orders").update({ status, amount }).eq("id", id);
-      if (error) throw error;
+      const response = await authenticatedApi(`/api/cpa/orders/${id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ status, amount }),
+      });
+      if (!response.ok) throw new Error(await apiErrorMessage(response, "Could not update the order"));
     },
     onSuccess: (_, vars) => {
       toast.success(vars.status === "completed" ? "Order delivered!" : "Order updated.");
@@ -447,7 +457,7 @@ export default function CpaOrders() {
                   <Select value={newStatus} onValueChange={setNewStatus}>
                     <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
                     <SelectContent>
-                      {STATUS_OPTIONS.map((s) => (
+                      {allowedStatusOptions(selectedOrder.status).map((s) => (
                         <SelectItem key={s} value={s} className="capitalize">{s}</SelectItem>
                       ))}
                     </SelectContent>
@@ -472,8 +482,22 @@ export default function CpaOrders() {
               {updateOrder.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
               Save
             </Button>
-            {/* Deliver Order — primary gold action */}
-            {selectedOrder && selectedOrder.status !== "completed" && selectedOrder.status !== "cancelled" && (
+            {/* Primary actions follow the server's forward-only workflow. */}
+            {selectedOrder && selectedOrder.status === "pending" && (
+              <Button
+                className="bg-primary hover:bg-primary/90 text-primary-foreground font-semibold"
+                disabled={updateOrder.isPending}
+                onClick={() => updateOrder.mutate({
+                  id: selectedOrder.id,
+                  status: "active",
+                  amount: Math.max(0, Number(newAmount) || 0),
+                })}
+              >
+                {updateOrder.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <PackageCheck className="h-4 w-4 mr-2" />}
+                Accept Order
+              </Button>
+            )}
+            {selectedOrder && ["active", "in_progress", "in-progress"].includes(selectedOrder.status) && (
               <Button
                 className="bg-primary hover:bg-primary/90 text-primary-foreground font-semibold"
                 disabled={updateOrder.isPending}

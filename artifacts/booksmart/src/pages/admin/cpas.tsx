@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Search, Loader2, ShieldCheck, Eye, ExternalLink } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { apiErrorMessage, authenticatedApi } from "@/lib/authenticated-api";
 
 type CPA = {
   id: number;
@@ -107,11 +108,11 @@ export default function AdminCpas() {
 
   const verifyMutation = useMutation({
     mutationFn: async ({ id, status }: { id: number; status: string }) => {
-      const { error } = await supabase
-        .from("users")
-        .update({ verification_status: status, updated_at: new Date().toISOString() })
-        .eq("id", id);
-      if (error) throw error;
+      const response = await authenticatedApi(`/api/admin/cpas/${id}/verification`, {
+        method: "PATCH",
+        body: JSON.stringify({ status }),
+      });
+      if (!response.ok) throw new Error(await apiErrorMessage(response, "Could not update CPA verification"));
     },
     onSuccess: (_, { status }) => {
       qc.invalidateQueries({ queryKey: ["admin_cpas"] });

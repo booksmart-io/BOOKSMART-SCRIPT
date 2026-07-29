@@ -17,6 +17,7 @@ function getAdminClient() {
 router.use("/admin/accounts", requireAuth, requireAdmin);
 router.use("/admin/set-token-balance", requireAuth, requireAdmin);
 router.use("/admin/set-plan", requireAuth, requireAdmin);
+router.use("/admin/cpas", requireAuth, requireAdmin);
 
 // Lists every platform account with its resolved plan tier, live usage limits,
 // and token balance — the full picture the admin needs to manage accounts.
@@ -207,6 +208,34 @@ router.post("/admin/set-plan", async (req, res) => {
     const code = e && typeof e === "object" && "code" in e ? String((e as { code?: unknown }).code) : undefined;
     console.error("[admin/set-plan]", { message, details, hint, code });
     res.status(502).json({ error: "admin_set_plan_error", message, details, hint, code });
+  }
+});
+
+router.patch("/admin/cpas/:cpaId/verification", async (req, res) => {
+  const cpaId = Number(req.params["cpaId"]);
+  const { status } = req.body ?? {};
+  if (!Number.isSafeInteger(cpaId) || cpaId <= 0 || !["approved", "rejected"].includes(status)) {
+    res.status(400).json({ error: "invalid_request", message: "A valid CPA ID and approved/rejected status are required" });
+    return;
+  }
+
+  try {
+    const admin = getAdminClient();
+    const { data, error } = await admin
+      .from("users")
+      .update({ verification_status: status, updated_at: new Date().toISOString() })
+      .eq("id", cpaId)
+      .eq("role", "cpa")
+      .select("id,verification_status")
+      .maybeSingle();
+    if (error) throw error;
+    if (!data) {
+      res.status(404).json({ error: "cpa_not_found" });
+      return;
+    }
+    res.json({ cpa: data });
+  } catch (error) {
+    res.status(502).json({ error: "cpa_verification_update_error", message: String(error) });
   }
 });
 

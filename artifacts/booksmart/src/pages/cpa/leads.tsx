@@ -9,6 +9,7 @@ import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/hooks/use-auth";
 import { formatDistanceToNow } from "date-fns";
 import { toast } from "sonner";
+import { apiErrorMessage, authenticatedApi } from "@/lib/authenticated-api";
 
 interface Order {
   id: number;
@@ -76,11 +77,11 @@ export default function CpaLeads() {
   // ── Accept / Decline mutations ─────────────────────────────────────────────
   const updateStatus = useMutation({
     mutationFn: async ({ id, status }: { id: number; status: string }) => {
-      const { error } = await supabase
-        .from("orders")
-        .update({ status })
-        .eq("id", id);
-      if (error) throw error;
+      const response = await authenticatedApi(`/api/cpa/orders/${id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ status }),
+      });
+      if (!response.ok) throw new Error(await apiErrorMessage(response, "Could not update the lead"));
     },
     onSuccess: (_, { status }) => {
       toast.success(status === "active" ? "Lead accepted — order is now active." : "Lead declined.");
@@ -171,7 +172,7 @@ export default function CpaLeads() {
                       size="icon"
                       className="shrink-0 text-muted-foreground hover:text-primary"
                       title="Chat with client"
-                      onClick={() => navigate("/chat")}
+                      onClick={() => navigate("/cpa/chat")}
                     >
                       <MessageSquare className="h-4 w-4" />
                     </Button>

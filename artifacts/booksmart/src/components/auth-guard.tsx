@@ -3,6 +3,7 @@ import { useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/hooks/use-auth";
 import { supabase } from "@/lib/supabase";
+import { canRenderProtectedRoute, homeRouteForRole } from "@/lib/route-access";
 
 interface AuthGuardProps {
   children: React.ReactNode;
@@ -16,6 +17,12 @@ export function AuthGuard({ children, requiredRole }: AuthGuardProps) {
   const shouldRequireOrganization = requiredRole === "user" && location !== "/user/profile";
   const waitingForProfile = !!session && !profile;
   const waitingForNumericUserId = shouldRequireOrganization && !!profile && numericId === null;
+  const canRenderRoute = canRenderProtectedRoute({
+    requiredRole,
+    profileRole: profile?.role,
+    verificationStatus: profile?.verification_status,
+    location,
+  });
 
   const { data: organizationCount, isLoading: organizationLoading } = useQuery<number>({
     queryKey: ["auth_guard_organization_count", numericId],
@@ -43,9 +50,7 @@ export function AuthGuard({ children, requiredRole }: AuthGuardProps) {
       return;
     }
     if (requiredRole && profile && profile.role !== requiredRole) {
-      if (profile.role === "cpa") setLocation("/cpa");
-      else if (profile.role === "admin") setLocation("/admin");
-      else setLocation("/user");
+      setLocation(homeRouteForRole(profile.role));
       return;
     }
     if (requiredRole === "cpa" && profile?.role === "cpa") {
@@ -77,6 +82,7 @@ export function AuthGuard({ children, requiredRole }: AuthGuardProps) {
   if (!session) return null;
   if (!session.user.email_confirmed_at) return null;
   if (waitingForProfile || waitingForNumericUserId) return null;
+  if (!canRenderRoute) return null;
   if (shouldRequireOrganization && (organizationCount ?? 0) === 0) return null;
 
   return <>{children}</>;

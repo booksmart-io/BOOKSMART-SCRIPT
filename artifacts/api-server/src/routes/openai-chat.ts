@@ -291,10 +291,11 @@ router.post("/openai-chat", requireAuth, async (req, res) => {
     return;
   }
 
-  const { model, messages, max_tokens, ...rest } = req.body as {
+  const { model, messages, max_tokens, use_live_context, ...rest } = req.body as {
     model?: string;
     messages?: unknown[];
     max_tokens?: number;
+    use_live_context?: boolean;
     [key: string]: unknown;
   };
 
@@ -329,7 +330,7 @@ router.post("/openai-chat", requireAuth, async (req, res) => {
   const categorizationTask = isCategorizationTask(latestUserText(chatMessages));
 
   // Categorization is part of transaction processing, not a user AI-chat question.
-  if (!categorizationTask) {
+  if (!categorizationTask && use_live_context !== false) {
     try {
       const tier = await getUserTier(admin, authUserId);
       const limit = PLAN_LIMITS[tier].aiQuestionsPerMonth;

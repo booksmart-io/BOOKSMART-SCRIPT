@@ -9,6 +9,10 @@ import {
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { invalidatePaymentQueries } from "@/lib/payment-query-cache";
+import {
+  embeddedCheckoutAvailable,
+  StripeCheckoutModal,
+} from "@/components/stripe-checkout-modal";
 
 import { Button } from "@/components/ui/button";
 import { supabase } from "@/lib/supabase";
@@ -223,6 +227,8 @@ export default function Token() {
   const [loadingPackage, setLoadingPackage] = useState<PackageKey | null>(null);
   const [selectedPackage, setSelectedPackage] = useState<PackageKey>("tokens_professional");
   const [showAllHistory, setShowAllHistory] = useState(false);
+  const [checkoutClientSecret, setCheckoutClientSecret] = useState<string | null>(null);
+  const [checkoutSessionId, setCheckoutSessionId] = useState<string | null>(null);
 
   const { data: status } = useQuery({ queryKey: ["stripe_status"], queryFn: fetchStatus });
   const { data: catalog } = useQuery({ queryKey: ["stripe_catalog"], queryFn: fetchCatalog });
@@ -278,6 +284,29 @@ export default function Token() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  async function completeEmbeddedCheckout() {
+    if (!checkoutSessionId) return;
+    const token = await getAuthToken();
+    if (!token) {
+      toast.error("Please sign in again.");
+      return;
+    }
+    const res = await fetch("/api/stripe/confirm-checkout", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ sessionId: checkoutSessionId }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      toast.error(data.error === "payment_not_completed" ? "Payment not completed yet." : data.message ?? "Could not confirm purchase.");
+      return;
+    }
+    setCheckoutClientSecret(null);
+    setCheckoutSessionId(null);
+    toast.success(data.tokensAdded ? `+${data.tokensAdded} tokens added!` : "Token purchase confirmed.");
+    refreshTokenData();
+  }
+
   function refreshTokenData() {
     invalidatePaymentQueries(queryClient);
   }
@@ -310,14 +339,22 @@ export default function Token() {
           successUrl,
           cancelUrl,
           checkoutAttemptId,
+          uiMode: embeddedCheckoutAvailable ? "embedded" : "hosted",
         }),
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok || !data.url) {
+      if (!res.ok) {
         toast.error(data.message ?? data.error ?? "Could not start checkout.");
         return;
       }
-      window.location.href = data.url;
+      if (embeddedCheckoutAvailable && data.clientSecret && data.sessionId) {
+        setCheckoutClientSecret(data.clientSecret);
+        setCheckoutSessionId(data.sessionId);
+      } else if (data.url) {
+        window.location.href = data.url;
+      } else {
+        toast.error("Stripe did not return a checkout session.");
+      }
     } finally {
       checkoutInFlight.current = false;
       setLoadingPackage(null);
@@ -326,6 +363,15 @@ export default function Token() {
 
   return (
     <div className="min-h-0 bg-background text-foreground">
+      <StripeCheckoutModal
+        clientSecret={checkoutClientSecret}
+        title="Buy BookSmart Tokens"
+        onClose={() => {
+          setCheckoutClientSecret(null);
+          setCheckoutSessionId(null);
+        }}
+        onComplete={completeEmbeddedCheckout}
+      />
       <div className="grid min-w-0 gap-5 sm:gap-6 2xl:grid-cols-[minmax(0,1fr)_minmax(340px,380px)] 2xl:gap-8">
         <main className="min-w-0 space-y-6 sm:space-y-8">
           <section className="grid min-w-0 gap-4 rounded-lg border border-border bg-card p-4 text-card-foreground sm:p-6 xl:grid-cols-[auto_minmax(0,1fr)_minmax(260px,auto)] xl:items-center">

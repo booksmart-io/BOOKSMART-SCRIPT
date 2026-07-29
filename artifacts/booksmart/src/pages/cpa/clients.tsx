@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/hooks/use-auth";
+import { isActiveCpaEngagement } from "@/lib/route-access";
+import { apiErrorMessage, authenticatedApi } from "@/lib/authenticated-api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -9,6 +11,9 @@ import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Separator } from "@/components/ui/separator";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { toast } from "sonner";
 import {
   Search, Loader2, Users, DollarSign, FileText, Sparkles,
   BarChart2, ArrowUpRight, ArrowDownRight, ChevronRight,
@@ -30,6 +35,7 @@ interface UserRow {
   first_name: string | null;
   last_name: string | null;
   email: string;
+  img_url: string | null;
 }
 
 interface Order {
@@ -71,6 +77,7 @@ interface Document {
   name: string;
   category: string;
   created_at: string;
+  file_url: string | null;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -224,13 +231,12 @@ function ClientDetailPanel({ client, orders, onBack }: {
   });
 
   const { data: docs = [] } = useQuery<Document[]>({
-    queryKey: ["cpa_client_docs", org?.id],
-    enabled: !!org?.id,
+    queryKey: ["cpa_client_docs", client.id],
     queryFn: async () => {
       const { data } = await supabase
-        .from("documents")
-        .select("id, name, category, created_at")
-        .eq("org_id", org!.id)
+        .from("user_documents")
+        .select("id, name, category, created_at, file_url")
+        .eq("user_id", client.id)
         .order("created_at", { ascending: false });
       return data ?? [];
     },
@@ -282,6 +288,35 @@ function ClientDetailPanel({ client, orders, onBack }: {
     return types.size;
   }, [monthTxs]);
 
+  const openClientChat = () => navigate(`/cpa/chat?contact_id=${client.id}`);
+
+  async function downloadAllDocuments() {
+    const downloadable = docs.filter((doc) => doc.file_url);
+    if (downloadable.length === 0) {
+      toast.info("This client has no downloadable documents.");
+      return;
+    }
+
+    try {
+      for (const doc of downloadable) {
+        const params = new URLSearchParams({ url: doc.file_url!, filename: doc.name });
+        const response = await fetch(`/api/document-download?${params.toString()}`);
+        if (!response.ok) throw new Error(`Could not download ${doc.name}`);
+        const objectUrl = URL.createObjectURL(await response.blob());
+        const anchor = document.createElement("a");
+        anchor.href = objectUrl;
+        anchor.download = doc.name;
+        document.body.appendChild(anchor);
+        anchor.click();
+        anchor.remove();
+        URL.revokeObjectURL(objectUrl);
+      }
+      toast.success(`Downloaded ${downloadable.length} document${downloadable.length === 1 ? "" : "s"}.`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not download client documents.");
+    }
+  }
+
   async function generateAiInsight() {
     if (!org) return;
     setAiLoading(true);
@@ -290,21 +325,22 @@ function ClientDetailPanel({ client, orders, onBack }: {
       const txSummary = txs.slice(0, 20).map(t =>
         `${new Date(t.date_time).toLocaleDateString("en-US", { month: "short", day: "numeric" })}: ${t.title} (${t.amount > 0 ? "+" : ""}${fmtFull(t.amount)})`
       ).join("\n");
-      const res = await fetch("/api/openai-chat", {
+      const res = await authenticatedApi("/api/openai-chat", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           messages: [{
             role: "user",
             content: `You are a CPA reviewing a client's financial data. Provide a concise 3–4 sentence professional insight for: ${fullName(client)} (${org.name ?? "Business"}).\n\nRevenue this month: ${fmtFull(revenue)}\nExpenses this month: ${fmtFull(expenses)}\nNet income: ${fmtFull(netCashFlow)}\nBusiness Power Score: ${bps}/100\nTax Readiness: ${taxReadiness}%\nRecent transactions:\n${txSummary}\n\nGive specific, actionable advice a CPA would tell this client.`,
           }],
-          model: "google/gemini-2.5-flash",
+          model: "openai/gpt-4o-mini",
+          use_live_context: false,
         }),
       });
+      if (!res.ok) throw new Error(await apiErrorMessage(res, "Unable to generate insight."));
       const json = await res.json();
       setAiInsight(json?.choices?.[0]?.message?.content ?? "Unable to generate insight.");
-    } catch {
-      setAiInsight("Failed to generate insight. Please try again.");
+    } catch (error) {
+      setAiInsight(error instanceof Error ? error.message : "Failed to generate insight. Please try again.");
     } finally {
       setAiLoading(false);
     }
@@ -332,13 +368,22 @@ function ClientDetailPanel({ client, orders, onBack }: {
           </button>
           <div className="flex flex-wrap items-center gap-2">
             <Button size="sm" className="h-8 gap-2 text-xs bg-indigo-600 hover:bg-indigo-700 text-white border-0"
-              onClick={() => navigate("/cpa/chat")}>
+              onClick={openClientChat}>
               <MessageSquare className="h-3.5 w-3.5" /> <span className="hidden sm:inline">Message Client</span><span className="sm:hidden">Message</span>
             </Button>
-            <Button size="sm" variant="outline" className="h-8 w-8 p-0 border-border/60">
-              <MoreHorizontal className="h-3.5 w-3.5" />
-            </Button>
-            <Button size="sm" variant="outline" className="h-7 gap-1.5 text-xs border-border/60">
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button size="sm" variant="outline" className="h-8 w-8 p-0 border-border/60" aria-label="More client actions">
+                  <MoreHorizontal className="h-3.5 w-3.5" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onClick={openClientChat}>Message client</DropdownMenuItem>
+                <DropdownMenuItem onClick={() => navigate("/cpa/orders")}>View client orders</DropdownMenuItem>
+                <DropdownMenuItem onClick={downloadAllDocuments}>Download documents</DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+            <Button size="sm" variant="outline" className="h-7 gap-1.5 text-xs border-border/60" onClick={downloadAllDocuments}>
               <Download className="h-3 w-3" /> <span className="hidden sm:inline">Download All</span><span className="sm:hidden">Download</span>
             </Button>
           </div>
@@ -346,9 +391,10 @@ function ClientDetailPanel({ client, orders, onBack }: {
 
         {/* ── Profile row ── */}
         <div className="flex items-start gap-3 px-3 pb-3 sm:gap-4 sm:px-5">
-          <div className="w-[60px] h-[60px] rounded-full bg-indigo-500/20 border-2 border-indigo-400/40 flex items-center justify-center text-indigo-400 font-bold text-xl shrink-0">
-            {initials(client)}
-          </div>
+          <Avatar className="h-[60px] w-[60px] border-2 border-indigo-400/40">
+            {client.img_url && <AvatarImage src={client.img_url} alt={`${fullName(client)} profile`} className="object-cover" />}
+            <AvatarFallback className="bg-indigo-500/20 text-xl font-bold text-indigo-400">{initials(client)}</AvatarFallback>
+          </Avatar>
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
               <h1 className="text-[17px] font-bold leading-tight">{fullName(client)}</h1>
@@ -1120,15 +1166,18 @@ export default function CpaClients() {
     },
   });
 
-  const clientIds = useMemo(() => [...new Set(orders.map(o => o.user_id))], [orders]);
+  const clientIds = useMemo(
+    () => [...new Set(orders.filter(o => isActiveCpaEngagement(o.status)).map(o => o.user_id))],
+    [orders],
+  );
 
   const [clientMap, setClientMap] = useState<Record<number, UserRow>>({});
   useEffect(() => {
-    const ids = [...new Set(orders.map(o => o.user_id))].filter(Boolean);
+    const ids = clientIds.filter(Boolean);
     if (!ids.length) return;
     supabase
       .from("users")
-      .select("id,first_name,last_name,email")
+        .select("id,first_name,last_name,email,img_url")
       .in("id", ids)
       .then(({ data, error }) => {
         if (error) { console.error("[CpaClients] users query error:", error.message); return; }
@@ -1137,7 +1186,7 @@ export default function CpaClients() {
         for (const u of data) m[u.id] = u;
         setClientMap(m);
       });
-  }, [orders]);
+  }, [clientIds]);
 
   const clients = useMemo(() =>
     clientIds.map(id => clientMap[id]).filter(Boolean) as UserRow[],
@@ -1202,7 +1251,7 @@ export default function CpaClients() {
               <div className="flex flex-col items-center justify-center py-12 px-4 text-center">
                 <Users className="h-8 w-8 text-muted-foreground/30 mb-3" />
                 <p className="text-sm text-muted-foreground">
-                  {clients.length === 0 ? "No clients yet. Clients appear when they place orders." : "No clients match your search."}
+                  {clients.length === 0 ? "No active clients yet. Clients appear after an engagement is accepted." : "No clients match your search."}
                 </p>
               </div>
             ) : (
@@ -1222,11 +1271,12 @@ export default function CpaClients() {
                         isSelected ? "bg-primary/10 border-l-2 border-l-primary" : "hover:bg-card/60 border-l-2 border-l-transparent"
                       }`}
                     >
-                      <div className={`w-9 h-9 rounded-xl flex items-center justify-center text-xs font-bold shrink-0 ${
-                        isSelected ? "bg-primary text-primary-foreground" : "bg-primary/15 text-primary"
-                      }`}>
-                        {initials(client)}
-                      </div>
+                      <Avatar className="h-9 w-9 rounded-xl">
+                        {client.img_url && <AvatarImage src={client.img_url} alt={`${fullName(client)} profile`} className="rounded-xl object-cover" />}
+                        <AvatarFallback className={`rounded-xl text-xs font-bold ${
+                          isSelected ? "bg-primary text-primary-foreground" : "bg-primary/15 text-primary"
+                        }`}>{initials(client)}</AvatarFallback>
+                      </Avatar>
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center justify-between gap-1">
                           <p className="text-xs font-semibold truncate">{fullName(client)}</p>
@@ -1260,9 +1310,10 @@ export default function CpaClients() {
           </Button>
           {selectedClient && !sidebarOpen && (
             <div className="flex items-center gap-2 ml-1">
-              <div className="w-6 h-6 rounded-lg bg-primary/15 flex items-center justify-center text-[10px] font-bold text-primary">
-                {initials(selectedClient)}
-              </div>
+              <Avatar className="h-6 w-6 rounded-lg">
+                {selectedClient.img_url && <AvatarImage src={selectedClient.img_url} alt={`${fullName(selectedClient)} profile`} className="rounded-lg object-cover" />}
+                <AvatarFallback className="rounded-lg bg-primary/15 text-[10px] font-bold text-primary">{initials(selectedClient)}</AvatarFallback>
+              </Avatar>
               <span className="text-xs font-medium">{fullName(selectedClient)}</span>
               {clients.length > 1 && <span className="text-xs text-muted-foreground">· {clients.length} clients total</span>}
             </div>

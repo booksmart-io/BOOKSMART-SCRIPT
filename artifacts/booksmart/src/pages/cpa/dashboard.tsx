@@ -10,6 +10,7 @@ import {
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from "recharts";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/hooks/use-auth";
+import { isActiveCpaEngagement } from "@/lib/route-access";
 import { toast } from "sonner";
 import { formatDistanceToNow } from "date-fns";
 
@@ -132,7 +133,10 @@ export default function CpaDashboard() {
     },
   });
 
-  const clientUserIds = useMemo(() => [...new Set(allOrders.map(o => o.user_id))], [allOrders]);
+  const clientUserIds = useMemo(
+    () => [...new Set(allOrders.filter(o => isActiveCpaEngagement(o.status)).map(o => o.user_id))],
+    [allOrders],
+  );
   const pendingCount  = allOrders.filter(o => o.status === "pending").length;
   const activeCount   = allOrders.filter(o => ["active", "in_progress", "in-progress"].includes(o.status)).length;
 
@@ -343,7 +347,7 @@ export default function CpaDashboard() {
   }, [recentTxs, orgs, clientUsers]);
 
   const handleCopyReferral = () => {
-    const link = `${window.location.origin}/signup?ref=${numericId}`;
+    const link = `${window.location.origin}/sign-up?ref=${numericId}`;
     navigator.clipboard.writeText(link)
       .then(() => toast.success("Referral link copied!"))
       .catch(() => toast.error("Could not copy link"));

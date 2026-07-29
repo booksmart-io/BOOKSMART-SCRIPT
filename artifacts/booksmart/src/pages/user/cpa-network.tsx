@@ -25,7 +25,7 @@ import {
   Search, Star, MessageSquare, Loader2, ShieldCheck, Heart,
   MapPin, ChevronDown, Users, BarChart2, Clock, Filter,
   Briefcase, BookOpen, TrendingUp, Building2, Landmark,
-  Globe, Leaf, ArrowRight, SlidersHorizontal,
+  Globe, Leaf, ArrowRight, SlidersHorizontal, Mail, Phone, Award, CalendarDays,
 } from "lucide-react";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -35,9 +35,12 @@ type CpaUser = {
   auth_id: string | null;
   email: string;
   first_name: string | null;
+  middle_name: string | null;
   last_name: string | null;
   img_url: string | null;
   phone_number: string | null;
+  license_number: string | null;
+  career_start_date: string | null;
   specialties: string[];
   state_focuses: string[];
   certifications: string[];
@@ -97,7 +100,7 @@ const US_STATES = [
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function fullName(cpa: CpaUser) {
-  const parts = [cpa.first_name, cpa.last_name].filter(Boolean).join(" ");
+  const parts = [cpa.first_name, cpa.middle_name, cpa.last_name].filter(Boolean).join(" ");
   return parts || cpa.email.split("@")[0];
 }
 
@@ -131,6 +134,61 @@ function cpaStates(cpa: CpaUser): string[] {
 
 function cpaBio(cpa: CpaUser) {
   return cpa.professional_bio?.trim() || FALLBACK_BIOS[det(cpa.id, FALLBACK_BIOS.length)];
+}
+
+function careerStarted(cpa: CpaUser) {
+  if (!cpa.career_start_date) return null;
+  const date = new Date(`${cpa.career_start_date}T00:00:00`);
+  return Number.isNaN(date.getTime()) ? cpa.career_start_date : date.toLocaleDateString(undefined, { month: "long", year: "numeric" });
+}
+
+function ProfileDetail({ icon: Icon, label, children }: { icon: typeof Mail; label: string; children: React.ReactNode }) {
+  return <div className="rounded-xl border border-border/50 bg-secondary/15 p-3">
+    <p className="mb-1 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground"><Icon className="h-3.5 w-3.5" /> {label}</p>
+    <div className="break-words text-sm font-medium">{children}</div>
+  </div>;
+}
+
+function CpaProfileDialog({ cpa, onClose, onHire, onChat }: { cpa: CpaUser; onClose: () => void; onHire: () => void; onChat: () => void }) {
+  const specs = cpaSpecialties(cpa);
+  const states = cpaStates(cpa);
+  const started = careerStarted(cpa);
+  return <Dialog open onOpenChange={open => !open && onClose()}>
+    <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
+      <DialogHeader>
+        <div className="flex flex-col items-center gap-4 text-center sm:flex-row sm:text-left">
+          <Avatar className="h-28 w-28 shrink-0 border-4 border-primary/20 shadow-md">
+            {cpa.img_url && <AvatarImage src={cpa.img_url} alt={`${fullName(cpa)} profile picture`} className="object-cover" />}
+            <AvatarFallback className="bg-primary/10 text-2xl font-bold text-primary">{initials(cpa)}</AvatarFallback>
+          </Avatar>
+          <div className="min-w-0">
+            <DialogTitle className="text-2xl">{fullName(cpa)}, CPA</DialogTitle>
+            <DialogDescription className="mt-1">{firmName(cpa)}</DialogDescription>
+            <div className="mt-2 flex flex-wrap justify-center gap-2 sm:justify-start">
+              <Badge className="gap-1"><ShieldCheck className="h-3 w-3" /> Verified CPA</Badge>
+              <Badge variant="secondary" className="gap-1"><Star className="h-3 w-3 fill-yellow-400 text-yellow-400" /> {cpaRating(cpa)} ({cpaReviews(cpa)} reviews)</Badge>
+            </div>
+          </div>
+        </div>
+      </DialogHeader>
+      <div className="space-y-5 py-2">
+        <section><h3 className="mb-2 font-semibold">About</h3><p className="whitespace-pre-wrap text-sm leading-6 text-muted-foreground">{cpaBio(cpa)}</p></section>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <ProfileDetail icon={Mail} label="Email"><a className="text-primary hover:underline" href={`mailto:${cpa.email}`}>{cpa.email}</a></ProfileDetail>
+          <ProfileDetail icon={Phone} label="Phone">{cpa.phone_number ? <a className="text-primary hover:underline" href={`tel:${cpa.phone_number}`}>{cpa.phone_number}</a> : "Not provided"}</ProfileDetail>
+          <ProfileDetail icon={Award} label="CPA License">{cpa.license_number || "Not provided"}</ProfileDetail>
+          <ProfileDetail icon={CalendarDays} label="Career Start">{started || "Not provided"}</ProfileDetail>
+        </div>
+        <section><h3 className="mb-2 font-semibold">Specialties</h3><div className="flex flex-wrap gap-2">{specs.map(item => <Badge key={item} variant="secondary">{item}</Badge>)}</div></section>
+        <section><h3 className="mb-2 font-semibold">States Served</h3><div className="flex flex-wrap gap-2">{states.map(item => <Badge key={item} variant="outline"><MapPin className="mr-1 h-3 w-3" />{item}</Badge>)}</div></section>
+        <section><h3 className="mb-2 font-semibold">Certifications</h3>{cpa.certifications.length ? <div className="flex flex-wrap gap-2">{cpa.certifications.map(item => <Badge key={item} variant="outline"><Award className="mr-1 h-3 w-3" />{item}</Badge>)}</div> : <p className="text-sm text-muted-foreground">No additional certifications listed.</p>}</section>
+      </div>
+      <DialogFooter className="gap-2 sm:gap-0">
+        <Button variant="outline" onClick={onChat}><MessageSquare className="mr-2 h-4 w-4" />Message</Button>
+        <Button onClick={onHire}>Hire {cpa.first_name || "CPA"}</Button>
+      </DialogFooter>
+    </DialogContent>
+  </Dialog>;
 }
 
 // ─── Hire Dialog ─────────────────────────────────────────────────────────────
@@ -314,6 +372,7 @@ export default function CpaNetwork() {
   const [selectedStates, setSelectedStates] = useState<string[]>([]);
   const [pricingFilter, setPricingFilter] = useState<string>("any");
   const [showAll, setShowAll]             = useState(false);
+  const [viewingCpa, setViewingCpa]       = useState<CpaUser | null>(null);
   const [hiringCpa, setHiringCpa]         = useState<CpaUser | null>(null);
 
   // ── Fetch CPAs ───────────────────────────────────────────────────────────────
@@ -323,7 +382,7 @@ export default function CpaNetwork() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from("users")
-        .select("id,auth_id,email,first_name,last_name,img_url,phone_number,specialties,state_focuses,certifications,professional_bio,verification_status")
+        .select("id,auth_id,email,first_name,middle_name,last_name,img_url,phone_number,license_number,career_start_date,specialties,state_focuses,certifications,professional_bio,verification_status")
         .eq("role", "cpa")
         .order("id", { ascending: true });
       if (error) throw error;
@@ -553,7 +612,7 @@ export default function CpaNetwork() {
                 key={cpa.id}
                 cpa={cpa}
                 isTopMatch={i === 0 && !hasFilters}
-                onViewProfile={() => setHiringCpa(cpa)}
+                onViewProfile={() => setViewingCpa(cpa)}
                 onChat={() => setLocation(`/user/chat?cpa_id=${cpa.id}`)}
               />
             ))}
@@ -581,6 +640,16 @@ export default function CpaNetwork() {
         </div>
       )}
 
+
+      {/* ── CPA profile dialog ── */}
+      {viewingCpa && (
+        <CpaProfileDialog
+          cpa={viewingCpa}
+          onClose={() => setViewingCpa(null)}
+          onHire={() => { setViewingCpa(null); setHiringCpa(viewingCpa); }}
+          onChat={() => setLocation(`/user/chat?cpa_id=${viewingCpa.id}`)}
+        />
+      )}
 
       {/* ── Hire dialog ── */}
       {hiringCpa && (

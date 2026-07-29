@@ -465,6 +465,12 @@ async function callExtractDocument(
 }
 
 const CURRENT_YEAR = new Date().getFullYear();
+const NEXT_FEDERAL_FILING_DEADLINE_YEAR = (() => {
+  const today = new Date();
+  const filingDeadline = new Date(today.getFullYear(), 3, 15, 23, 59, 59, 999);
+
+  return today <= filingDeadline ? today.getFullYear() : today.getFullYear() + 1;
+})();
 const YEARS = Array.from({ length: CURRENT_YEAR - 1959 }, (_, i) =>
   String(CURRENT_YEAR - i)
 );
@@ -2239,7 +2245,9 @@ export default function Tax() {
               <CardTitle className="text-lg">Next Deadline</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="text-3xl font-bold text-primary mb-1">Apr 15</div>
+              <div className="text-3xl font-bold text-primary mb-1">
+                Apr 15, {NEXT_FEDERAL_FILING_DEADLINE_YEAR}
+              </div>
               <p className="text-sm font-medium mb-4">
                 Federal Income Tax Return
               </p>
