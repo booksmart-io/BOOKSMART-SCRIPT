@@ -16,6 +16,7 @@ function getPendingEmail() {
 }
 
 export default function VerifyEmail() {
+  const [otp, setOtp] = useState("");
   const [loading, setLoading] = useState<"resend" | "check" | null>(null);
   const [, setLocation] = useLocation();
 
@@ -42,24 +43,37 @@ export default function VerifyEmail() {
     }
   };
 
-  const checkConfirmation = async () => {
+  const verifyCode = async () => {
+    const email = getPendingEmail();
+    const cleanOtp = otp.trim();
+    if (!email) {
+      toast.error("Your pending signup email was not found. Please sign up again.");
+      setLocation("/sign-up");
+      return;
+    }
+    if (!/^\d{6}$/.test(cleanOtp)) {
+      toast.error("Enter the 6-digit code from your email.");
+      return;
+    }
+
     setLoading("check");
     try {
-      await supabase.auth.refreshSession();
-      const { data: { user } } = await supabase.auth.getUser();
+      const { data, error } = await supabase.auth.verifyOtp({
+        email,
+        token: cleanOtp,
+        type: "email",
+      });
+      if (error) throw error;
+
+      const user = data.user;
 
       if (!user) {
-        setLocation("/login");
-        return;
+        throw new Error("The verification code could not be confirmed.");
       }
 
-      if (user.email_confirmed_at) {
-        window.localStorage.removeItem("booksmart_pending_signup_email");
-        toast.success("Your email has been verified.");
-        setLocation(routeForRole(user.user_metadata?.role));
-      } else {
-        toast.info("Your email is still not verified. Please check your inbox.");
-      }
+      window.localStorage.removeItem("booksmart_pending_signup_email");
+      toast.success("Your email has been verified.");
+      setLocation(routeForRole(user.user_metadata?.role));
     } catch (error: any) {
       toast.error(error.message || "Failed to check verification status");
     } finally {
@@ -77,15 +91,26 @@ export default function VerifyEmail() {
           <CardHeader>
             <CardTitle className="text-2xl font-bold text-center">Verify Email</CardTitle>
             <CardDescription className="text-center">
-              A confirmation link has been sent to {getPendingEmail() || "your email"}.
+              Enter the 6-digit code sent to {getPendingEmail() || "your email"}.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
+            <input
+              type="text"
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              aria-label="Verification code"
+              placeholder="000000"
+              value={otp}
+              onChange={(event) => setOtp(event.target.value.replace(/\D/g, "").slice(0, 6))}
+              maxLength={6}
+              className="flex h-12 w-full rounded-md border border-input bg-background px-3 py-2 text-center text-xl tracking-[0.35em] ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+            />
+            <Button className="w-full" onClick={verifyCode} disabled={loading !== null || otp.length !== 6}>
+              {loading === "check" ? "Verifying..." : "Verify Email"}
+            </Button>
             <Button className="w-full" onClick={resendEmail} disabled={loading !== null}>
               {loading === "resend" ? "Sending..." : "Resend Email"}
-            </Button>
-            <Button className="w-full" variant="outline" onClick={checkConfirmation} disabled={loading !== null}>
-              {loading === "check" ? "Checking..." : "I have confirmed"}
             </Button>
             <p className="text-center text-sm text-muted-foreground">
               Please check your inbox and spam folder if you do not see the email.

@@ -20,6 +20,7 @@ import financialStatementsRouter from "./financial-statements";
 import businessDocumentRouter from "./business-document";
 import avatarRouter from "./avatar";
 import cpaOrdersRouter from "./cpa-orders";
+import authProfileRouter from "./auth-profile";
 
 const router: IRouter = Router();
 
@@ -44,5 +45,6 @@ router.use(financialStatementsRouter);
 router.use(businessDocumentRouter);
 router.use(avatarRouter);
 router.use(cpaOrdersRouter);
+router.use(authProfileRouter);
 
 export default router;

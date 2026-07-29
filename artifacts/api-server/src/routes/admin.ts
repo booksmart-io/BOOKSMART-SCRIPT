@@ -15,6 +15,7 @@ function getAdminClient() {
 
 // All routes below require a verified Supabase session AND users.role === "admin".
 router.use("/admin/accounts", requireAuth, requireAdmin);
+router.use("/admin/users", requireAuth, requireAdmin);
 router.use("/admin/set-token-balance", requireAuth, requireAdmin);
 router.use("/admin/set-plan", requireAuth, requireAdmin);
 router.use("/admin/cpas", requireAuth, requireAdmin);
@@ -208,6 +209,69 @@ router.post("/admin/set-plan", async (req, res) => {
     const code = e && typeof e === "object" && "code" in e ? String((e as { code?: unknown }).code) : undefined;
     console.error("[admin/set-plan]", { message, details, hint, code });
     res.status(502).json({ error: "admin_set_plan_error", message, details, hint, code });
+  }
+});
+
+// Permanently deletes an ordinary user from both the application database and
+// Supabase Auth. Database-owned records must be protected by ON DELETE CASCADE
+// or ON DELETE SET NULL constraints; otherwise this operation fails without
+// deleting the Auth identity.
+router.delete("/admin/users/:userId", async (req, res) => {
+  const userId = Number(req.params["userId"]);
+  if (!Number.isSafeInteger(userId) || userId <= 0) {
+    res.status(400).json({ error: "invalid_user_id", message: "A valid user ID is required" });
+    return;
+  }
+
+  const admin = getAdminClient();
+  try {
+    const { data: target, error: lookupError } = await admin
+      .from("users")
+      .select("id,auth_id,email,role")
+      .eq("id", userId)
+      .maybeSingle();
+    if (lookupError) throw lookupError;
+    if (!target) {
+      res.status(404).json({ error: "user_not_found", message: "User not found" });
+      return;
+    }
+    if (target.auth_id === req.supabaseUserId) {
+      res.status(409).json({ error: "cannot_delete_self", message: "You cannot delete your own administrator account" });
+      return;
+    }
+    if (target.role !== "user") {
+      res.status(403).json({ error: "unsupported_role", message: "Only ordinary user accounts can be deleted here" });
+      return;
+    }
+    if (!target.auth_id) {
+      res.status(409).json({ error: "missing_auth_identity", message: "This user is not linked to a Supabase Auth identity" });
+      return;
+    }
+
+    // Delete the database profile first. If a restrictive foreign key exists,
+    // the request stops here and the user keeps their working login.
+    const { error: profileDeleteError } = await admin.from("users").delete().eq("id", userId);
+    if (profileDeleteError) throw profileDeleteError;
+
+    const { error: authDeleteError } = await admin.auth.admin.deleteUser(target.auth_id as string);
+    if (authDeleteError) {
+      console.error("[admin/delete-user] auth cleanup failed", {
+        userId,
+        authId: target.auth_id,
+        message: authDeleteError.message,
+      });
+      res.status(502).json({
+        error: "auth_delete_failed",
+        message: "Application data was deleted, but the authentication identity could not be removed",
+      });
+      return;
+    }
+
+    res.json({ ok: true, deletedUserId: userId });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error("[admin/delete-user]", { userId, message });
+    res.status(502).json({ error: "admin_delete_user_error", message });
   }
 });
 

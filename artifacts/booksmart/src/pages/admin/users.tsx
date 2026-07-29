@@ -11,9 +11,9 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
+  Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter,
 } from "@/components/ui/dialog";
-import { Search, Loader2, UserCircle2, Settings2 } from "lucide-react";
+import { Search, Loader2, UserCircle2, Settings2, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 type Account = {
@@ -51,6 +51,8 @@ export default function AdminUsers() {
   const [editingAccount, setEditingAccount] = useState<Account | null>(null);
   const [editTokens, setEditTokens] = useState("");
   const [editTier, setEditTier] = useState<"free" | "plus" | "pro">("free");
+  const [deletingAccount, setDeletingAccount] = useState<Account | null>(null);
+  const [deleteConfirmation, setDeleteConfirmation] = useState("");
   const qc = useQueryClient();
 
   const { data: accounts = [], isLoading } = useQuery<Account[]>({
@@ -118,6 +120,26 @@ export default function AdminUsers() {
       !search ||
       `${u.firstName ?? ""} ${u.lastName ?? ""} ${u.email}`.toLowerCase().includes(search.toLowerCase());
     return matchesSearch;
+  });
+
+  const deleteAccount = useMutation({
+    mutationFn: async () => {
+      if (!deletingAccount) return;
+      const headers = await authHeaders();
+      const res = await fetch(`/api/admin/users/${deletingAccount.id}`, { method: "DELETE", headers });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body?.message ?? "Failed to delete account");
+      }
+    },
+    onSuccess: () => {
+      toast.success("User account permanently deleted.");
+      qc.invalidateQueries({ queryKey: ["admin_accounts"] });
+      qc.invalidateQueries({ queryKey: ["admin_all_users"] });
+      setDeletingAccount(null);
+      setDeleteConfirmation("");
+    },
+    onError: (e: Error) => toast.error(e.message || "Failed to delete account"),
   });
 
   const roleColor: Record<string, string> = {
@@ -201,9 +223,19 @@ export default function AdminUsers() {
                     </TableCell>
                     <TableCell className="font-medium text-primary">{u.tokenBalance ?? 0}</TableCell>
                     <TableCell className="text-right">
-                      <Button size="sm" variant="outline" className="min-h-10 gap-1.5" onClick={() => openEdit(u)}>
-                        <Settings2 className="h-3.5 w-3.5" /> Manage
-                      </Button>
+                      <div className="flex justify-end gap-2">
+                        <Button size="sm" variant="outline" className="min-h-10 gap-1.5" onClick={() => openEdit(u)}>
+                          <Settings2 className="h-3.5 w-3.5" /> Manage
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="min-h-10 gap-1.5 border-destructive/50 text-destructive hover:bg-destructive hover:text-destructive-foreground"
+                          onClick={() => { setDeletingAccount(u); setDeleteConfirmation(""); }}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" /> Delete
+                        </Button>
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))}
@@ -261,6 +293,55 @@ export default function AdminUsers() {
             <Button variant="outline" onClick={() => setEditingAccount(null)}>Cancel</Button>
             <Button onClick={() => savePlanAndTokens.mutate()} disabled={savePlanAndTokens.isPending}>
               {savePlanAndTokens.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : "Save Changes"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={!!deletingAccount}
+        onOpenChange={(open) => {
+          if (!open && !deleteAccount.isPending) {
+            setDeletingAccount(null);
+            setDeleteConfirmation("");
+          }
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete user permanently?</DialogTitle>
+            <DialogDescription>
+              This permanently removes the user account and its linked login. This action cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          {deletingAccount && (
+            <div className="space-y-4">
+              <div className="rounded-md border border-destructive/30 bg-destructive/5 p-3">
+                <p className="font-medium">{`${deletingAccount.firstName ?? ""} ${deletingAccount.lastName ?? ""}`.trim() || "Unnamed user"}</p>
+                <p className="break-all text-sm text-muted-foreground">{deletingAccount.email}</p>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="delete-user-confirmation">
+                  Type <span className="font-semibold">{deletingAccount.email}</span> to confirm
+                </Label>
+                <Input
+                  id="delete-user-confirmation"
+                  autoComplete="off"
+                  value={deleteConfirmation}
+                  onChange={(e) => setDeleteConfirmation(e.target.value)}
+                />
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" disabled={deleteAccount.isPending} onClick={() => setDeletingAccount(null)}>Cancel</Button>
+            <Button
+              variant="destructive"
+              disabled={deleteAccount.isPending || !deletingAccount || deleteConfirmation !== deletingAccount.email}
+              onClick={() => deleteAccount.mutate()}
+            >
+              {deleteAccount.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Trash2 className="mr-2 h-4 w-4" />}
+              Delete permanently
             </Button>
           </DialogFooter>
         </DialogContent>

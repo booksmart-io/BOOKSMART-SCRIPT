@@ -141,7 +141,9 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
         .from("users")
         .select("id, auth_id, email, role, first_name, middle_name, last_name, phone_number, token_balance, img_url, verification_status")
         .eq("auth_id", authUuid)
-        .single();
+        .order("id", { ascending: true })
+        .limit(1)
+        .maybeSingle();
 
       if (!appUserError && appUser) {
         setRequiresLegalConsent(false);
@@ -209,7 +211,6 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       // (and therefore the org lookup) resolves on this same load instead
       // of silently staying null.
       const fullName: string = meta.full_name ?? meta.name ?? "";
-      const [firstName, ...rest] = fullName.split(" ").filter(Boolean);
 
       const isOAuthUser = authUser?.app_metadata?.provider
         && authUser.app_metadata.provider !== "email";
@@ -228,68 +229,31 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       }
       setRequiresLegalConsent(false);
 
-      const { data: createdUser, error: createError } = await supabase
-        .from("users")
-        .insert({
-          auth_id: authUuid,
-          email: authUser?.email ?? "",
-          role: (meta.role as UserProfile["role"]) ?? "user",
-          first_name: firstName ?? "",
-          last_name: rest.join(" "),
-          phone_number: meta.phone ?? "",
-        })
-        .select("id, email, role, first_name, last_name, phone_number, token_balance, verification_status")
-        .single();
-
-      if (!createError && createdUser) {
-        setProfile({
-          id: authUuid,
-          numericId: createdUser.id as number,
-          email: createdUser.email ?? "",
-          full_name: fullName || createdUser.email || "",
-          role: (createdUser.role as UserProfile["role"]) ?? "user",
-          token_balance: createdUser.token_balance ?? 0,
-          phone: createdUser.phone_number,
-          img_url: null,
-          verification_status: createdUser.verification_status ?? null,
+      // Provision through the service-role API only after Auth confirms the
+      // email. Pending signups have no session and can never reach this call.
+      const { data: { session: currentSession } } = await supabase.auth.getSession();
+      if (currentSession?.access_token) {
+        const response = await fetch("/api/auth/ensure-profile", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${currentSession.access_token}` },
         });
-        return;
-      }
-
-      if (createError) {
-        console.warn("fetchProfile: auto-provisioning users row failed:", createError.message, createError.code);
-
-        // 23505 = unique_violation — another tab/request already created the
-        // row for this auth_id between our lookup and insert. Just re-fetch it.
-        if (createError.code === "23505") {
-          const { data: existingUser, error: refetchError } = await supabase
-            .from("users")
-            .select("id, email, role, first_name, last_name, phone_number, token_balance, verification_status")
-            .eq("auth_id", authUuid)
-            .single();
-          if (!refetchError && existingUser) {
-            setProfile({
-              id: authUuid,
-              numericId: existingUser.id as number,
-              email: existingUser.email ?? "",
-              full_name: fullName || existingUser.email || "",
-              role: (existingUser.role as UserProfile["role"]) ?? "user",
-              token_balance: existingUser.token_balance ?? 0,
-              phone: existingUser.phone_number,
-              img_url: null,
-              verification_status: existingUser.verification_status ?? null,
-            });
-            return;
-          }
+        const body = await response.json().catch(() => ({})) as {
+          profile?: Parameters<typeof setAppUserProfile>[1];
+          message?: string;
+        };
+        if (response.ok && body.profile) {
+          setAppUserProfile(authUuid, body.profile);
+          return;
         }
+        console.warn("fetchProfile: verified profile provisioning failed:", body.message ?? response.statusText);
       }
 
-      // Last resort: degrade to a metadata-only profile (numericId null).
-      // Dashboard/org features will be limited until the users row exists.
+      // Do not fall back to a browser-side insert. A failed server provision
+      // must be retried instead of bypassing the confirmation guarantee.
       setProfile({
         id: authUuid,
         numericId: null,
-        email: authUser?.email ?? "",
+        email: authEmail,
         full_name: fullName,
         role: (meta.role as UserProfile["role"]) ?? "user",
         token_balance: meta.token_balance ?? 0,
@@ -297,6 +261,12 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
         img_url: null,
         verification_status: (meta.verification_status as string | undefined) ?? null,
       });
+      return;
+
+        // 23505 = unique_violation — another tab/request already created the
+        // row for this auth_id between our lookup and insert. Just re-fetch it.
+      // Last resort: degrade to a metadata-only profile (numericId null).
+      // Dashboard/org features will be limited until the users row exists.
     } catch (e) {
       console.error("fetchProfile error:", e);
     } finally {

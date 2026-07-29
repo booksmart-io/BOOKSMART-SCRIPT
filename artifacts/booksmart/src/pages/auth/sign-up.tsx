@@ -62,40 +62,39 @@ export default function SignUp() {
     setLoading(true);
     try {
       const cleanEmail = email.trim();
+
+      // A deleted or expired account can leave a stale token in local storage.
+      // Clear only this browser's session before creating a new account so the
+      // router cannot mistake the previous, confirmed user for the new signup.
+      await supabase.auth.signOut({ scope: "local" });
+
       const { error: signUpError, data } = await supabase.auth.signUp({
         email: cleanEmail,
         password,
         options: {
-          data: { role, ...createLegalConsentMetadata() },
+          data: {
+            role,
+            verification_status: role === "cpa" ? "pending" : null,
+            referred_by_cpa_id: role === "user" ? referralCpaId : null,
+            ...createLegalConsentMetadata(),
+          },
         },
       });
 
       if (signUpError) throw signUpError;
 
-      if (data.user) {
-        const { error: userRowError } = await supabase.from("users").insert({
-          auth_id: data.user.id,
-          email: cleanEmail,
-          role,
-          first_name: "",
-          last_name: "",
-          phone_number: "",
-          verification_status: role === "cpa" ? "pending" : null,
-          referred_by_cpa_id: role === "user" ? referralCpaId : null,
-        });
-
-        if (userRowError && userRowError.code !== "23505") {
-          console.warn("sign-up: users row insert failed:", userRowError.message, userRowError.code);
-        }
+      // Supabase intentionally returns an obfuscated user with no identities
+      // when email enumeration protection encounters an existing account.
+      // Do not treat that response as a newly confirmed signup.
+      if (data.user && Array.isArray(data.user.identities) && data.user.identities.length === 0) {
+        throw new Error("An account with this email already exists. Sign in or reset your password instead.");
       }
 
-      toast.success("Account created successfully.");
+      toast.success("We sent a 6-digit verification code to your email.");
       window.localStorage.setItem("booksmart_pending_signup_email", cleanEmail);
-      if (data.user?.email_confirmed_at) {
-        setLocation(role === "cpa" ? "/cpa/profile" : "/user/profile");
-      } else {
-        setLocation("/verify-email");
-      }
+      // Always show the verification step. Whether confirmation is required is
+      // controlled by Supabase, but onboarding must never bypass this screen.
+      setLocation("/verify-email");
     } catch (error: any) {
       toast.error(error.message || "Failed to create account");
     } finally {
