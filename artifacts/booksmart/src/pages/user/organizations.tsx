@@ -25,7 +25,7 @@ import { checkAddBusiness } from "@/lib/plan-limits";
 import BusinessSurveyDialog from "@/components/business-survey-dialog";
 import BusinessSetupDialog from "@/components/business-setup-dialog";
 import { useActiveOrganizationId, clearStoredActiveOrganizationId } from "@/lib/active-organization";
-import { BUSINESS_INDUSTRIES } from "@/lib/business-information-options";
+import { BUSINESS_ENTITY_TYPES, BUSINESS_INDUSTRIES } from "@/lib/business-information-options";
 
 type StateRow = { id: number; name: string; code: string };
 
@@ -43,16 +43,6 @@ type OrgRow = {
   email: string;
   website: string | null;
 };
-
-const ORG_TYPES = [
-  "Sole Proprietorship",
-  "LLC (Single-member)",
-  "LLC (Multi-member)",
-  "Partnership",
-  "S-Corporation",
-  "C-Corporation",
-  "Nonprofit",
-];
 
 const EMPTY_FORM = {
   name: "",
@@ -332,7 +322,7 @@ export default function Organizations() {
                 <Select value={form.org_type} onValueChange={(v) => setForm((f) => ({ ...f, org_type: v }))}>
                   <SelectTrigger><SelectValue placeholder="Select type" /></SelectTrigger>
                   <SelectContent>
-                    {[...ORG_TYPES].sort((a, b) => a.localeCompare(b)).map((t) => <SelectItem key={t} value={t}>{t}</SelectItem>)}
+                    {BUSINESS_ENTITY_TYPES.map((type) => <SelectItem key={type} value={type}>{type}</SelectItem>)}
                   </SelectContent>
                 </Select>
               </div>

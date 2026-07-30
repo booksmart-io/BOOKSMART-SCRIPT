@@ -129,7 +129,9 @@ export default function AdminUsers() {
       const res = await fetch(`/api/admin/users/${deletingAccount.id}`, { method: "DELETE", headers });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
-        throw new Error(body?.message ?? "Failed to delete account");
+        const message = typeof body?.message === "string" ? body.message : "Failed to delete account";
+        const details = typeof body?.details === "string" ? body.details : undefined;
+        throw new Error(details && details !== message ? `${message} (${details})` : message);
       }
     },
     onSuccess: () => {
