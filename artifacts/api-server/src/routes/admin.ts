@@ -5,12 +5,12 @@ import { requireAdmin } from "../middlewares/require-admin";
 import { PLAN_LIMITS, getUserTier, type PlanTier } from "../lib/plan-limits";
 
 const router = Router();
-const SUPABASE_URL = "https://pvppwmkswnluidlwnnck.supabase.co";
-
 function getAdminClient() {
+  const supabaseUrl = process.env["SUPABASE_URL"];
   const serviceRoleKey = process.env["SUPABASE_SERVICE_ROLE_KEY"];
+  if (!supabaseUrl) throw new Error("SUPABASE_URL is not set");
   if (!serviceRoleKey) throw new Error("SUPABASE_SERVICE_ROLE_KEY is not set");
-  return createClient(SUPABASE_URL, serviceRoleKey, { auth: { persistSession: false } });
+  return createClient(supabaseUrl, serviceRoleKey, { auth: { persistSession: false } });
 }
 
 type AdminErrorDetails = {
@@ -281,6 +281,20 @@ router.delete("/admin/users/:userId", async (req, res) => {
       return;
     }
 
+    // This ledger is keyed directly to auth.users rather than public.users,
+    // so deleting the application profile does not cascade into it on older
+    // databases. Remove it explicitly before deleting the Auth identity.
+    const { error: tokenDeleteError } = await admin
+      .from("token_transactions")
+      .delete()
+      .eq("user_id", target.auth_id);
+    if (tokenDeleteError) {
+      const error = adminErrorDetails(tokenDeleteError, "Unable to delete the user's token history");
+      console.error("[admin/delete-user] token cleanup failed", { userId, ...error });
+      res.status(409).json({ error: "token_delete_failed", ...error });
+      return;
+    }
+
     // Delete the database profile before Auth. Cascading relationships remove
     // owned data atomically. If a restrictive foreign key still exists, the
     // user keeps their working login and the response names the constraint.
@@ -294,14 +308,18 @@ router.delete("/admin/users/:userId", async (req, res) => {
 
     const { error: authDeleteError } = await admin.auth.admin.deleteUser(target.auth_id as string);
     if (authDeleteError) {
+      const error = adminErrorDetails(authDeleteError, "Unable to remove the user's authentication identity");
       console.error("[admin/delete-user] auth cleanup failed", {
         userId,
         authId: target.auth_id,
-        message: authDeleteError.message,
+        ...error,
       });
       res.status(502).json({
         error: "auth_delete_failed",
         message: "Application data was deleted, but the authentication identity could not be removed",
+        details: error.message,
+        ...(error.code ? { code: error.code } : {}),
+        ...(error.hint ? { hint: error.hint } : {}),
       });
       return;
     }
