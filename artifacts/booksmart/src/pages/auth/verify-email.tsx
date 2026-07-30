@@ -109,7 +109,7 @@ export default function VerifyEmail() {
             <Button className="w-full" onClick={verifyCode} disabled={loading !== null || otp.length !== 6}>
               {loading === "check" ? "Verifying..." : "Verify Email"}
             </Button>
-            <Button className="w-full" onClick={resendEmail} disabled={loading !== null}>
+            <Button variant="secondary" className="w-full" onClick={resendEmail} disabled={loading !== null}>
               {loading === "resend" ? "Sending..." : "Resend Email"}
             </Button>
             <p className="text-center text-sm text-muted-foreground">

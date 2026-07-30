@@ -26,6 +26,7 @@ import BusinessSurveyDialog from "@/components/business-survey-dialog";
 import BusinessSetupDialog from "@/components/business-setup-dialog";
 import { useActiveOrganizationId, clearStoredActiveOrganizationId } from "@/lib/active-organization";
 import { BUSINESS_ENTITY_TYPES, BUSINESS_INDUSTRIES } from "@/lib/business-information-options";
+import { normalizeEin } from "@/lib/business-information-schema";
 
 type StateRow = { id: number; name: string; code: string };
 
@@ -139,6 +140,8 @@ export default function Organizations() {
       if (!form.name.trim()) throw new Error("Business name is required");
       if (!form.org_type) throw new Error("Business type is required");
       if (!form.ein_tin.trim()) throw new Error("EIN / TIN is required");
+      const normalizedEin = normalizeEin(form.ein_tin);
+      if (!normalizedEin) throw new Error("Enter a valid 9-digit EIN in the format 12-3456789.");
       if (!form.state) throw new Error("State is required");
       if (form.phone.trim() && !isValidUsPhone(form.phone)) throw new Error("Enter a valid 10-digit U.S. phone number.");
 
@@ -146,7 +149,7 @@ export default function Organizations() {
         name: form.name.trim(),
         org_type: form.org_type,
         industry: form.industry.trim(),
-        ein_tin: form.ein_tin.trim(),
+        ein_tin: normalizedEin,
         state: Number(form.state),
         street: form.street.trim(),
         city: form.city.trim(),

@@ -26,6 +26,7 @@ export default function SignUp() {
   const referralCpaId = referralParam && Number.isFinite(Number(referralParam)) && Number(referralParam) > 0
     ? Number(referralParam)
     : null;
+  const passwordMeetsRequirements = password.length >= 8 && /[A-Za-z]/.test(password) && /\d/.test(password);
 
   const handleSignUp = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -42,8 +43,8 @@ export default function SignUp() {
       toast.error("Enter your password");
       return;
     }
-    if (password.length < 6) {
-      toast.error("Password must be at least 6 characters");
+    if (!passwordMeetsRequirements) {
+      toast.error("Password must be at least 8 characters and include a letter and a number");
       return;
     }
     if (!confirmPassword) {
@@ -139,7 +140,8 @@ export default function SignUp() {
                   onChange={(e) => setPassword(e.target.value)}
                   autoComplete="new-password"
                   required
-                  minLength={6}
+                  minLength={8}
+                  aria-describedby="password-requirements"
                   className="pr-10"
                 />
                 <button
@@ -151,6 +153,12 @@ export default function SignUp() {
                   {showPassword ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
                 </button>
               </div>
+              <p
+                id="password-requirements"
+                className={`text-xs ${password.length > 0 && !passwordMeetsRequirements ? "text-amber-300" : "text-muted-foreground"}`}
+              >
+                Use at least 8 characters with one letter and one number.
+              </p>
             </div>
 
             <div className="space-y-2">
@@ -164,7 +172,7 @@ export default function SignUp() {
                   onChange={(e) => setConfirmPassword(e.target.value)}
                   autoComplete="new-password"
                   required
-                  minLength={6}
+                  minLength={8}
                   className="pr-10"
                 />
                 <button

@@ -31,6 +31,7 @@ import {
 import {
   firstBusinessInformationError,
   cpaQuestionVisibility,
+  formatEinInput,
   validateBusinessInformation,
   type BusinessInformationFormData,
 } from "@/lib/business-information-schema";
@@ -360,7 +361,7 @@ export default function Profile() {
     const fieldsByStep: Array<Array<keyof typeof errors>> = [
       ["legalName", "entityType", "industry", "yearEstablished", "website", "businessEmail", "businessPhone"],
       ["state", "zip", "ownershipPercent"],
-      ["einTin"],
+      ["einTin", "currentCpa", "currentCpaCompany", "currentCpaPhone"],
     ];
     return firstBusinessInformationError(Object.fromEntries(
       fieldsByStep[businessStep].filter((key) => errors[key]).map((key) => [key, errors[key]]),
@@ -442,6 +443,11 @@ export default function Profile() {
       setActiveOrgId(orgId);
       if (created) window.sessionStorage.setItem(profileSurveyKey, String(orgId));
       toast.success(created ? "Profile and business saved. Continue with the business survey." : "Profile updated successfully.");
+      // Prevent AuthGuard from redirecting straight back to the profile page
+      // while its previously cached zero-organization result is refetching.
+      qc.setQueryData<number>(["auth_guard_organization_count", numericId], (current) =>
+        Math.max(current ?? 0, 1),
+      );
       qc.invalidateQueries({ queryKey: ["profile_user", numericId] });
       qc.invalidateQueries({ queryKey: ["profile_org", numericId] });
       qc.invalidateQueries({ queryKey: ["user_org", numericId] });
@@ -674,7 +680,7 @@ export default function Profile() {
                       <TextField label="Ownership Percentage" value={ownershipPercent} onChange={setOwnershipPercent} type="number" hideLabel />
                     </div>
                     <div className="min-w-0 xl:col-span-2">
-                      <AdditionalOwnersInput value={additionalOwners} onChange={setAdditionalOwners} />
+                      <AdditionalOwnersInput primaryPercentage={ownershipPercent} value={additionalOwners} onChange={setAdditionalOwners} />
                     </div>
                   </div>
                 )}
@@ -682,7 +688,16 @@ export default function Profile() {
                 {businessStep === 2 && (
                   <div className="grid min-w-0 gap-4 xl:grid-cols-2">
                     <p className="text-sm text-muted-foreground xl:col-span-2">Provide the identifiers used to match the business with its registration and tax records.</p>
-                    <TextField label="EIN / TIN *" value={einTin} onChange={setEinTin} hideLabel />
+                    <TextField
+                      label="EIN / TIN *"
+                      value={einTin}
+                      onChange={(value) => setEinTin(formatEinInput(value))}
+                      placeholder="12-3456789"
+                      helperText="Enter the 9-digit EIN shown on your IRS letter (example: 12-3456789)."
+                      inputMode="numeric"
+                      maxLength={10}
+                      hideLabel
+                    />
                     <SelectField
                       label="State of Incorporation"
                       value={stateIncorporation}
@@ -698,9 +713,9 @@ export default function Profile() {
                       <SelectField label="Do you currently have a CPA?" value={hasCpa} onChange={setHasCpa} options={[{ value: "yes", label: "Yes" }, { value: "no", label: "No" }]} placeholder="Select Yes or No" />
                       {cpaVisibility.showCurrentCpa && (
                         <div className="grid min-w-0 gap-4 xl:grid-cols-3">
-                          <TextField label="CPA Name (optional)" value={currentCpa} onChange={setCurrentCpa} hideLabel />
-                          <TextField label="CPA Company (optional)" value={currentCpaCompany} onChange={setCurrentCpaCompany} hideLabel />
-                          <PhoneField label="CPA Phone Number (optional)" value={currentCpaPhone} onChange={setCurrentCpaPhone} />
+                          <TextField label="CPA Name *" value={currentCpa} onChange={setCurrentCpa} hideLabel />
+                          <TextField label="CPA Company *" value={currentCpaCompany} onChange={setCurrentCpaCompany} hideLabel />
+                          <PhoneField label="CPA Phone Number *" value={currentCpaPhone} onChange={setCurrentCpaPhone} />
                         </div>
                       )}
                       {cpaVisibility.showCpaMatch && (
@@ -741,12 +756,20 @@ function TextField({
   value,
   onChange,
   type = "text",
+  placeholder,
+  helperText,
+  inputMode,
+  maxLength,
   hideLabel = false,
 }: {
   label: string;
   value: string;
   onChange: (value: string) => void;
   type?: string;
+  placeholder?: string;
+  helperText?: string;
+  inputMode?: React.HTMLAttributes<HTMLInputElement>["inputMode"];
+  maxLength?: number;
   hideLabel?: boolean;
 }) {
   const id = label.toLowerCase().replace(/[^a-z0-9]+/g, "-");
@@ -757,10 +780,14 @@ function TextField({
         id={id}
         type={type}
         value={value}
-        placeholder={label}
+        placeholder={placeholder ?? label}
+        inputMode={inputMode}
+        maxLength={maxLength}
+        aria-describedby={helperText ? `${id}-help` : undefined}
         onChange={(event) => onChange(event.target.value)}
         className="h-12 min-w-0 bg-card text-base"
       />
+      {helperText && <p id={`${id}-help`} className="text-xs text-muted-foreground">{helperText}</p>}
     </div>
   );
 }

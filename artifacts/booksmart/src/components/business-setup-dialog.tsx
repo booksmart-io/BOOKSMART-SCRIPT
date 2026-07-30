@@ -20,6 +20,7 @@ import {
 import {
   firstBusinessInformationError,
   cpaQuestionVisibility,
+  formatEinInput,
   validateBusinessInformation,
   type BusinessInformationFormData,
 } from "@/lib/business-information-schema";
@@ -151,7 +152,7 @@ export default function BusinessSetupDialog({
     const fieldsByStep: Array<Array<keyof typeof errors>> = [
       ["legalName", "entityType", "industry", "yearEstablished", "website", "businessEmail", "businessPhone"],
       ["state", "zip", "ownershipPercent"],
-      ["einTin"],
+      ["einTin", "currentCpa", "currentCpaCompany", "currentCpaPhone"],
     ];
     return firstBusinessInformationError(Object.fromEntries(
       fieldsByStep[step].filter((key) => errors[key]).map((key) => [key, errors[key]]),
@@ -274,7 +275,7 @@ export default function BusinessSetupDialog({
                 <Field label="Ownership percentage"><Input type="number" min="0" max="100" value={form.ownershipPercent} onChange={(e) => update("ownershipPercent", e.target.value)} /></Field>
               </div>
               <div className="min-w-0 lg:col-span-2">
-                <AdditionalOwnersInput value={form.additionalOwners} onChange={(value) => update("additionalOwners", value)} />
+                <AdditionalOwnersInput primaryPercentage={form.ownershipPercent} value={form.additionalOwners} onChange={(value) => update("additionalOwners", value)} />
               </div>
             </div>
           )}
@@ -282,7 +283,17 @@ export default function BusinessSetupDialog({
           {step === 2 && (
             <div className="grid min-w-0 gap-4 lg:grid-cols-2">
               <p className="text-sm text-muted-foreground lg:col-span-2">Provide the identifiers used to match the business with its registration and tax records.</p>
-              <Field label="EIN / Tax ID *"><Input value={form.einTin} onChange={(e) => update("einTin", e.target.value)} placeholder="12-3456789" /></Field>
+              <Field label="EIN / Tax ID *">
+                <Input
+                  value={form.einTin}
+                  onChange={(e) => update("einTin", formatEinInput(e.target.value))}
+                  placeholder="12-3456789"
+                  inputMode="numeric"
+                  maxLength={10}
+                  aria-describedby="business-ein-help"
+                />
+                <p id="business-ein-help" className="text-xs text-muted-foreground">Enter the 9-digit EIN shown on your IRS letter (example: 12-3456789).</p>
+              </Field>
               <Field label="State of incorporation"><SelectField value={form.stateIncorporation} onChange={(v) => update("stateIncorporation", v)} options={states.map((s) => ({ value: s.name, label: s.name }))} placeholder="Select state" /></Field>
               <div className="min-w-0 space-y-4 rounded-lg border border-border/60 bg-card/40 p-4 lg:col-span-2">
                 <div>
@@ -294,13 +305,13 @@ export default function BusinessSetupDialog({
                 </Field>
                 {cpaVisibility.showCurrentCpa && (
                   <div className="grid min-w-0 gap-4 lg:grid-cols-3">
-                    <Field label="CPA name (optional)">
+                    <Field label="CPA name *">
                       <Input value={form.currentCpa} onChange={(event) => update("currentCpa", event.target.value)} placeholder="CPA name" />
                     </Field>
-                    <Field label="CPA company (optional)">
+                    <Field label="CPA company *">
                       <Input value={form.currentCpaCompany} onChange={(event) => update("currentCpaCompany", event.target.value)} placeholder="CPA company" />
                     </Field>
-                    <Field label="CPA phone number (optional)">
+                    <Field label="CPA phone number *">
                       <PhoneInput value={form.currentCpaPhone} onChange={(value) => update("currentCpaPhone", value)} />
                     </Field>
                   </div>

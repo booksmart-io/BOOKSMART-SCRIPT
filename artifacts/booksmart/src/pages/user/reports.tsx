@@ -4,7 +4,7 @@ import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import { useAuth } from "@/hooks/use-auth";
 import { supabase } from "@/lib/supabase";
 import { checkAddTransaction } from "@/lib/plan-limits";
-import { categorizeUncategorizedTransactions } from "@/lib/ai-categorization";
+import { categorizeTransaction, categorizeUncategorizedTransactions } from "@/lib/ai-categorization";
 import { openPlaidLink } from "@/lib/plaid-link";
 import { spendTokensForUnlock, type TokenUnlockKey } from "@/lib/token-unlocks";
 import {
@@ -112,6 +112,10 @@ import {
   ChevronDown,
   ChevronUp,
   Check,
+  Camera,
+  FolderOpen,
+  ArrowDown,
+  ArrowUp,
 } from "lucide-react";
 
 const PLAID_CATEGORIZATION_BATCH_LIMIT = 100;
@@ -128,6 +132,26 @@ type Transaction = {
   deductible: boolean;
   category_id?: number | null;
   sub_category_id?: number | null;
+};
+
+type ExtractedReceiptTransaction = {
+  id: number;
+  title: string;
+  amount: number;
+  transaction_type: "debit" | "credit";
+  date_time: string;
+  description: string;
+  category_id: number | null;
+  sub_category_id: number | null;
+  business_type?: "Business" | "Personal";
+  deductible?: boolean;
+  merchant?: string;
+  account_id?: string;
+  payment_method?: string;
+  receipt_number?: string;
+  business_use?: "Business" | "Personal" | "Split";
+  business_percentage?: number;
+  reimbursable?: boolean;
 };
 type AiStrategySummaryRow = {
   estimated_savings: number | null;
@@ -167,6 +191,29 @@ function fmt(v: number) {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   }).format(v);
+}
+
+function buildTransactionDescription(
+  notes: string,
+  details: {
+    merchant?: string;
+    account?: string;
+    paymentMethod?: string;
+    receiptNumber?: string;
+    businessUse?: string;
+    businessPercentage?: number;
+    reimbursable?: boolean;
+  },
+) {
+  const metadata = [
+    details.merchant?.trim() ? `Merchant / Vendor: ${details.merchant.trim()}` : "",
+    details.account ? `Account: ${details.account}` : "",
+    details.paymentMethod?.trim() ? `Payment Method: ${details.paymentMethod.trim()}` : "",
+    details.receiptNumber?.trim() ? `Receipt / Invoice #: ${details.receiptNumber.trim()}` : "",
+    details.businessUse ? `Business Use: ${details.businessUse}${details.businessUse === "Split" ? ` (${details.businessPercentage ?? 0}%)` : ""}` : "",
+    details.reimbursable ? "Reimbursable: Yes" : "",
+  ].filter(Boolean);
+  return [notes.trim(), metadata.join("\n")].filter(Boolean).join("\n\n");
 }
 function fmtShort(v: number) {
   if (Math.abs(v) >= 1_000_000) return `$${(v / 1_000_000).toFixed(1)}M`;
@@ -2508,9 +2555,117 @@ const [plaidSyncMessage, setPlaidSyncMessage] = useState("");
   const [newDate, setNewDate] = useState(() =>
     new Date().toISOString().slice(0, 10),
   );
-  const [newType, setNewType] = useState("Business");
   const [newDeductible, setNewDeductible] = useState(false);
   const [newNotes, setNewNotes] = useState("");
+  const [newCategoryId, setNewCategoryId] = useState("");
+  const [newMerchant, setNewMerchant] = useState("");
+  const [newAccountId, setNewAccountId] = useState("");
+  const [newPaymentMethod, setNewPaymentMethod] = useState("");
+  const [newReceiptNumber, setNewReceiptNumber] = useState("");
+  const [newBusinessUse, setNewBusinessUse] = useState<"Business" | "Personal" | "Split">("Business");
+  const [newBusinessPercentage, setNewBusinessPercentage] = useState(100);
+  const [newReimbursable, setNewReimbursable] = useState(false);
+  const [newReceiptFile, setNewReceiptFile] = useState<File | null>(null);
+  const [newReceiptPreview, setNewReceiptPreview] = useState("");
+  const [newReceiptProcessing, setNewReceiptProcessing] = useState(false);
+  const [newReceiptStatus, setNewReceiptStatus] = useState<"idle" | "processing" | "extracted" | "failed">("idle");
+  const [newReceiptDocumentId, setNewReceiptDocumentId] = useState<number | null>(null);
+  const [newReceiptImportId, setNewReceiptImportId] = useState<number | null>(null);
+  const [newExtractedRows, setNewExtractedRows] = useState<ExtractedReceiptTransaction[]>([]);
+  const [newReceiptApprovalRunning, setNewReceiptApprovalRunning] = useState(false);
+  const newReceiptFileRef = useRef<HTMLInputElement>(null);
+  const newReceiptCameraRef = useRef<HTMLInputElement>(null);
+  const newReceiptVideoRef = useRef<HTMLVideoElement>(null);
+  const newReceiptStreamRef = useRef<MediaStream | null>(null);
+  const [newReceiptCameraOpen, setNewReceiptCameraOpen] = useState(false);
+  const [newReceiptCameraStarting, setNewReceiptCameraStarting] = useState(false);
+  const [newReceiptCameraError, setNewReceiptCameraError] = useState("");
+
+  function selectNewReceiptFile(file: File | null) {
+    setNewReceiptFile(file);
+    setNewReceiptDocumentId(null);
+    setNewReceiptImportId(null);
+    setNewReceiptStatus("idle");
+    setNewExtractedRows([]);
+  }
+
+  function stopNewReceiptCamera() {
+    newReceiptStreamRef.current?.getTracks().forEach((track) => track.stop());
+    newReceiptStreamRef.current = null;
+    if (newReceiptVideoRef.current) newReceiptVideoRef.current.srcObject = null;
+    setNewReceiptCameraOpen(false);
+    setNewReceiptCameraStarting(false);
+  }
+
+  async function openNewReceiptCamera() {
+    if (!navigator.mediaDevices?.getUserMedia) {
+      if (newReceiptCameraRef.current) {
+        newReceiptCameraRef.current.value = "";
+        newReceiptCameraRef.current.click();
+      }
+      return;
+    }
+
+    setNewReceiptCameraOpen(true);
+    setNewReceiptCameraStarting(true);
+    setNewReceiptCameraError("");
+    try {
+      let stream: MediaStream;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: { ideal: "environment" } },
+          audio: false,
+        });
+      } catch {
+        stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+      }
+      newReceiptStreamRef.current = stream;
+      if (newReceiptVideoRef.current) {
+        newReceiptVideoRef.current.srcObject = stream;
+        await newReceiptVideoRef.current.play();
+      }
+    } catch (error) {
+      setNewReceiptCameraError(
+        error instanceof DOMException && error.name === "NotAllowedError"
+          ? "Camera permission was denied. Allow camera access in your browser settings or choose a photo instead."
+          : "The camera could not be opened. Choose a photo from your device instead.",
+      );
+    } finally {
+      setNewReceiptCameraStarting(false);
+    }
+  }
+
+  function captureNewReceiptPhoto() {
+    const video = newReceiptVideoRef.current;
+    if (!video || video.videoWidth === 0 || video.videoHeight === 0) return;
+    const canvas = document.createElement("canvas");
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    canvas.getContext("2d")?.drawImage(video, 0, 0, canvas.width, canvas.height);
+    canvas.toBlob((blob) => {
+      if (!blob) return;
+      selectNewReceiptFile(new globalThis.File([blob], `receipt-${Date.now()}.jpg`, { type: "image/jpeg" }));
+      stopNewReceiptCamera();
+    }, "image/jpeg", 0.92);
+  }
+
+  useEffect(() => () => {
+    newReceiptStreamRef.current?.getTracks().forEach((track) => track.stop());
+  }, []);
+
+  useEffect(() => {
+    if (!showAddTx && newReceiptStreamRef.current) stopNewReceiptCamera();
+  }, [showAddTx]);
+
+  useEffect(() => {
+    if (!newReceiptFile || !newReceiptFile.type.startsWith("image/")) {
+      setNewReceiptPreview("");
+      return;
+    }
+    const previewUrl = URL.createObjectURL(newReceiptFile);
+    setNewReceiptPreview(previewUrl);
+    return () => URL.revokeObjectURL(previewUrl);
+  }, [newReceiptFile]);
 
   // Export dialog state
   const [showExport, setShowExport] = useState(false);
@@ -3053,22 +3208,46 @@ const [plaidSyncMessage, setPlaidSyncMessage] = useState("");
       type: string;
       deductible: boolean;
       description: string;
+      file_path?: string;
+      category_id?: number | null;
     }) => {
       if (!orgId) throw new Error("No organization found");
+      if (!numericId) throw new Error("No signed-in user found");
       await checkAddTransaction();
-      const { error } = await supabase
+      const { data: insertedTransaction, error } = await supabase
         .from("transactions")
-        .insert({ ...payload, org_id: orgId });
+        .insert({ ...payload, org_id: orgId, user_id: numericId })
+        .select("id")
+        .single();
       if (error) throw error;
+      await categorizeTransaction(Number(insertedTransaction.id), orgId);
     },
-    onSuccess: () => {
+    onSuccess: async () => {
+      if (newReceiptImportId !== null) {
+        await supabase.from("pending_transactions").delete().eq("import_id", newReceiptImportId);
+        await supabase.from("statement_imports").update({ status: "completed" }).eq("id", newReceiptImportId);
+      }
       setShowAddTx(false);
       setNewTitle("");
       setNewAmount("");
       setNewNotes("");
-      setNewType("Business");
       setNewDeductible(false);
+      setNewCategoryId("");
+      setNewMerchant("");
+      setNewAccountId("");
+      setNewPaymentMethod("");
+      setNewReceiptNumber("");
+      setNewBusinessUse("Business");
+      setNewBusinessPercentage(100);
+      setNewReimbursable(false);
       setNewDate(new Date().toISOString().slice(0, 10));
+      setNewReceiptFile(null);
+      setNewReceiptDocumentId(null);
+      setNewReceiptImportId(null);
+                       setNewReceiptStatus("idle");
+                       setNewExtractedRows([]);
+                       if (newReceiptFileRef.current) newReceiptFileRef.current.value = "";
+                       if (newReceiptCameraRef.current) newReceiptCameraRef.current.value = "";
       const keys = [
         ["tx_period", orgId, period],
         ["tx_prev_period", orgId, period],
@@ -3454,7 +3633,7 @@ async function handleConnectBank() {
     ConnectedBank[]
   >({
     queryKey: ["plaid_accounts", numericId, orgId],
-    enabled: showAccountsDialog && !!numericId && !!orgId,
+    enabled: (showAccountsDialog || showAddTx) && !!numericId && !!orgId,
     staleTime: 30 * 1000,
     queryFn: async () => {
       const { data: items, error: itemsError } = await supabase
@@ -3491,6 +3670,13 @@ async function handleConnectBank() {
       }));
     },
   });
+
+  const transactionAccountOptions = connectedBanks.flatMap((bank) =>
+    bank.accounts.map((account) => ({
+      id: String(account.id),
+      label: `${bank.institution_name || "Connected Bank"} — ${account.name || account.official_name || "Account"}${account.mask ? ` (•••• ${account.mask})` : ""}`,
+    })),
+  );
 
   async function handleDeletePlaidItem() {
     if (!deletePlaidTarget || !orgId) return;
@@ -4319,6 +4505,332 @@ async function handleConnectBank() {
         }
       }, delay);
     });
+  }
+
+  async function extractNewTransactionReceipt() {
+    if (!newReceiptFile || !numericId || !orgId || !user?.id) return;
+    setNewReceiptProcessing(true);
+    setNewReceiptStatus("processing");
+    try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const token = sessionData.session?.access_token;
+      if (!token) throw new Error("Not authenticated.");
+
+      const formData = new FormData();
+      formData.append("file", newReceiptFile);
+      formData.append("originalName", newReceiptFile.name);
+      formData.append("category", "Transactions");
+      const uploadRes = await fetch("/api/document-upload", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+        body: formData,
+      });
+      const uploadResult = await uploadRes.json().catch(() => ({})) as { publicUrl?: string; storagePath?: string; message?: string };
+      if (!uploadRes.ok || !uploadResult.publicUrl || !uploadResult.storagePath) {
+        throw new Error(uploadResult.message ?? "Receipt upload failed.");
+      }
+
+      const extension = newReceiptFile.name.split(".").pop()?.toLowerCase() ?? "";
+      const documentName = `${newTitle.trim() || newReceiptFile.name.replace(/\.[^.]+$/, "")}${extension ? `.${extension}` : ""}`;
+      const { data: document, error: documentError } = await supabase
+        .from("user_documents")
+        .insert({
+          user_id: numericId,
+          name: documentName,
+          file_url: uploadResult.publicUrl,
+          category: "Transactions",
+          tax_year: newDate.slice(0, 4),
+          file_size: newReceiptFile.size,
+          mime_type: newReceiptFile.type || "application/octet-stream",
+          parsed_data: {
+            period_start: `${newDate}T00:00:00.000`,
+            period_end: `${newDate}T23:59:59.999`,
+            document_category: "Transactions",
+          },
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        })
+        .select("id")
+        .single();
+      if (documentError) throw new Error(documentError.message);
+
+      const documentId = Number(document.id);
+      const mimeType = newReceiptFile.type || "application/octet-stream";
+      let extractedText: string | null = null;
+      let isScanned = mimeType.startsWith("image/");
+      let statementDocumentPath = uploadResult.storagePath;
+      let statementMimeType = mimeType;
+
+      if (mimeType === "application/pdf") {
+        const fileData = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => {
+            const result = reader.result as string;
+            resolve(result.includes(",") ? result.split(",")[1] : result);
+          };
+          reader.onerror = () => reject(new Error("Failed to read PDF."));
+          reader.readAsDataURL(newReceiptFile);
+        });
+
+        try {
+          const textRes = await fetch("/api/extract-text", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+            body: JSON.stringify({ fileData }),
+          });
+          if (textRes.ok) {
+            const payload = await textRes.json() as { text?: string; isScanned?: boolean };
+            const text = payload.text?.trim() ?? "";
+            extractedText = text.length >= 50 ? text : null;
+            isScanned = extractedText === null ? true : (payload.isScanned ?? false);
+          } else {
+            isScanned = true;
+          }
+        } catch (error) {
+          console.warn("[add-transaction] PDF text extraction failed, using n8n OCR:", error);
+          isScanned = true;
+        }
+      }
+
+      if (mimeType === "application/pdf" && isScanned) {
+        try {
+          const pagePaths = await uploadTransactionPdfPages(newReceiptFile, token);
+          if (pagePaths.length > 0) {
+            statementDocumentPath = pagePaths.length > 1 ? JSON.stringify(pagePaths) : pagePaths[0];
+            statementMimeType = "image/png";
+          }
+        } catch (error) {
+          console.warn("[add-transaction] scanned PDF rendering failed, using original PDF:", error);
+        }
+      }
+
+      const { data: statementImport, error: importError } = await supabase
+        .from("statement_imports")
+        .insert({
+          user_id: numericId,
+          org_id: orgId,
+          document_id: documentId,
+          document_path: statementDocumentPath,
+          mime_type: statementMimeType,
+          is_scanned: isScanned,
+          extracted_text: isScanned ? null : extractedText,
+          status: "processing",
+        })
+        .select("id")
+        .single();
+      if (importError) throw new Error(importError.message);
+
+      const importId = Number(statementImport.id);
+      const importStartedAt = new Date().toISOString();
+      setNewReceiptDocumentId(documentId);
+      setNewReceiptImportId(importId);
+      toast({ title: "Receipt uploaded", description: "n8n is extracting the transaction details." });
+
+      let latestReceiptRows: ExtractedReceiptTransaction[] = [];
+      for (let attempt = 0; attempt < 60; attempt += 1) {
+        await new Promise<void>((resolve) => window.setTimeout(resolve, 2000));
+        const { data: currentImport, error: importStatusError } = await supabase
+          .from("statement_imports")
+          .select("status,error_message")
+          .eq("id", importId)
+          .single();
+        if (importStatusError) throw new Error(importStatusError.message);
+        if (currentImport?.status === "failed") {
+          throw new Error(currentImport.error_message || "Receipt processing failed.");
+        }
+
+        const { data: directRows, error: extractedError } = await supabase
+          .from("pending_transactions")
+          .select("id,title,amount,transaction_type,date_time,description,category_id,sub_category_id")
+          .eq("import_id", importId)
+          .eq("status", "pending")
+          .order("id", { ascending: true })
+          .range(0, 4999);
+        if (extractedError) throw new Error(extractedError.message);
+        let extractedRows = directRows;
+        if ((extractedRows?.length ?? 0) === 0) {
+          const { data: pathRows } = await supabase
+            .from("pending_transactions")
+            .select("id,title,amount,transaction_type,date_time,description,category_id,sub_category_id")
+            .eq("document_path", statementDocumentPath)
+            .eq("status", "pending")
+            .order("id", { ascending: true })
+            .range(0, 4999);
+          extractedRows = pathRows ?? [];
+        }
+        if ((extractedRows?.length ?? 0) === 0) {
+          const since = new Date(new Date(importStartedAt).getTime() - 120000).toISOString();
+          const { data: recentRows } = await supabase
+            .from("pending_transactions")
+            .select("id,title,amount,transaction_type,date_time,description,category_id,sub_category_id")
+            .eq("user_id", numericId)
+            .eq("status", "pending")
+            .gte("created_at", since)
+            .or(`org_id.eq.${orgId},org_id.is.null`)
+            .order("created_at", { ascending: true })
+            .range(0, 4999);
+          extractedRows = recentRows ?? [];
+        }
+        const receiptRows = ((extractedRows ?? []) as ExtractedReceiptTransaction[]).map((row) => ({
+          ...row,
+          business_type: "Business" as const,
+          business_use: "Business" as const,
+          business_percentage: 100,
+          merchant: row.title,
+          deductible: row.transaction_type === "debit",
+        }));
+        const extracted = receiptRows[0];
+        if (!extracted) {
+          if (currentImport?.status === "completed") {
+            throw new Error("n8n completed the import but did not return any transactions.");
+          }
+          continue;
+        }
+
+        latestReceiptRows = receiptRows;
+        setNewExtractedRows(receiptRows);
+        const absoluteAmount = Math.abs(Number(extracted.amount) || 0);
+        setNewTitle(extracted.title?.trim() || newTitle);
+        setNewAmount(String(extracted.transaction_type === "debit" ? -absoluteAmount : absoluteAmount));
+        if (extracted.date_time) setNewDate(extracted.date_time.slice(0, 10));
+        setNewNotes(extracted.description ?? "");
+        if (currentImport?.status === "completed") {
+          setNewReceiptStatus("extracted");
+          toast({
+            title: `${receiptRows.length} transaction${receiptRows.length === 1 ? "" : "s"} extracted`,
+            description: "Review all details, then add the transactions.",
+          });
+          return;
+        }
+        setNewReceiptStatus("processing");
+      }
+      if (latestReceiptRows.length > 0) {
+        setNewReceiptStatus("extracted");
+        toast({
+          title: `${latestReceiptRows.length} transaction${latestReceiptRows.length === 1 ? "" : "s"} extracted`,
+          description: "Review the available details. n8n did not report completion before the wait ended.",
+        });
+        return;
+      }
+      throw new Error("Receipt processing is taking longer than expected. You can enter the details manually or try again later.");
+    } catch (error) {
+      setNewReceiptStatus("failed");
+      toast({
+        title: "Could not extract receipt",
+        description: error instanceof Error ? error.message : "Receipt processing failed.",
+        variant: "destructive",
+      });
+    } finally {
+      setNewReceiptProcessing(false);
+    }
+  }
+
+  async function approveExtractedReceiptRows(rows: ExtractedReceiptTransaction[]) {
+    if (!numericId || !orgId || rows.length === 0) return;
+    setNewReceiptApprovalRunning(true);
+    try {
+      await checkAddTransaction(rows.length);
+      const { data: insertedTransactions, error: insertError } = await supabase.from("transactions").insert(rows.map((row) => ({
+        user_id: numericId,
+        org_id: orgId,
+        title: row.title,
+        amount: row.transaction_type === "debit" ? -Math.abs(row.amount) : Math.abs(row.amount),
+        description: buildTransactionDescription(row.description ?? "", {
+          merchant: row.merchant,
+          account: transactionAccountOptions.find((account) => account.id === row.account_id)?.label,
+          paymentMethod: row.payment_method,
+          receiptNumber: row.receipt_number,
+          businessUse: row.business_use,
+          businessPercentage: row.business_percentage,
+          reimbursable: row.reimbursable,
+        }),
+        type: row.business_use ?? row.business_type ?? "Business",
+        deductible: row.deductible ?? row.transaction_type === "debit",
+        date_time: row.date_time,
+        is_ai_verified: false,
+        category_id: row.category_id ?? null,
+        sub_category_id: row.sub_category_id ?? null,
+        ...(newReceiptDocumentId !== null ? { file_path: String(newReceiptDocumentId) } : {}),
+      }))).select("id");
+      if (insertError) throw new Error(insertError.message);
+
+      for (const insertedTransaction of insertedTransactions ?? []) {
+        await categorizeTransaction(Number(insertedTransaction.id), orgId);
+      }
+
+      const approvedIds = rows.map((row) => row.id);
+      const { error: deleteError } = await supabase.from("pending_transactions").delete().in("id", approvedIds);
+      if (deleteError) throw new Error(deleteError.message);
+
+      const remainingRows = newExtractedRows.filter((row) => !approvedIds.includes(row.id));
+      setNewExtractedRows(remainingRows);
+      if (remainingRows.length === 0 && newReceiptImportId !== null) {
+        await supabase.from("statement_imports").update({ status: "completed" }).eq("id", newReceiptImportId);
+        setShowAddTx(false);
+        setNewReceiptFile(null);
+        setNewReceiptDocumentId(null);
+        setNewReceiptImportId(null);
+        setNewReceiptStatus("idle");
+        setNewTitle("");
+        setNewAmount("");
+        setNewNotes("");
+        setNewMerchant("");
+        setNewAccountId("");
+        setNewPaymentMethod("");
+        setNewReceiptNumber("");
+        setNewBusinessUse("Business");
+        setNewBusinessPercentage(100);
+        setNewReimbursable(false);
+        if (newReceiptFileRef.current) newReceiptFileRef.current.value = "";
+      }
+      [["tx_period", orgId, period], ["tx_prev_period", orgId, period], ["tx_all_balance", orgId], ["tx_all_full", orgId], ["tx_month", orgId], ["tx_recent", orgId], ["tx_count", orgId]]
+        .forEach((queryKey) => queryClient.invalidateQueries({ queryKey }));
+      toast({ title: `${rows.length} transaction${rows.length === 1 ? "" : "s"} approved` });
+    } catch (error) {
+      toast({
+        title: "Could not approve transactions",
+        description: error instanceof Error ? error.message : "Approval failed.",
+        variant: "destructive",
+      });
+    } finally {
+      setNewReceiptApprovalRunning(false);
+    }
+  }
+
+  async function rejectExtractedReceiptRows(rows: ExtractedReceiptTransaction[]) {
+    if (rows.length === 0) return;
+    setNewReceiptApprovalRunning(true);
+    try {
+      const rejectedIds = rows.map((row) => row.id);
+      const { error } = await supabase.from("pending_transactions").delete().in("id", rejectedIds);
+      if (error) throw new Error(error.message);
+
+      const remainingRows = newExtractedRows.filter((row) => !rejectedIds.includes(row.id));
+      setNewExtractedRows(remainingRows);
+      if (remainingRows.length === 0) {
+        if (newReceiptImportId !== null) {
+          await supabase.from("statement_imports").update({ status: "completed" }).eq("id", newReceiptImportId);
+        }
+        setShowAddTx(false);
+        setNewReceiptFile(null);
+        setNewReceiptDocumentId(null);
+        setNewReceiptImportId(null);
+        setNewReceiptStatus("idle");
+        setNewTitle("");
+        setNewAmount("");
+        setNewNotes("");
+        if (newReceiptFileRef.current) newReceiptFileRef.current.value = "";
+      }
+      toast({ title: `${rows.length} transaction${rows.length === 1 ? "" : "s"} rejected` });
+    } catch (error) {
+      toast({
+        title: "Could not reject transactions",
+        description: error instanceof Error ? error.message : "Rejection failed.",
+        variant: "destructive",
+      });
+    } finally {
+      setNewReceiptApprovalRunning(false);
+    }
   }
 
   async function handleUploadSave() {
@@ -8687,24 +9199,25 @@ async function handleConnectBank() {
               if (!v) setShowAddTx(false);
             }}
           >
-            <DialogContent className="sm:max-w-md bg-card border-border/60">
+            <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto border-border/60 bg-card sm:max-w-2xl">
               <DialogHeader>
                 <DialogTitle className="text-base font-semibold">
                   Add Transaction
                 </DialogTitle>
+                <DialogDescription>Add a transaction manually or upload a receipt and n8n will extract the details for you.</DialogDescription>
               </DialogHeader>
-              <div className="space-y-4 py-2">
-                <div className="space-y-1.5">
-                  <label className="text-sm font-medium">Title</label>
+              <div className="flex flex-col gap-4 py-2">
+                <div className={newExtractedRows.length > 0 ? "hidden" : "space-y-1.5"}>
+                  <p className="mb-3 text-sm font-semibold"><span className="mr-2 rounded bg-primary px-1.5 py-0.5 text-xs text-primary-foreground">2</span>Transaction Details</p>
+                  <label className="text-sm font-medium">Transaction Name <span className="text-destructive">*</span></label>
                   <input
-                    autoFocus
                     className="w-full rounded-lg border border-border/60 bg-secondary/40 px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
                     placeholder="e.g. Freelance payment"
                     value={newTitle}
                     onChange={(e) => setNewTitle(e.target.value)}
                   />
                 </div>
-                <div className="space-y-1.5">
+                <div className={newExtractedRows.length > 0 ? "hidden" : "space-y-1.5"}>
                   <label className="text-sm font-medium">
                     Amount (+ for income, − for expense)
                   </label>
@@ -8717,8 +9230,8 @@ async function handleConnectBank() {
                     onChange={(e) => setNewAmount(e.target.value)}
                   />
                 </div>
-                <div className="space-y-1.5">
-                  <label className="text-sm font-medium">Date</label>
+                <div className={newExtractedRows.length > 0 ? "hidden" : "space-y-1.5"}>
+                  <label className="text-sm font-medium">Date <span className="text-destructive">*</span></label>
                   <input
                     type="date"
                     className="w-full rounded-lg border border-border/60 bg-secondary/40 px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
@@ -8726,19 +9239,189 @@ async function handleConnectBank() {
                     onChange={(e) => setNewDate(e.target.value)}
                   />
                 </div>
-                <div className="space-y-1.5">
-                  <label className="text-sm font-medium">Type</label>
+                <div className={newExtractedRows.length > 0 ? "hidden" : "space-y-1.5"}>
+                  <label className="text-sm font-medium">Merchant / Vendor <span className="text-destructive">*</span></label>
+                  <Input placeholder="e.g. Office Depot" value={newMerchant} onChange={(event) => setNewMerchant(event.target.value)} />
+                </div>
+                <div className={newExtractedRows.length > 0 ? "hidden" : "space-y-1.5"}>
+                  <label className="text-sm font-medium">Type <span className="text-destructive">*</span></label>
+                  <div className="grid grid-cols-2 overflow-hidden rounded-lg border border-border/60">
+                    <button type="button" className={`flex items-center justify-center gap-2 px-3 py-2 text-sm ${Number(newAmount) <= 0 ? "bg-rose-500/10 text-rose-400" : ""}`} onClick={() => setNewAmount((value) => String(-Math.abs(Number(value) || 0)))}><ArrowDown className="h-4 w-4" />Expense</button>
+                    <button type="button" className={`flex items-center justify-center gap-2 border-l border-border/60 px-3 py-2 text-sm ${Number(newAmount) > 0 ? "bg-emerald-500/10 text-emerald-400" : ""}`} onClick={() => setNewAmount((value) => String(Math.abs(Number(value) || 0)))}><ArrowUp className="h-4 w-4" />Income</button>
+                  </div>
+                </div>
+                <div className="order-first space-y-1.5 rounded-xl border border-border/60 p-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <label className="text-sm font-semibold"><span className="mr-2 rounded bg-primary px-1.5 py-0.5 text-xs text-primary-foreground">1</span>Upload Receipt <span className="font-normal text-muted-foreground">(Optional)</span></label>
+                    {newReceiptFile && <button type="button" className="text-xs font-medium text-destructive" onClick={() => {
+                      setNewReceiptFile(null);
+                      setNewReceiptDocumentId(null);
+                      setNewReceiptImportId(null);
+                      setNewReceiptStatus("idle");
+                      setNewExtractedRows([]);
+                      if (newReceiptFileRef.current) newReceiptFileRef.current.value = "";
+                    }}>Remove</button>}
+                  </div>
+                  <input
+                    ref={newReceiptFileRef}
+                    type="file"
+                    accept="image/jpeg,image/png,application/pdf"
+                    className="hidden"
+                    onChange={(event) => selectNewReceiptFile(event.target.files?.[0] ?? null)}
+                  />
+                  <input
+                    ref={newReceiptCameraRef}
+                    type="file"
+                    accept="image/*"
+                    capture="environment"
+                    className="hidden"
+                    onChange={(event) => selectNewReceiptFile(event.target.files?.[0] ?? null)}
+                  />
+                  <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_110px]">
+                    <div
+                      className="grid min-h-28 grid-cols-3 overflow-hidden rounded-xl border-2 border-dashed border-border/60"
+                      onDragOver={(event) => event.preventDefault()}
+                      onDrop={(event) => {
+                        event.preventDefault();
+                        selectNewReceiptFile(event.dataTransfer.files?.[0] ?? null);
+                      }}
+                    >
+                      <button type="button" onClick={() => newReceiptFileRef.current?.click()} className="flex flex-col items-center justify-center gap-2 p-3 text-center hover:bg-primary/5">
+                        <Upload className="h-6 w-6 text-primary" />
+                        <span className="text-xs font-medium">Upload File</span>
+                        <span className="text-[10px] text-muted-foreground">JPG, PNG, PDF</span>
+                      </button>
+                      <button type="button" onClick={() => void openNewReceiptCamera()} className="flex flex-col items-center justify-center gap-2 border-x border-border/60 p-3 text-center hover:bg-primary/5">
+                        <Camera className="h-6 w-6 text-primary" />
+                        <span className="text-xs font-medium">Take Photo</span>
+                        <span className="text-[10px] text-muted-foreground">Use camera</span>
+                      </button>
+                      <div className="flex flex-col items-center justify-center gap-2 p-3 text-center">
+                        <FolderOpen className="h-6 w-6 text-primary" />
+                        <span className="text-xs font-medium">Drag & Drop</span>
+                        <span className="text-[10px] text-muted-foreground">Drop file here</span>
+                      </div>
+                    </div>
+                    <div className="flex min-h-28 items-center justify-center overflow-hidden rounded-xl border border-border/60 bg-background/40">
+                      {newReceiptPreview
+                        ? <img src={newReceiptPreview} alt="Receipt preview" className="h-full max-h-32 w-full object-contain" />
+                        : <FileText className="h-9 w-9 text-muted-foreground/40" />}
+                    </div>
+                  </div>
+                  {newReceiptFile && (newReceiptStatus === "idle" || newReceiptStatus === "failed") && (
+                    <Button type="button" variant="outline" className="w-full" disabled={newReceiptProcessing} onClick={() => void extractNewTransactionReceipt()}>
+                      {newReceiptStatus === "failed" ? "Retry Receipt Extraction" : "Extract Receipt Details"}
+                    </Button>
+                  )}
+                  {newReceiptStatus === "processing" && (
+                    <p className={`flex items-center gap-2 text-xs font-medium ${newExtractedRows.length > 0 ? "text-emerald-400" : "text-primary"}`}>
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      {newExtractedRows.length > 0
+                        ? `${newExtractedRows.length} transaction${newExtractedRows.length === 1 ? "" : "s"} found so far. Waiting for n8n to finish…`
+                        : "n8n is extracting transaction details…"}
+                    </p>
+                  )}
+                  {newReceiptStatus === "extracted" && (
+                    <p className="text-xs font-medium text-emerald-400">
+                      {newExtractedRows.length} transaction{newExtractedRows.length === 1 ? "" : "s"} extracted. Review all details below.
+                    </p>
+                  )}
+                  {newReceiptStatus === "failed" && <p className="text-xs font-medium text-destructive">No transaction details were returned. Retry or enter the transaction manually.</p>}
+                  {newExtractedRows.length > 0 && (
+                    <div className="hidden">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div>
+                          <p className="text-sm font-semibold">Extracted Transactions ({newExtractedRows.length})</p>
+                          <p className="text-xs text-muted-foreground">Review every transaction before approval.</p>
+                        </div>
+                        <div className="flex gap-2">
+                          <Button type="button" size="sm" variant="outline" disabled={newReceiptApprovalRunning} onClick={() => void rejectExtractedReceiptRows(newExtractedRows)}>Reject All</Button>
+                          <Button type="button" size="sm" disabled={newReceiptApprovalRunning} onClick={() => void approveExtractedReceiptRows(newExtractedRows)}>
+                            {newReceiptApprovalRunning && <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />}
+                            Approve All
+                          </Button>
+                        </div>
+                      </div>
+                      {newExtractedRows.map((row) => {
+                        const signedAmount = row.transaction_type === "debit" ? -Math.abs(row.amount) : Math.abs(row.amount);
+                        const categoryName = categories.find((category) => category.id === row.category_id)?.name ?? "Uncategorized";
+                        return (
+                          <div key={row.id} className="rounded-lg border border-border/60 bg-card p-3">
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="min-w-0">
+                                <p className="break-words text-sm font-semibold">{row.title}</p>
+                                <p className="mt-0.5 text-xs text-muted-foreground">{new Date(row.date_time).toLocaleDateString()} · {categoryName}</p>
+                              </div>
+                              <span className={`shrink-0 text-sm font-bold ${signedAmount < 0 ? "text-rose-400" : "text-emerald-400"}`}>
+                                {signedAmount < 0 ? "-" : "+"}{fmt(Math.abs(signedAmount))}
+                              </span>
+                            </div>
+                            {row.description && <p className="mt-2 break-words text-xs text-muted-foreground">{row.description}</p>}
+                            <div className="mt-3 flex justify-end gap-2">
+                              <Button type="button" size="sm" variant="ghost" disabled={newReceiptApprovalRunning} onClick={() => void rejectExtractedReceiptRows([row])}>Reject</Button>
+                              <Button type="button" size="sm" variant="outline" disabled={newReceiptApprovalRunning} onClick={() => void approveExtractedReceiptRows([row])}>Approve</Button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+                <div className={newExtractedRows.length > 0 ? "hidden" : "space-y-1.5"}>
+                  <label className="text-sm font-medium">Business Use <span className="text-destructive">*</span></label>
                   <select
                     className="w-full rounded-lg border border-border/60 bg-secondary/40 px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
-                    value={newType}
-                    onChange={(e) => setNewType(e.target.value)}
+                    value={newBusinessUse}
+                    onChange={(e) => {
+                      const value = e.target.value as "Business" | "Personal" | "Split";
+                      setNewBusinessUse(value);
+                      if (value === "Business") setNewBusinessPercentage(100);
+                      if (value === "Personal") setNewBusinessPercentage(0);
+                    }}
                   >
                     <option value="Business">Business</option>
                     <option value="Personal">Personal</option>
+                    <option value="Split">Split</option>
                   </select>
                 </div>
-                <div className="flex items-center justify-between rounded-lg border border-border/60 bg-secondary/20 px-4 py-3">
-                  <span className="text-sm font-medium">Deductible</span>
+                {newExtractedRows.length === 0 && newBusinessUse === "Split" && (
+                  <div className="space-y-1.5">
+                    <label className="text-sm font-medium">Business % <span className="text-destructive">*</span></label>
+                    <Input type="number" min={1} max={99} value={newBusinessPercentage} onChange={(event) => setNewBusinessPercentage(Number(event.target.value))} />
+                  </div>
+                )}
+                <div className={newExtractedRows.length > 0 ? "hidden" : "space-y-1.5"}>
+                  <label className="text-sm font-medium">Category <span className="text-destructive">*</span></label>
+                  <select
+                    className="w-full rounded-lg border border-border/60 bg-secondary/40 px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+                    value={newCategoryId}
+                    onChange={(event) => setNewCategoryId(event.target.value)}
+                  >
+                    <option value="">Select category</option>
+                    {categories.map((category) => <option key={category.id} value={String(category.id)}>{category.name}</option>)}
+                  </select>
+                </div>
+                <div className={newExtractedRows.length > 0 ? "hidden" : "grid gap-3 sm:grid-cols-2"}>
+                  <div className="space-y-1.5">
+                    <label className="text-sm font-medium">Account <span className="text-destructive">*</span></label>
+                    <select className="w-full rounded-lg border border-border/60 bg-secondary/40 px-3 py-2 text-sm" value={newAccountId} onChange={(event) => setNewAccountId(event.target.value)}>
+                      <option value="">Select account</option>
+                      {transactionAccountOptions.map((account) => <option key={account.id} value={account.id}>{account.label}</option>)}
+                    </select>
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-sm font-medium">Payment Method <span className="text-destructive">*</span></label>
+                    <Input placeholder="e.g. Visa Credit Card" value={newPaymentMethod} onChange={(event) => setNewPaymentMethod(event.target.value)} />
+                  </div>
+                  <div className="space-y-1.5 sm:col-span-2">
+                    <label className="text-sm font-medium">Receipt / Invoice #</label>
+                    <Input placeholder="e.g. 1234-6678" value={newReceiptNumber} onChange={(event) => setNewReceiptNumber(event.target.value)} />
+                  </div>
+                </div>
+                <div className={newExtractedRows.length > 0 ? "hidden" : "rounded-xl border border-border/60 p-4"}>
+                  <p className="mb-3 text-sm font-semibold"><span className="mr-2 rounded bg-primary px-1.5 py-0.5 text-xs text-primary-foreground">3</span>Tax Information</p>
+                  <div className="flex items-center justify-between rounded-lg bg-secondary/20 px-4 py-3">
+                  <span className="text-sm font-medium">Tax Deductible</span>
                   <button
                     type="button"
                     role="switch"
@@ -8750,8 +9433,15 @@ async function handleConnectBank() {
                       className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${newDeductible ? "translate-x-6" : "translate-x-1"}`}
                     />
                   </button>
+                  </div>
+                  <div className="mt-2 flex items-center justify-between rounded-lg bg-secondary/20 px-4 py-3">
+                    <span className="text-sm font-medium">Reimbursable</span>
+                    <button type="button" role="switch" aria-checked={newReimbursable} onClick={() => setNewReimbursable((value) => !value)} className={`relative inline-flex h-6 w-11 items-center rounded-full ${newReimbursable ? "bg-primary" : "bg-secondary"}`}>
+                      <span className={`inline-block h-4 w-4 rounded-full bg-white transition-transform ${newReimbursable ? "translate-x-6" : "translate-x-1"}`} />
+                    </button>
+                  </div>
                 </div>
-                <div className="space-y-1.5">
+                <div className={newExtractedRows.length > 0 ? "hidden" : "space-y-1.5"}>
                   <label className="text-sm font-medium">Notes</label>
                   <textarea
                     rows={2}
@@ -8762,31 +9452,223 @@ async function handleConnectBank() {
                   />
                 </div>
                 <Button
-                  className="w-full"
+                  className={newExtractedRows.length > 0 ? "order-last w-full" : "w-full"}
                   disabled={
-                    createMutation.isPending || !newTitle.trim() || !newAmount
+                    createMutation.isPending || newReceiptProcessing || newReceiptApprovalRunning
+                    || (newExtractedRows.length === 0 && (!newTitle.trim() || !newAmount))
                   }
                   onClick={() => {
+                    if (newExtractedRows.length > 0) {
+                      void approveExtractedReceiptRows(newExtractedRows);
+                      return;
+                    }
                     const raw = parseFloat(newAmount);
-                    if (isNaN(raw)) return;
+                    if (!Number.isFinite(raw) || raw === 0) {
+                      toast({
+                        title: "Enter a valid amount",
+                        description: "Use a positive amount for income or a negative amount for an expense.",
+                        variant: "destructive",
+                      });
+                      return;
+                    }
+                    const transactionDate = newDate ? new Date(`${newDate}T12:00:00`) : new Date();
+                    if (Number.isNaN(transactionDate.getTime())) {
+                      toast({
+                        title: "Enter a valid transaction date",
+                        variant: "destructive",
+                      });
+                      return;
+                    }
                     createMutation.mutate({
                       title: newTitle.trim(),
                       amount: raw,
-                      date_time: newDate
-                        ? new Date(newDate).toISOString()
-                        : new Date().toISOString(),
-                      type: newType,
+                      date_time: transactionDate.toISOString(),
+                      type: newBusinessUse,
                       deductible: newDeductible,
-                      description: newNotes,
+                      description: buildTransactionDescription(newNotes, {
+                        merchant: newMerchant,
+                        account: transactionAccountOptions.find((account) => account.id === newAccountId)?.label,
+                        paymentMethod: newPaymentMethod,
+                        receiptNumber: newReceiptNumber,
+                        businessUse: newBusinessUse,
+                        businessPercentage: newBusinessPercentage,
+                        reimbursable: newReimbursable,
+                      }),
+                      ...(newReceiptDocumentId !== null ? { file_path: String(newReceiptDocumentId) } : {}),
+                      category_id: newCategoryId ? Number(newCategoryId) : null,
                     });
                   }}
                 >
-                  {createMutation.isPending ? (
+                  {createMutation.isPending || newReceiptApprovalRunning ? (
                     <Loader2 className="h-4 w-4 animate-spin mr-2" />
                   ) : null}
-                  {createMutation.isPending ? "Saving…" : "Add Transaction"}
+                  {createMutation.isPending || newReceiptApprovalRunning
+                    ? "Saving…"
+                    : newExtractedRows.length > 0
+                      ? `Add ${newExtractedRows.length} Transaction${newExtractedRows.length === 1 ? "" : "s"}`
+                      : "Add Transaction"}
                 </Button>
+                {newExtractedRows.length > 0 && (
+                  <div className="space-y-3 rounded-xl border border-primary/25 bg-primary/5 p-3">
+                    <div>
+                      <p className="text-sm font-semibold">Extracted Transactions ({newExtractedRows.length})</p>
+                      <p className="text-xs text-muted-foreground">All extracted transactions will be added using the button above.</p>
+                    </div>
+                    <div className="max-h-72 space-y-2 overflow-y-auto pr-1">
+                      {newExtractedRows.map((row, index) => {
+                        const signedAmount = row.transaction_type === "debit" ? -Math.abs(row.amount) : Math.abs(row.amount);
+                        const updateRow = (changes: Partial<ExtractedReceiptTransaction>) => {
+                          setNewExtractedRows((current) => current.map((item) => item.id === row.id ? { ...item, ...changes } : item));
+                        };
+                        return (
+                          <div key={row.id} className="space-y-4 rounded-xl border border-border/60 bg-card p-4">
+                            <p className="text-sm font-semibold"><span className="mr-2 rounded bg-primary px-1.5 py-0.5 text-xs text-primary-foreground">{index + 1}</span>Transaction {index + 1} Details</p>
+                            <div className="space-y-1.5">
+                              <label className="text-sm font-medium">Transaction Name <span className="text-destructive">*</span></label>
+                              <Input value={row.title} onChange={(event) => updateRow({ title: event.target.value })} />
+                            </div>
+                            <div className="space-y-1.5">
+                              <label className="text-sm font-medium">Merchant / Vendor <span className="text-destructive">*</span></label>
+                              <Input value={row.merchant ?? row.title} onChange={(event) => updateRow({ merchant: event.target.value })} />
+                            </div>
+                            <div className="space-y-1.5">
+                              <label className="text-sm font-medium">Type <span className="text-destructive">*</span></label>
+                              <div className="grid grid-cols-2 overflow-hidden rounded-lg border border-border/60">
+                                <button type="button" className={`flex items-center justify-center gap-2 px-3 py-2 text-sm ${row.transaction_type === "debit" ? "bg-rose-500/10 text-rose-400" : ""}`} onClick={() => updateRow({ transaction_type: "debit" })}><ArrowDown className="h-4 w-4" />Expense</button>
+                                <button type="button" className={`flex items-center justify-center gap-2 border-l border-border/60 px-3 py-2 text-sm ${row.transaction_type === "credit" ? "bg-emerald-500/10 text-emerald-400" : ""}`} onClick={() => updateRow({ transaction_type: "credit" })}><ArrowUp className="h-4 w-4" />Income</button>
+                              </div>
+                            </div>
+                            <div className="space-y-1.5">
+                              <label className="text-sm font-medium">Amount (+ for income, − for expense)</label>
+                              <Input type="number" step="0.01" value={signedAmount} onChange={(event) => {
+                                const value = Number(event.target.value);
+                                if (!Number.isFinite(value)) return;
+                                updateRow({ amount: Math.abs(value), transaction_type: value < 0 ? "debit" : "credit" });
+                              }} />
+                            </div>
+                            <div className="space-y-1.5">
+                              <label className="text-sm font-medium">Date <span className="text-destructive">*</span></label>
+                              <Input type="date" value={row.date_time.slice(0, 10)} onChange={(event) => updateRow({ date_time: `${event.target.value}T12:00:00.000Z` })} />
+                            </div>
+                            <div className="space-y-1.5">
+                              <label className="text-sm font-medium">Business Use <span className="text-destructive">*</span></label>
+                              <select className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm" value={row.business_use ?? row.business_type ?? "Business"} onChange={(event) => {
+                                const value = event.target.value as "Business" | "Personal" | "Split";
+                                updateRow({ business_use: value, business_type: value === "Personal" ? "Personal" : "Business", business_percentage: value === "Business" ? 100 : value === "Personal" ? 0 : (row.business_percentage ?? 50) });
+                              }}>
+                                <option value="Business">Business</option><option value="Personal">Personal</option><option value="Split">Split</option>
+                              </select>
+                            </div>
+                            {(row.business_use ?? row.business_type) === "Split" && (
+                              <div className="space-y-1.5">
+                                <label className="text-sm font-medium">Business % <span className="text-destructive">*</span></label>
+                                <Input type="number" min={1} max={99} value={row.business_percentage ?? 50} onChange={(event) => updateRow({ business_percentage: Number(event.target.value) })} />
+                              </div>
+                            )}
+                            <div className="space-y-1.5">
+                              <label className="text-sm font-medium">Category <span className="text-destructive">*</span></label>
+                              <select className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm" value={row.category_id ?? ""} onChange={(event) => updateRow({ category_id: event.target.value ? Number(event.target.value) : null, sub_category_id: null })}>
+                                <option value="">Select category</option>
+                                {categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}
+                              </select>
+                            </div>
+                            <div className="grid gap-3 sm:grid-cols-2">
+                              <div className="space-y-1.5">
+                                <label className="text-sm font-medium">Account <span className="text-destructive">*</span></label>
+                                <select className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm" value={row.account_id ?? ""} onChange={(event) => updateRow({ account_id: event.target.value })}>
+                                  <option value="">Select account</option>
+                                  {transactionAccountOptions.map((account) => <option key={account.id} value={account.id}>{account.label}</option>)}
+                                </select>
+                              </div>
+                              <div className="space-y-1.5">
+                                <label className="text-sm font-medium">Payment Method <span className="text-destructive">*</span></label>
+                                <Input value={row.payment_method ?? ""} placeholder="e.g. Visa Credit Card" onChange={(event) => updateRow({ payment_method: event.target.value })} />
+                              </div>
+                              <div className="space-y-1.5 sm:col-span-2">
+                                <label className="text-sm font-medium">Receipt / Invoice #</label>
+                                <Input value={row.receipt_number ?? ""} onChange={(event) => updateRow({ receipt_number: event.target.value })} />
+                              </div>
+                            </div>
+                            <div className="rounded-xl border border-border/60 p-3">
+                              <p className="mb-3 text-sm font-semibold"><span className="mr-2 rounded bg-primary px-1.5 py-0.5 text-xs text-primary-foreground">3</span>Tax Information</p>
+                              <div className="flex items-center justify-between rounded-lg bg-secondary/20 px-4 py-3">
+                                <span className="text-sm font-medium">Tax Deductible</span>
+                                <button type="button" role="switch" aria-checked={row.deductible ?? false} onClick={() => updateRow({ deductible: !(row.deductible ?? false) })} className={`relative inline-flex h-6 w-11 items-center rounded-full ${row.deductible ? "bg-primary" : "bg-secondary"}`}>
+                                  <span className={`inline-block h-4 w-4 rounded-full bg-white transition-transform ${row.deductible ? "translate-x-6" : "translate-x-1"}`} />
+                                </button>
+                              </div>
+                              <div className="mt-2 flex items-center justify-between rounded-lg bg-secondary/20 px-4 py-3">
+                                <span className="text-sm font-medium">Reimbursable</span>
+                                <button type="button" role="switch" aria-checked={row.reimbursable ?? false} onClick={() => updateRow({ reimbursable: !(row.reimbursable ?? false) })} className={`relative inline-flex h-6 w-11 items-center rounded-full ${row.reimbursable ? "bg-primary" : "bg-secondary"}`}>
+                                  <span className={`inline-block h-4 w-4 rounded-full bg-white transition-transform ${row.reimbursable ? "translate-x-6" : "translate-x-1"}`} />
+                                </button>
+                              </div>
+                            </div>
+                            <div className="space-y-1.5"><label className="text-sm font-medium">Notes</label><textarea rows={2} className="w-full resize-none rounded-md border border-input bg-background px-3 py-2 text-sm" value={row.description ?? ""} onChange={(event) => updateRow({ description: event.target.value })} /></div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
               </div>
+           </DialogContent>
+         </Dialog>
+
+          <Dialog
+            open={newReceiptCameraOpen}
+            onOpenChange={(open) => {
+              if (!open) stopNewReceiptCamera();
+            }}
+          >
+            <DialogContent className="border-border/60 bg-card p-0 sm:max-w-xl">
+              <DialogHeader className="px-5 pt-5">
+                <DialogTitle className="flex items-center gap-2 text-base">
+                  <Camera className="h-4 w-4 text-primary" /> Take Receipt Photo
+                </DialogTitle>
+                <DialogDescription>Position the entire receipt inside the frame.</DialogDescription>
+              </DialogHeader>
+              <div className="px-5">
+                <div className="relative flex min-h-64 items-center justify-center overflow-hidden rounded-xl bg-black">
+                  <video
+                    ref={newReceiptVideoRef}
+                    autoPlay
+                    muted
+                    playsInline
+                    className={`max-h-[60dvh] w-full object-contain ${newReceiptCameraError ? "hidden" : "block"}`}
+                  />
+                  {newReceiptCameraStarting && (
+                    <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-white">
+                      <Loader2 className="h-7 w-7 animate-spin" />
+                      <p className="text-sm">Starting camera…</p>
+                    </div>
+                  )}
+                  {newReceiptCameraError && (
+                    <div className="max-w-sm space-y-3 p-6 text-center text-white">
+                      <AlertTriangle className="mx-auto h-8 w-8 text-amber-400" />
+                      <p className="text-sm">{newReceiptCameraError}</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+              <DialogFooter className="gap-2 px-5 pb-5">
+                <Button type="button" variant="outline" onClick={() => {
+                  stopNewReceiptCamera();
+                  if (newReceiptCameraRef.current) {
+                    newReceiptCameraRef.current.value = "";
+                    newReceiptCameraRef.current.click();
+                  }
+                }}>
+                  Choose Photo
+                </Button>
+                <Button
+                  type="button"
+                  disabled={newReceiptCameraStarting || !!newReceiptCameraError}
+                  onClick={captureNewReceiptPhoto}
+                >
+                  <Camera className="mr-2 h-4 w-4" /> Capture Photo
+                </Button>
+              </DialogFooter>
             </DialogContent>
           </Dialog>
 

@@ -97,13 +97,38 @@ export type BusinessInformationErrors = Partial<Record<keyof BusinessInformation
 const trim = (value: string) => value.trim();
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const usZipPattern = /^\d{5}(?:-\d{4})?$/;
-const einTinPattern = /^\d[\d -]{2,24}$/;
 
 function parseNonNegativeInteger(value: string) {
   if (!value.trim()) return null;
   if (!/^\d+$/.test(value.trim())) return undefined;
   const parsed = Number(value);
   return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : undefined;
+}
+
+function parseAdditionalOwnershipPercentages(value: string): number[] | null {
+  if (!value.trim()) return [];
+
+  const percentages: number[] = [];
+  for (const line of value.split(/\r?\n/).filter((entry) => entry.trim())) {
+    const match = line.match(/;\s*Ownership:\s*([^%]*)%?\s*$/i);
+    const rawPercentage = match?.[1]?.trim() ?? "";
+    if (!rawPercentage) return null;
+
+    const percentage = Number(rawPercentage);
+    if (!Number.isFinite(percentage) || percentage < 0 || percentage > 100) return null;
+    percentages.push(percentage);
+  }
+
+  return percentages;
+}
+
+export function calculateTotalOwnership(ownershipPercent: string, additionalOwners: string): number | null {
+  const primaryPercentage = ownershipPercent.trim() ? Number(ownershipPercent) : 100;
+  if (!Number.isFinite(primaryPercentage) || primaryPercentage < 0 || primaryPercentage > 100) return null;
+
+  const additionalPercentages = parseAdditionalOwnershipPercentages(additionalOwners);
+  if (additionalPercentages === null) return null;
+  return additionalPercentages.reduce((total, percentage) => total + percentage, primaryPercentage);
 }
 
 export function normalizeWebsite(value: string): string | null {
@@ -119,6 +144,18 @@ export function normalizeWebsite(value: string): string | null {
   }
 }
 
+export function normalizeEin(value: string): string | null {
+  const trimmed = value.trim();
+  if (!/^(?:\d{9}|\d{2}-\d{7})$/.test(trimmed)) return null;
+  const digits = trimmed.replace("-", "");
+  return `${digits.slice(0, 2)}-${digits.slice(2)}`;
+}
+
+export function formatEinInput(value: string): string {
+  const digits = value.replace(/\D/g, "").slice(0, 9);
+  return digits.length > 2 ? `${digits.slice(0, 2)}-${digits.slice(2)}` : digits;
+}
+
 export function validateBusinessInformation(
   form: BusinessInformationFormData,
   options: { currentDate?: Date } = {},
@@ -132,7 +169,7 @@ export function validateBusinessInformation(
   if (!form.industry) errors.industry = "Industry is required.";
   if (!form.state) errors.state = "Primary business state is required.";
   if (!trim(form.einTin)) errors.einTin = "EIN / Tax ID is required.";
-  else if (!einTinPattern.test(trim(form.einTin))) errors.einTin = "Enter a valid EIN / Tax ID using letters, numbers, spaces, or hyphens.";
+  else if (normalizeEin(form.einTin) === null) errors.einTin = "Enter a valid 9-digit EIN in the format 12-3456789.";
 
   const year = trim(form.yearEstablished);
   if (year && (!/^\d{4}$/.test(year) || Number(year) < 1800 || Number(year) > currentYear)) {
@@ -156,8 +193,13 @@ export function validateBusinessInformation(
   if (trim(form.businessPhone) && !isValidUsPhone(form.businessPhone)) {
     errors.businessPhone = "Enter a valid 10-digit U.S. phone number.";
   }
-  if (form.hasCpa === "yes" && trim(form.currentCpaPhone) && !isValidUsPhone(form.currentCpaPhone)) {
-    errors.currentCpaPhone = "Enter a valid 10-digit U.S. CPA phone number.";
+  if (form.hasCpa === "yes") {
+    if (!trim(form.currentCpa)) errors.currentCpa = "CPA name is required.";
+    if (!trim(form.currentCpaCompany)) errors.currentCpaCompany = "CPA company is required.";
+    if (!trim(form.currentCpaPhone)) errors.currentCpaPhone = "CPA phone number is required.";
+    else if (!isValidUsPhone(form.currentCpaPhone)) {
+      errors.currentCpaPhone = "Enter a valid 10-digit U.S. CPA phone number.";
+    }
   }
   if (trim(form.website) && normalizeWebsite(form.website) === null) {
     errors.website = "Enter a valid HTTP or HTTPS website.";
@@ -170,6 +212,13 @@ export function validateBusinessInformation(
   const ownership = Number(trim(form.ownershipPercent));
   if (trim(form.ownershipPercent) && (!Number.isFinite(ownership) || ownership < 0 || ownership > 100)) {
     errors.ownershipPercent = "Ownership percentage must be between 0 and 100.";
+  } else {
+    const totalOwnership = calculateTotalOwnership(form.ownershipPercent, form.additionalOwners);
+    if (totalOwnership === null) {
+      errors.ownershipPercent = "Each owner must have an ownership percentage between 0 and 100.";
+    } else if (Math.abs(totalOwnership - 100) > 0.000001) {
+      errors.ownershipPercent = `Total ownership must equal 100%. Current total: ${totalOwnership}%.`;
+    }
   }
   return errors;
 }
@@ -203,7 +252,7 @@ export function normalizeBusinessInformation(form: BusinessInformationFormData):
     ownerTitle: trim(form.ownerTitle),
     ownershipPercent: trim(form.ownershipPercent) ? Number(trim(form.ownershipPercent)) : 100,
     additionalOwners: trim(form.additionalOwners),
-    einTin: trim(form.einTin),
+    einTin: normalizeEin(form.einTin) ?? trim(form.einTin),
     stateRegistrationNumber: trim(form.stateRegistrationNumber),
     businessLicenseNumber: trim(form.businessLicenseNumber),
     salesTaxNumber: trim(form.salesTaxNumber),

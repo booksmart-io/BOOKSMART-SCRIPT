@@ -18,6 +18,8 @@ type StripeStatus = {
 };
 
 const PROMPT_STORAGE_PREFIX = "booksmart:upgrade-prompt-dismissed";
+const PENDING_SURVEY_KEY = "booksmart:start-business-survey";
+const ACTIVE_SURVEY_FLOW_KEY = "booksmart:survey-flow-active";
 
 function clearUpgradePromptDismissals() {
   for (let i = window.sessionStorage.length - 1; i >= 0; i -= 1) {
@@ -118,6 +120,10 @@ export function SubscriptionUpgradePrompt({ userId }: { userId?: number | null }
   useEffect(() => {
     if (isLoading || !userId || currentTier !== "free") return;
     if (!requested && window.sessionStorage.getItem(storageKey) === "1") return;
+    if (!requested && (
+      window.sessionStorage.getItem(PENDING_SURVEY_KEY)
+      || window.sessionStorage.getItem(ACTIVE_SURVEY_FLOW_KEY) === "1"
+    )) return;
     setOpen(true);
   }, [currentTier, isLoading, requested, storageKey, userId]);
 

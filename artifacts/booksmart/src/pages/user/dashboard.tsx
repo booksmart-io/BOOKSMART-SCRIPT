@@ -212,7 +212,6 @@ export default function UserDashboard() {
     if (typeof window === "undefined" || !orgId) return;
     const pendingSurveyOrgId = Number(window.sessionStorage.getItem("booksmart:start-business-survey"));
     if (pendingSurveyOrgId !== orgId) return;
-    window.sessionStorage.removeItem("booksmart:start-business-survey");
     setSurveyIntroOpen(true);
   }, [orgId]);
 
@@ -448,7 +447,7 @@ export default function UserDashboard() {
       iconBg: "bg-blue-600/90",
       title: "Upload documents",
       detail: `${docCount} document${docCount === 1 ? "" : "s"} uploaded for reports, tax, and AI context.`,
-      href: "/user/tax",
+      href: "/user/tax?action=upload-document",
       cta: "Upload",
     },
     {
@@ -646,9 +645,21 @@ difficulty must be "Easy", "Medium", or "Hard". savings is a USD number.`;
             {/* Today's Missions */}
             <Card>
               <CardContent className="p-0">
-                <div className="px-5 pt-4 pb-2.5">
-                  <p className="text-[15px] font-bold">Action Center</p>
-                  <p className="text-[12px] text-muted-foreground mt-1">Quick access to the setup and finance tasks that are live now.</p>
+                <div className="px-5 pb-2.5 pt-4">
+                  <div className="flex items-end justify-between gap-3">
+                    <div>
+                      <p className="text-[15px] font-bold">Action Center</p>
+                      <p className="mt-1 text-[12px] text-muted-foreground">
+                        {readinessPct === 100
+                          ? "Your BookSmart setup is complete."
+                          : `${readinessComplete} of ${readinessItems.length} setup milestones complete`}
+                      </p>
+                    </div>
+                    <span className="shrink-0 text-[20px] font-bold text-primary">{readinessPct}%</span>
+                  </div>
+                  <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-[#29415f]" aria-label={`${readinessPct}% of setup complete`}>
+                    <div className="h-full rounded-full bg-primary transition-all duration-700" style={{ width: `${readinessPct}%` }} />
+                  </div>
                 </div>
                 <div className="space-y-1.5 px-4 pb-4">
                   <button
@@ -661,12 +672,12 @@ difficulty must be "Easy", "Medium", or "Hard". savings is a USD number.`;
                       <ClipboardList className="h-5 w-5" />
                     </div>
                     <div className="min-w-0 flex-1">
-                      <p className="break-words text-[13px] font-semibold group-hover:text-primary">Complete your BookSmart setup</p>
+                      <p className="break-words text-[13px] font-semibold group-hover:text-primary">Business survey</p>
                       <p className="mt-0.5 line-clamp-2 text-[11px] text-muted-foreground">
                         {onboarding.surveyComplete ? "Business Survey and Balance Sheet Profile complete" : "Continue your organization-specific survey"}
                       </p>
                     </div>
-                    <span className="col-start-2 text-[12px] font-semibold text-primary underline decoration-primary/40 underline-offset-4 transition-colors group-hover:decoration-primary sm:col-start-auto">
+                    <span className="col-start-2 text-[12px] font-semibold text-primary transition-colors sm:col-start-auto">
                       {onboarding.surveyComplete ? "Review Answers" : "Continue Survey"}
                     </span>
                   </button>
@@ -683,7 +694,7 @@ difficulty must be "Easy", "Medium", or "Hard". savings is a USD number.`;
                           <p className="break-words text-[13px] font-semibold group-hover:text-primary">{item.title}</p>
                           <p className="mt-0.5 line-clamp-2 text-[11px] text-muted-foreground">{item.detail}</p>
                         </div>
-                        <span className="col-start-2 text-[12px] font-semibold text-primary underline decoration-primary/40 underline-offset-4 transition-colors group-hover:decoration-primary sm:col-start-auto">{item.cta}</span>
+                        <span className="col-start-2 text-[12px] font-semibold text-primary transition-colors sm:col-start-auto">{item.cta}</span>
                     </Link>
                   ))}
                 </div>
@@ -691,54 +702,58 @@ difficulty must be "Easy", "Medium", or "Hard". savings is a USD number.`;
             </Card>
 
             {/* AI Insight */}
-            <Card style={{ background: "linear-gradient(135deg, #020e2c 0%, #071f4a 50%, #061a3d 100%)", borderColor: "rgba(255,255,255,0.08)" }}>
-              <CardContent className="flex flex-col items-center gap-1.5 p-5 text-center">
-                <p className="text-[15px] font-bold text-white">AI Insight</p>
-                <p className="text-[12px] text-white/60">Maximize Your Business Savings Potential!</p>
+            <Card className="h-full" style={{ background: "linear-gradient(135deg, #020e2c 0%, #071f4a 50%, #061a3d 100%)", borderColor: "rgba(255,255,255,0.08)" }}>
+              <CardContent className="flex h-full flex-col items-center p-5 text-center">
+                <div>
+                  <p className="text-[18px] font-bold text-white">AI Insight</p>
+                  <p className="mt-1 text-[14px] text-white/65">Maximize Your Business Savings Potential!</p>
+                </div>
 
                 {insightLoading ? (
-                  <div className="flex flex-col items-center gap-2 mt-4">
+                  <div className="flex flex-1 flex-col items-center justify-center gap-2">
                     <Loader2 className="h-8 w-8 animate-spin text-primary" />
-                    <p className="text-[12px] text-white/50">Analyzing your finances...</p>
+                    <p className="text-[14px] text-white/55">Analyzing your finances...</p>
                   </div>
                 ) : insightUnlocked && insightData ? (
-                  <>
-                    <p className="mt-1 max-w-full text-[32px] font-bold leading-none text-emerald-400 [overflow-wrap:anywhere] sm:text-[38px]">
-                      {formatMoney(insightData.totalSavings)}
-                    </p>
-                    <p className="text-[13px] text-white/70">Across {insightData.strategies.length} strategic insights</p>
-                    <div className="w-full mt-2 space-y-1.5 text-left">
-                      {insightData.strategies.slice(0, 3).map((s, i) => (
-                        <div key={i} className="flex justify-between text-[12px] gap-2">
-                          <span className="text-white/65 truncate">{s.title}</span>
-                          <span className="text-emerald-400 font-semibold flex-shrink-0">{formatMoney(s.savings)}</span>
-                        </div>
-                      ))}
+                  <div className="flex w-full flex-1 flex-col pt-4">
+                    <div className="flex flex-1 flex-col items-center justify-center">
+                      <p className="max-w-full text-[38px] font-bold leading-none text-emerald-400 [overflow-wrap:anywhere] sm:text-[44px]">
+                        {formatMoney(insightData.totalSavings)}
+                      </p>
+                      <p className="mt-2 text-[15px] text-white/75">Across {insightData.strategies.length} strategic insights</p>
+                      <div className="mt-4 w-full space-y-1.5 text-left">
+                        {insightData.strategies.slice(0, 3).map((s, i) => (
+                          <div key={i} className="flex justify-between gap-2 text-[14px]">
+                            <span className="truncate text-white/65">{s.title}</span>
+                            <span className="flex-shrink-0 font-semibold text-emerald-400">{formatMoney(s.savings)}</span>
+                          </div>
+                        ))}
+                      </div>
                     </div>
-                    <Link href="/user/ai-strategy" className="w-full mt-2">
-                      <button className="w-full rounded-xl border border-white/15 text-white text-[13px] font-medium py-2.5 flex items-center justify-center gap-2 hover:bg-white/5 transition-colors"
+                    <Link href="/user/ai-strategy" className="mt-4 w-full">
+                      <button className="flex w-full items-center justify-center gap-2 rounded-xl border border-white/15 py-3 text-[14px] font-medium text-white transition-colors hover:bg-white/5"
                         style={{ background: "rgba(13,32,68,0.8)" }}>
                         Full Strategies <ArrowRight className="h-3.5 w-3.5" />
                       </button>
                     </Link>
-                  </>
+                  </div>
                 ) : (
-                  <>
-                    {/* Teaser dollar amount */}
-                    <p className="mt-1 max-w-full text-[32px] font-bold leading-none text-emerald-400 [overflow-wrap:anywhere] sm:text-[38px]">
-                      {income > 0 ? formatMoney(Math.round(income * 0.15 / 10) * 10) : "$6,470"}
-                    </p>
-                    <p className="text-[13px] text-white/70">
-                      Across {Math.max(3, Math.min(8, Math.floor(allTxCount / 3) + 3))} strategic insights
-                    </p>
-                    <p className="text-[12px] text-white/45 max-w-[190px] leading-snug">
-                      Unlock to view strategies on how to save your business up to {income > 0 ? formatMoney(Math.round(income * 0.15 / 10) * 10) : "$6,470"}
-                    </p>
-                    {/* Unlock button matching Flutter: dark bg, lock icon | tokens | coin icon */}
+                  <div className="flex w-full flex-1 flex-col pt-4">
+                    <div className="flex flex-1 flex-col items-center justify-center">
+                      <p className="max-w-full text-[38px] font-bold leading-none text-emerald-400 [overflow-wrap:anywhere] sm:text-[44px]">
+                        {income > 0 ? formatMoney(Math.round(income * 0.15 / 10) * 10) : "$6,470"}
+                      </p>
+                      <p className="mt-2 text-[15px] text-white/75">
+                        Across {Math.max(3, Math.min(8, Math.floor(allTxCount / 3) + 3))} strategic insights
+                      </p>
+                      <p className="mt-2.5 max-w-[280px] text-[14px] leading-relaxed text-white/55">
+                        Unlock to view strategies on how to save your business up to {income > 0 ? formatMoney(Math.round(income * 0.15 / 10) * 10) : "$6,470"}
+                      </p>
+                    </div>
                     <button
                       onClick={unlockAiInsight}
                       disabled={liveTokens < 150}
-                      className="mt-2 w-full rounded-xl text-white text-[13px] font-medium py-2.5 flex items-center justify-center gap-2 transition-opacity disabled:opacity-40"
+                      className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl py-3 text-[14px] font-medium text-white transition-opacity disabled:opacity-40"
                       style={{ background: "rgba(13,32,68,0.9)", border: "1px solid rgba(255,255,255,0.15)" }}>
                       <Lock className="h-3.5 w-3.5 text-white/80" />
                       <span>Unlock &amp; View</span>
@@ -747,19 +762,19 @@ difficulty must be "Easy", "Medium", or "Hard". savings is a USD number.`;
                       <Coins className="h-3.5 w-3.5 text-amber-400" />
                     </button>
                     {liveTokens < 150 && (
-                      <p className="text-[11px] text-rose-400 mt-0.5">
+                      <p className="mt-1.5 text-[12px] text-rose-400">
                         Need {150 - liveTokens} more tokens
                       </p>
                     )}
-                  </>
+                  </div>
                 )}
               </CardContent>
             </Card>
           </div>
 
-          {/* Readiness + Plan row */}
-          <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-            <Card>
+          {/* Plan */}
+          <div>
+            <Card className="hidden" aria-hidden="true">
               <CardContent className="p-0">
                 <div className="px-5 pt-4 pb-3">
                   <div className="flex items-center justify-between gap-3">
@@ -837,59 +852,77 @@ difficulty must be "Easy", "Medium", or "Hard". savings is a USD number.`;
             <Card className="relative h-full overflow-hidden">
               <div className="pointer-events-none absolute -right-16 -top-20 h-48 w-48 rounded-full bg-primary/10 blur-3xl" />
               <div className="pointer-events-none absolute -bottom-20 -left-16 h-48 w-48 rounded-full bg-blue-500/10 blur-3xl" />
-              <CardContent className="relative flex h-full flex-col p-5">
-                  <div className="flex flex-wrap items-start justify-between gap-3 border-b border-border/30 pb-4">
-                    <div className="flex min-w-0 items-start gap-3">
-                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-primary/25 bg-primary/10">
-                      <Sparkles className="h-5 w-5 text-primary" />
+              <CardContent className="relative flex h-full flex-col p-4">
+                  <div className="flex flex-wrap items-start justify-between gap-2 border-b border-border/30 pb-2.5">
+                    <div className="flex min-w-0 items-start gap-2.5">
+                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-primary/25 bg-primary/10">
+                      <Sparkles className="h-4 w-4 text-primary" />
                     </div>
                       <div className="min-w-0">
-                      <p className="text-[15px] font-bold">Current Plan</p>
-                      <p className="mt-1 text-[12px] text-muted-foreground">Subscription and token access for this account.</p>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="text-[15px] font-bold">Current Plan</p>
+                        <span className="max-w-full break-words rounded-full border border-primary/35 bg-primary/10 px-2.5 py-0.5 text-[11px] font-bold text-primary shadow-[0_0_18px_rgba(250,204,21,0.08)]">{planLabel}</span>
+                      </div>
+                      <p className="mt-0.5 text-[11px] text-muted-foreground">Subscription and account usage.</p>
                     </div>
                   </div>
-                  <span className="max-w-full break-words rounded-full border border-primary/35 bg-primary/10 px-3 py-1 text-[12px] font-bold text-primary shadow-[0_0_18px_rgba(250,204,21,0.08)]">{planLabel}</span>
+                  <span className="flex items-center gap-1.5 text-[11px] font-medium text-emerald-300">
+                    <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.65)]" />
+                    Active
+                  </span>
                 </div>
 
-                <div className="mt-4 grid grid-cols-2 gap-3">
+                <div className="mt-3 grid grid-cols-2 gap-2.5">
                   {[
-                    { label: "Tokens", value: liveTokens, icon: Coins, tone: "text-amber-300 bg-amber-400/10 border-amber-400/20" },
-                    { label: "Banks", value: connectedBankCount, icon: Landmark, tone: "text-emerald-300 bg-emerald-400/10 border-emerald-400/20" },
-                    { label: "Documents", value: docCount, icon: FileText, tone: "text-blue-300 bg-blue-400/10 border-blue-400/20" },
-                    { label: "Transactions", value: allTxCount, icon: CreditCard, tone: "text-violet-300 bg-violet-400/10 border-violet-400/20" },
-                  ].map(({ label, value, icon: MetricIcon, tone }) => (
-                    <div key={label} className="rounded-xl border border-border/35 bg-background/20 p-3.5 shadow-sm">
+                    { label: "Tokens", value: liveTokens, detail: "remaining", action: "View usage", href: "/user/token", icon: Coins, tone: "text-amber-300 bg-amber-400/10 border-amber-400/20" },
+                    { label: "Banks", value: connectedBankCount, detail: connectedBankCount === 1 ? "bank connected" : "banks connected", action: connectedBankCount > 0 ? "Manage" : "Connect bank", href: "/user/reports?action=accounts", icon: Landmark, tone: "text-emerald-300 bg-emerald-400/10 border-emerald-400/20" },
+                    { label: "Documents", value: docCount, detail: docCount === 1 ? "document on file" : "documents on file", action: "View files", href: "/user/tax", icon: FileText, tone: "text-blue-300 bg-blue-400/10 border-blue-400/20" },
+                    { label: "Transactions", value: allTxCount, detail: uncategorizedCount > 0 ? `${uncategorizedCount} need review` : "ready to review", action: "Open reports", href: "/user/reports?tab=transactions", icon: CreditCard, tone: "text-violet-300 bg-violet-400/10 border-violet-400/20" },
+                  ].map(({ label, value, detail, action, href, icon: MetricIcon, tone }) => (
+                    <Link key={label} href={href} className="group rounded-xl border border-border/35 bg-background/20 p-3 shadow-sm transition-all hover:-translate-y-0.5 hover:border-primary/25 hover:bg-muted/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary">
                       <div className="flex items-center justify-between gap-2">
                         <p className="text-[11px] font-medium text-muted-foreground">{label}</p>
-                        <div className={`flex h-7 w-7 items-center justify-center rounded-lg border ${tone}`}>
-                          <MetricIcon className="h-3.5 w-3.5" />
+                        <div className={`flex h-6 w-6 items-center justify-center rounded-md border ${tone}`}>
+                          <MetricIcon className="h-3 w-3" />
                         </div>
                       </div>
-                      <p className="mt-2 text-[24px] font-bold leading-none [overflow-wrap:anywhere]">{value}</p>
-                    </div>
+                      <p className="mt-1.5 text-[20px] font-bold leading-none [overflow-wrap:anywhere]">{value}</p>
+                      <div className="mt-1.5 flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
+                        <p className="text-[10px] text-muted-foreground">{detail}</p>
+                        <span className="flex items-center gap-0.5 text-[10px] font-semibold text-primary opacity-80 transition-opacity group-hover:opacity-100">
+                          {action} <ArrowRight className="h-2.5 w-2.5 transition-transform group-hover:translate-x-0.5" />
+                        </span>
+                      </div>
+                    </Link>
                   ))}
                 </div>
 
-                <div className="mt-4 rounded-xl border border-border/35 bg-muted/10 p-3.5">
-                  <div className="flex items-center justify-between gap-3">
-                    <div>
+                <div className="mt-3 rounded-xl border border-primary/15 bg-primary/[0.04] p-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
                       <p className="text-[12px] font-semibold">{planLabel} workspace</p>
-                      <p className="mt-0.5 text-[11px] text-muted-foreground">Manage billing, usage, and additional BookSmart tokens.</p>
+                      <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-foreground/75">
+                        {["AI strategy & reporting", "Secure document workspace", "Connected banking tools"].map((benefit) => (
+                          <span key={benefit} className="flex items-center gap-1">
+                            <CheckCircle2 className="h-2.5 w-2.5 shrink-0 text-primary" /> {benefit}
+                          </span>
+                        ))}
+                      </div>
                     </div>
-                    <ShieldCheck className="h-5 w-5 shrink-0 text-primary" />
+                    <ShieldCheck className="h-4 w-4 shrink-0 text-primary" />
                   </div>
                 </div>
 
-                <div className="mt-auto flex flex-col gap-2 pt-4 sm:flex-row">
+                <div className="mt-auto flex flex-col gap-2 pt-3 sm:flex-row">
                   {planTier !== "free" ? (
                     <Link href="/user/subscription" className="flex-1">
-                      <Button className="w-full">{planTier === "pro" ? "Manage Plan" : "Upgrade Plan"}</Button>
+                      <Button className="h-9 w-full">{planTier === "pro" ? "Manage Plan" : "Upgrade Plan"}</Button>
                     </Link>
                   ) : (
-                    <Button className="flex-1" onClick={requestSubscriptionUpgrade}>Upgrade Plan</Button>
+                    <Button className="h-9 flex-1" onClick={requestSubscriptionUpgrade}>Upgrade Plan</Button>
                   )}
                   <Link href="/user/token" className="flex-1">
-                    <Button variant="outline" className="w-full">Buy Tokens</Button>
+                    <Button variant="outline" className="h-9 w-full gap-1.5"><Coins className="h-3.5 w-3.5" />Buy Tokens</Button>
                   </Link>
                 </div>
               </CardContent>
@@ -1122,7 +1155,13 @@ difficulty must be "Easy", "Medium", or "Hard". savings is a USD number.`;
         </div>
       </div>
 
-      <Dialog open={surveyIntroOpen} onOpenChange={setSurveyIntroOpen}>
+      <Dialog
+        open={surveyIntroOpen}
+        onOpenChange={(next) => {
+          setSurveyIntroOpen(next);
+          if (!next) window.sessionStorage.removeItem("booksmart:start-business-survey");
+        }}
+      >
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle>Help BookSmart personalize your experience</DialogTitle>
@@ -1132,15 +1171,26 @@ difficulty must be "Easy", "Medium", or "Hard". savings is a USD number.`;
             </DialogDescription>
           </DialogHeader>
           <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-            <Button variant="ghost" onClick={() => setSurveyIntroOpen(false)}>I’ll do this later</Button>
-            <Button onClick={() => { setSurveyIntroOpen(false); setSurveyOpen(true); }}>Start Survey</Button>
+            <Button variant="ghost" onClick={() => {
+              window.sessionStorage.removeItem("booksmart:start-business-survey");
+              setSurveyIntroOpen(false);
+            }}>I’ll do this later</Button>
+            <Button onClick={() => {
+              window.sessionStorage.setItem("booksmart:survey-flow-active", "1");
+              window.sessionStorage.removeItem("booksmart:start-business-survey");
+              setSurveyIntroOpen(false);
+              setSurveyOpen(true);
+            }}>Start Survey</Button>
           </div>
         </DialogContent>
       </Dialog>
       <BusinessSurveyDialog
         orgId={orgId}
         open={surveyOpen}
-        onOpenChange={setSurveyOpen}
+        onOpenChange={(next) => {
+          setSurveyOpen(next);
+          if (!next) window.sessionStorage.removeItem("booksmart:survey-flow-active");
+        }}
       />
     </div>
   );

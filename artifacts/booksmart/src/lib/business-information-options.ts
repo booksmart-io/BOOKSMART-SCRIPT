@@ -1,14 +1,14 @@
 export const BUSINESS_ENTITY_TYPES = [
+  "Sole Proprietor",
+  "Single Member LLC",
+  "Multi Member LLC",
+  "S Corporation",
   "C Corporation",
   "General Partnership",
   "Limited Partnership",
   "LLP",
-  "Multi Member LLC",
   "Nonprofit",
   "Other",
-  "S Corporation",
-  "Single Member LLC",
-  "Sole Proprietor",
 ];
 
 export const BUSINESS_ESTABLISHED_YEARS = Array.from(

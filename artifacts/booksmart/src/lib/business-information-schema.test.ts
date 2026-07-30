@@ -4,6 +4,7 @@ import { buildBusinessInformationPayload, businessAddressForReload, cpaInformati
 import {
   normalizeBusinessInformation,
   cpaQuestionVisibility,
+  formatEinInput,
   validateBusinessInformation,
   type BusinessInformationFormData,
 } from "./business-information-schema";
@@ -47,6 +48,23 @@ test("CPA conditional questions are mutually exclusive", () => {
   assert.deepEqual(cpaQuestionVisibility(""), { showCurrentCpa: false, showCpaMatch: false });
 });
 
+test("current CPA details are required when the business has a CPA", () => {
+  const missing = validateBusinessInformation(validForm({ hasCpa: "yes" }));
+  assert.ok(missing.currentCpa);
+  assert.ok(missing.currentCpaCompany);
+  assert.ok(missing.currentCpaPhone);
+
+  const complete = validateBusinessInformation(validForm({
+    hasCpa: "yes",
+    currentCpa: "Jordan Smith, CPA",
+    currentCpaCompany: "Smith Accounting",
+    currentCpaPhone: "626-780-3354",
+  }));
+  assert.equal(complete.currentCpa, undefined);
+  assert.equal(complete.currentCpaCompany, undefined);
+  assert.equal(complete.currentCpaPhone, undefined);
+});
+
 test("required fields and malformed contact values use shared validation", () => {
   const errors = validateBusinessInformation(validForm({
     legalName: "", entityType: "", industry: "", state: "", einTin: "",
@@ -69,14 +87,35 @@ test("year, date, ownership, ZIP, and EIN/TIN are bounded", () => {
   assert.equal(validateBusinessInformation(validForm({ employees: "-1", contractors: "1.5" })).employees, undefined);
   assert.ok(validateBusinessInformation(validForm({ ownershipPercent: "-1" })).ownershipPercent);
   assert.ok(validateBusinessInformation(validForm({ ownershipPercent: "101" })).ownershipPercent);
+  assert.equal(validateBusinessInformation(validForm({
+    ownershipPercent: "80",
+    additionalOwners: "Name: Partner; Title: Owner; Ownership: 20%",
+  })).ownershipPercent, undefined);
+  assert.match(validateBusinessInformation(validForm({
+    ownershipPercent: "100",
+    additionalOwners: "Name: Partner; Title: Owner; Ownership: 20%",
+  })).ownershipPercent ?? "", /Current total: 120%/);
+  assert.ok(validateBusinessInformation(validForm({
+    ownershipPercent: "80",
+    additionalOwners: "Name: Partner; Title: Owner; Ownership: %",
+  })).ownershipPercent);
   assert.equal(validateBusinessInformation(validForm({ zip: "12345" })).zip, undefined);
   assert.equal(validateBusinessInformation(validForm({ zip: "12345-6789" })).zip, undefined);
   assert.ok(validateBusinessInformation(validForm({ zip: "12-345" })).zip);
-  for (const einTin of ["12-3456789", "123 45 6789", "123456789"]) {
+  for (const einTin of ["12-3456789", "123456789"]) {
     assert.equal(validateBusinessInformation(validForm({ einTin })).einTin, undefined);
   }
-  assert.ok(validateBusinessInformation(validForm({ einTin: "ABC-123-45" })).einTin);
+  for (const einTin of ["123 45 6789", "12-345678", "12-34567890", "ABC-123-45"]) {
+    assert.ok(validateBusinessInformation(validForm({ einTin })).einTin);
+  }
   assert.ok(validateBusinessInformation(validForm({ startDate: "2020-02-31" })).startDate);
+});
+
+test("EIN input is formatted as the user types", () => {
+  assert.equal(formatEinInput("1"), "1");
+  assert.equal(formatEinInput("123"), "12-3");
+  assert.equal(formatEinInput("12-3456789"), "12-3456789");
+  assert.equal(formatEinInput("12 345 6789 extra"), "12-3456789");
 });
 
 test("normalization trims email and safely adds HTTPS to bare domains", () => {

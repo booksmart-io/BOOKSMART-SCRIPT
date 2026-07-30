@@ -3,12 +3,14 @@ import { Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { calculateTotalOwnership } from "@/lib/business-information-schema";
 
 type Owner = { name: string; title: string; percentage: string };
 
 type AdditionalOwnersInputProps = {
   value: string;
   onChange: (value: string) => void;
+  primaryPercentage: string;
 };
 
 const emptyOwner = (): Owner => ({ name: "", title: "", percentage: "" });
@@ -29,8 +31,10 @@ function parseOwners(value: string): Owner[] {
   });
 }
 
-export function AdditionalOwnersInput({ value, onChange }: AdditionalOwnersInputProps) {
+export function AdditionalOwnersInput({ value, onChange, primaryPercentage }: AdditionalOwnersInputProps) {
   const [owners, setOwners] = useState<Owner[]>(() => parseOwners(value));
+  const totalOwnership = calculateTotalOwnership(primaryPercentage, value);
+  const hasValidTotal = totalOwnership !== null && Math.abs(totalOwnership - 100) <= 0.000001;
 
   useEffect(() => {
     if (value !== serializeOwners(owners)) setOwners(parseOwners(value));
@@ -102,6 +106,10 @@ export function AdditionalOwnersInput({ value, onChange }: AdditionalOwnersInput
           </Button>
         </div>
       ))}
+
+      <p className={hasValidTotal ? "text-sm text-emerald-400" : "text-sm text-destructive"} role="status">
+        Total ownership: {totalOwnership === null ? "Invalid" : `${totalOwnership}%`} / 100%
+      </p>
     </div>
   );
 }

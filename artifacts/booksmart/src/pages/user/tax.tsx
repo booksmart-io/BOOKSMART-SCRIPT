@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from "react";
+import { useSearch } from "wouter";
 import { supabase } from "@/lib/supabase";
 import { checkAddTransaction } from "@/lib/plan-limits";
 import { categorizeTransaction } from "@/lib/ai-categorization";
@@ -1932,6 +1933,7 @@ export default function Tax() {
   const numericId = profile?.numericId ?? null;
   const qc = useQueryClient();
   const { toast } = useToast();
+  const searchStr = useSearch();
   const [uploadOpen, setUploadOpen] = useState(false);
   const [reviewImportId, setReviewImportId] = useState<number | null>(null);
   const [search, setSearch] = useState("");
@@ -1939,6 +1941,12 @@ export default function Tax() {
   const [filterCategory, setFilterCategory] = useState<string>("all");
   const [docToDelete, setDocToDelete] = useState<UserDocument | null>(null);
   const [docToView, setDocToView] = useState<UserDocument | null>(null);
+
+  useEffect(() => {
+    if (new URLSearchParams(searchStr).get("action") === "upload-document") {
+      setUploadOpen(true);
+    }
+  }, [searchStr]);
 
   const { data: docs = [], isLoading, error: queryError } = useQuery<UserDocument[]>({
     queryKey: ["user_documents", numericId],
