@@ -24,6 +24,7 @@ import {
 } from "@/lib/business-document-prefill";
 import {
   BUSINESS_ENTITY_TYPES as ENTITY_TYPES,
+  BUSINESS_ESTABLISHED_YEARS,
   BUSINESS_INDUSTRIES as INDUSTRIES,
   NAICS_BY_INDUSTRY,
 } from "@/lib/business-information-options";
@@ -357,7 +358,7 @@ export default function Profile() {
   const validateBusinessStep = () => {
     const errors = validateBusinessInformation(businessInformationForm());
     const fieldsByStep: Array<Array<keyof typeof errors>> = [
-      ["legalName", "entityType", "industry", "yearEstablished", "startDate", "website", "businessEmail", "businessPhone"],
+      ["legalName", "entityType", "industry", "yearEstablished", "website", "businessEmail", "businessPhone"],
       ["state", "zip", "ownershipPercent"],
       ["einTin"],
     ];
@@ -633,11 +634,10 @@ export default function Profile() {
                   <div className="grid min-w-0 gap-4 xl:grid-cols-2">
                     <p className="text-sm text-muted-foreground xl:col-span-2">Identify the registered business and provide contact details used for its BookSmart profile.</p>
                     <TextField label="Legal Business Name *" value={businessName} onChange={setBusinessName} hideLabel />
-                    <SelectField label="Business Type *" value={orgType} onChange={setOrgType} options={ENTITY_TYPES} placeholder="Select business type" />
+                    <SelectField label="Business Type *" value={orgType} onChange={setOrgType} options={ENTITY_TYPES} placeholder="Select business type" preserveOrder />
                     <SelectField label="Industry *" value={industry} onChange={(value) => { setIndustry(value); setNaics(NAICS_BY_INDUSTRY[value] ?? ""); }} options={INDUSTRIES} placeholder="Select industry" openDownward />
                     <TextField label="NAICS Code" value={naics} onChange={setNaics} hideLabel />
-                    <TextField label="Year Established" value={yearEstablished} onChange={setYearEstablished} type="number" hideLabel />
-                    <TextField label="Date Business Started" value={startDate} onChange={setStartDate} type="date" />
+                    <SelectField label="Year Established" value={yearEstablished} onChange={setYearEstablished} options={BUSINESS_ESTABLISHED_YEARS} placeholder="Select year" preserveOrder openDownward />
                     <TextField label="Website" value={website} onChange={setWebsite} hideLabel />
                     <TextField label="Business Email" value={businessEmail} onChange={setBusinessEmail} type="email" hideLabel />
                     <PhoneField label="Business Phone" value={businessPhone} onChange={setBusinessPhone} />
@@ -782,6 +782,7 @@ function SelectField({
   options,
   placeholder,
   openDownward = false,
+  preserveOrder = false,
 }: {
   label: string;
   value: string;
@@ -789,10 +790,12 @@ function SelectField({
   options: Array<string | { value: string; label: string }>;
   placeholder?: string;
   openDownward?: boolean;
+  preserveOrder?: boolean;
 }) {
-  const normalized = options
-    .map((option) => typeof option === "string" ? { value: option, label: option } : option)
-    .sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: "base" }));
+  const normalized = options.map((option) => typeof option === "string" ? { value: option, label: option } : option);
+  if (!preserveOrder) {
+    normalized.sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: "base" }));
+  }
   return (
     <div className="min-w-0 space-y-2">
       <Label>{label}</Label>

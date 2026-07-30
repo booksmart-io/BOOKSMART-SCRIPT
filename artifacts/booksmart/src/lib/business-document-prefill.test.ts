@@ -14,6 +14,9 @@ const states = [
 test("maps only unambiguous entity types", () => {
   assert.equal(safelyMapEntityType("Single-Member LLC"), "Single Member LLC");
   assert.equal(safelyMapEntityType("Nonprofit Corporation"), "Nonprofit");
+  assert.equal(safelyMapEntityType("Sole Proprietorship"), "Sole Proprietor");
+  assert.equal(safelyMapEntityType("Limited Partnership"), "Limited Partnership");
+  assert.equal(safelyMapEntityType("Limited Liability Partnership"), "LLP");
   assert.equal(safelyMapEntityType("Limited Liability Company"), null);
   assert.equal(safelyMapEntityType("Corporation"), null);
 });

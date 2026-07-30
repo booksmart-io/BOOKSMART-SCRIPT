@@ -13,6 +13,42 @@ function getAdminClient() {
   return createClient(SUPABASE_URL, serviceRoleKey, { auth: { persistSession: false } });
 }
 
+type AdminErrorDetails = {
+  message: string;
+  details?: string;
+  hint?: string;
+  code?: string;
+};
+
+function adminErrorDetails(error: unknown, fallback: string): AdminErrorDetails {
+  if (error instanceof Error) {
+    return { message: error.message || fallback };
+  }
+  if (!error || typeof error !== "object") {
+    return { message: typeof error === "string" && error ? error : fallback };
+  }
+
+  const value = error as Record<string, unknown>;
+  const nestedMessage = value.message;
+  const message =
+    typeof nestedMessage === "string"
+      ? nestedMessage
+      : nestedMessage && typeof nestedMessage === "object"
+        ? adminErrorDetails(nestedMessage, fallback).message
+        : fallback;
+  const stringField = (name: string) => {
+    const field = value[name];
+    return typeof field === "string" && field ? field : undefined;
+  };
+
+  return {
+    message,
+    details: stringField("details"),
+    hint: stringField("hint"),
+    code: stringField("code"),
+  };
+}
+
 // All routes below require a verified Supabase session AND users.role === "admin".
 router.use("/admin/accounts", requireAuth, requireAdmin);
 router.use("/admin/users", requireAuth, requireAdmin);
@@ -203,12 +239,9 @@ router.post("/admin/set-plan", async (req, res) => {
 
     res.json({ ok: true, tier });
   } catch (e) {
-    const message = e && typeof e === "object" && "message" in e ? String((e as { message?: unknown }).message) : String(e);
-    const details = e && typeof e === "object" && "details" in e ? String((e as { details?: unknown }).details) : undefined;
-    const hint = e && typeof e === "object" && "hint" in e ? String((e as { hint?: unknown }).hint) : undefined;
-    const code = e && typeof e === "object" && "code" in e ? String((e as { code?: unknown }).code) : undefined;
-    console.error("[admin/set-plan]", { message, details, hint, code });
-    res.status(502).json({ error: "admin_set_plan_error", message, details, hint, code });
+    const error = adminErrorDetails(e, "Unable to update the user's plan");
+    console.error("[admin/set-plan]", error);
+    res.status(502).json({ error: "admin_set_plan_error", ...error });
   }
 });
 
@@ -248,10 +281,16 @@ router.delete("/admin/users/:userId", async (req, res) => {
       return;
     }
 
-    // Delete the database profile first. If a restrictive foreign key exists,
-    // the request stops here and the user keeps their working login.
+    // Delete the database profile before Auth. Cascading relationships remove
+    // owned data atomically. If a restrictive foreign key still exists, the
+    // user keeps their working login and the response names the constraint.
     const { error: profileDeleteError } = await admin.from("users").delete().eq("id", userId);
-    if (profileDeleteError) throw profileDeleteError;
+    if (profileDeleteError) {
+      const error = adminErrorDetails(profileDeleteError, "Unable to delete the user's application data");
+      console.error("[admin/delete-user] profile cleanup failed", { userId, ...error });
+      res.status(409).json({ error: "profile_delete_failed", ...error });
+      return;
+    }
 
     const { error: authDeleteError } = await admin.auth.admin.deleteUser(target.auth_id as string);
     if (authDeleteError) {
@@ -269,9 +308,9 @@ router.delete("/admin/users/:userId", async (req, res) => {
 
     res.json({ ok: true, deletedUserId: userId });
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    console.error("[admin/delete-user]", { userId, message });
-    res.status(502).json({ error: "admin_delete_user_error", message });
+    const details = adminErrorDetails(error, "Unable to delete the user account");
+    console.error("[admin/delete-user]", { userId, ...details });
+    res.status(502).json({ error: "admin_delete_user_error", ...details });
   }
 });
 

@@ -13,6 +13,7 @@ import { checkAddBusiness } from "@/lib/plan-limits";
 import { cn } from "@/lib/utils";
 import {
   BUSINESS_ENTITY_TYPES as ENTITY_TYPES,
+  BUSINESS_ESTABLISHED_YEARS,
   BUSINESS_INDUSTRIES as INDUSTRIES,
   NAICS_BY_INDUSTRY,
 } from "@/lib/business-information-options";
@@ -148,7 +149,7 @@ export default function BusinessSetupDialog({
   function validateStep() {
     const errors = validateBusinessInformation(form);
     const fieldsByStep: Array<Array<keyof typeof errors>> = [
-      ["legalName", "entityType", "industry", "yearEstablished", "startDate", "website", "businessEmail", "businessPhone"],
+      ["legalName", "entityType", "industry", "yearEstablished", "website", "businessEmail", "businessPhone"],
       ["state", "zip", "ownershipPercent"],
       ["einTin"],
     ];
@@ -247,11 +248,10 @@ export default function BusinessSetupDialog({
             <div className="grid min-w-0 gap-4 lg:grid-cols-2">
               <p className="text-sm text-muted-foreground lg:col-span-2">Identify the registered business and provide contact details used for its BookSmart profile.</p>
               <Field label="Legal business name *"><Input value={form.legalName} onChange={(e) => update("legalName", e.target.value)} placeholder="Acme LLC" /></Field>
-              <Field label="Entity type *"><SelectField value={form.entityType} onChange={(v) => update("entityType", v)} options={ENTITY_TYPES} placeholder="Select entity" /></Field>
+              <Field label="Entity type *"><SelectField value={form.entityType} onChange={(v) => update("entityType", v)} options={ENTITY_TYPES} placeholder="Select entity" preserveOrder /></Field>
               <Field label="Industry *"><SelectField value={form.industry} onChange={(v) => { update("industry", v); update("naics", NAICS_BY_INDUSTRY[v] ?? ""); }} options={INDUSTRIES} placeholder="Select industry" openDownward /></Field>
               <Field label="NAICS code"><Input value={form.naics} onChange={(e) => update("naics", e.target.value)} placeholder="Auto-filled when available" /></Field>
-              <Field label="Year established"><Input type="number" value={form.yearEstablished} onChange={(e) => update("yearEstablished", e.target.value)} placeholder="2024" /></Field>
-              <Field label="Date business started"><Input type="date" value={form.startDate} onChange={(e) => update("startDate", e.target.value)} /></Field>
+              <Field label="Year established"><SelectField value={form.yearEstablished} onChange={(value) => update("yearEstablished", value)} options={BUSINESS_ESTABLISHED_YEARS} placeholder="Select year" preserveOrder openDownward /></Field>
               <Field label="Business website"><Input value={form.website} onChange={(e) => update("website", e.target.value)} placeholder="https://acme.com" /></Field>
               <Field label="Business email"><Input type="email" value={form.businessEmail} onChange={(e) => update("businessEmail", e.target.value)} /></Field>
               <Field label="Business phone"><PhoneInput value={form.businessPhone} onChange={(value) => update("businessPhone", value)} /></Field>
@@ -349,14 +349,17 @@ function SelectField({
   options,
   placeholder = "Select",
   openDownward = false,
+  preserveOrder = false,
 }: {
   value: string;
   onChange: (value: string) => void;
   options: Array<string | { value: string; label: string }>;
   placeholder?: string;
   openDownward?: boolean;
+  preserveOrder?: boolean;
 }) {
-  const sortedOptions = [...options].sort((a, b) => {
+  const sortedOptions = [...options];
+  if (!preserveOrder) sortedOptions.sort((a, b) => {
     const aLabel = typeof a === "string" ? a : a.label;
     const bLabel = typeof b === "string" ? b : b.label;
     return aLabel.localeCompare(bLabel, undefined, { sensitivity: "base" });

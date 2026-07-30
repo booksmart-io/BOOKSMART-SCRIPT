@@ -38,9 +38,10 @@ export function safelyMapEntityType(value: string | null) {
     [["c corporation", "c-corporation"], "C Corporation"],
     [["s corporation", "s-corporation"], "S Corporation"],
     [["nonprofit corporation", "non-profit corporation"], "Nonprofit"],
-    [["limited partnership", "lp"], "Partnership"],
-    [["general partnership", "partnership"], "Partnership"],
-    [["sole proprietorship"], "Sole Proprietorship"],
+    [["limited partnership", "lp"], "Limited Partnership"],
+    [["limited liability partnership", "llp"], "LLP"],
+    [["general partnership", "partnership"], "General Partnership"],
+    [["sole proprietor", "sole proprietorship"], "Sole Proprietor"],
   ];
   return aliases.find(([names]) => names.includes(normalized))?.[1] ?? null;
 }
