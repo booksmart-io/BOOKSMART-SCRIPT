@@ -751,7 +751,7 @@ Rules:
     <div className="animate-in fade-in slide-in-from-bottom-4 duration-500" style={{ background: "hsl(var(--background))", minHeight: "100%" }}>
 
       {/* ── Tab bar ── */}
-      <div className="grid grid-cols-2 border-b border-border bg-[#061b3d]">
+      <div className="grid grid-cols-2 border-b border-border bg-card/60">
         {([["strategy", "AI Strategy"], ["deduction", "AI Deduction"]] as [TabKey, string][]).map(([key, label]) => (
           <button key={key} onClick={() => setTab(key)}
             className={`w-full px-6 py-4 text-sm font-semibold border-b-2 transition-colors ${
@@ -926,45 +926,45 @@ Rules:
 
       {/* ══════════════ AI DEDUCTION TAB ══════════════ */}
       {tab === "deduction" && (
-        <div className="p-6 space-y-5">
+        <div className="space-y-5 p-3 sm:p-6">
 
           {/* ── Header row ── */}
-          <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
-            <div>
+          <div className="flex flex-col justify-between gap-3 xl:flex-row xl:items-start">
+            <div className="min-w-0">
               <h1 className="text-2xl font-bold text-foreground">AI Deductions</h1>
               <p className="text-muted-foreground text-sm mt-0.5">Review AI-identified deductions and their impact on your taxes.</p>
             </div>
-            <div className="flex items-center gap-2 flex-shrink-0">
-              <div className="flex items-center rounded-lg border border-border bg-muted p-1 text-xs text-foreground">
+            <div className="flex w-full flex-col gap-2 sm:flex-row sm:flex-wrap xl:w-auto xl:flex-shrink-0 xl:flex-nowrap xl:justify-end">
+              <div className="flex w-full items-center rounded-lg border border-border bg-muted p-1 text-xs text-foreground sm:w-auto">
                 <button
                   type="button"
                   onClick={() => setDedPeriod("year")}
-                  className={`rounded-md px-3 py-1.5 transition-colors ${dedPeriod === "year" ? "bg-[#FFC72B] text-black" : "text-muted-foreground hover:text-foreground"}`}
+                  className={`min-h-11 flex-1 rounded-md px-3 py-1.5 transition-colors sm:min-h-9 sm:flex-none ${dedPeriod === "year" ? "bg-[#FFC72B] text-black" : "text-muted-foreground hover:text-foreground"}`}
                 >
                   This Year
                 </button>
                 <button
                   type="button"
                   onClick={() => setDedPeriod("all")}
-                  className={`rounded-md px-3 py-1.5 transition-colors ${dedPeriod === "all" ? "bg-[#FFC72B] text-black" : "text-muted-foreground hover:text-foreground"}`}
+                  className={`min-h-11 flex-1 rounded-md px-3 py-1.5 transition-colors sm:min-h-9 sm:flex-none ${dedPeriod === "all" ? "bg-[#FFC72B] text-black" : "text-muted-foreground hover:text-foreground"}`}
                 >
                   All Time
                 </button>
               </div>
               {/* Date range pill */}
-              <div className={`flex items-center gap-2 rounded-lg border border-border bg-muted px-3 py-2 text-xs text-foreground ${dedPeriod === "all" ? "opacity-60" : ""}`}>
+              <div className={`flex min-h-11 w-full min-w-0 items-center gap-2 rounded-lg border border-border bg-muted px-3 py-2 text-xs text-foreground sm:w-auto ${dedPeriod === "all" ? "opacity-60" : ""}`}>
                 <Calendar className="h-3.5 w-3.5 text-muted-foreground" />
                 <input type="date" value={dedStart} onChange={e => { setDedPeriod("year"); setDedStart(e.target.value); }}
-                  className="bg-transparent focus:outline-none text-xs w-[96px]" />
+                  className="min-w-0 flex-1 bg-transparent text-xs focus:outline-none sm:w-[96px] sm:flex-none" />
                 <span className="text-muted-foreground">-</span>
                 <input type="date" value={dedEnd} onChange={e => { setDedPeriod("year"); setDedEnd(e.target.value); }}
-                  className="bg-transparent focus:outline-none text-xs w-[96px]" />
+                  className="min-w-0 flex-1 bg-transparent text-xs focus:outline-none sm:w-[96px] sm:flex-none" />
                 <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
               </div>
               {/* Tax type */}
-              <div className="flex items-center gap-1 rounded-lg border border-border bg-muted px-3 py-2 text-xs text-foreground">
+              <div className="flex min-h-11 w-full items-center gap-1 rounded-lg border border-border bg-muted px-3 py-2 text-xs text-foreground sm:w-auto">
                 <select value={taxType} onChange={e => setTaxType(e.target.value as TaxType)}
-                  className="bg-transparent focus:outline-none text-xs appearance-none cursor-pointer">
+                  className="min-w-0 flex-1 cursor-pointer appearance-none bg-transparent text-xs focus:outline-none sm:flex-none">
                   <option value="Federal">Federal</option>
                   <option value="State">State</option>
                 </select>
@@ -997,11 +997,11 @@ Rules:
                   ) : (
                     <div className="flex flex-col xl:flex-row xl:items-center gap-6 xl:gap-8">
                       {/* Donut — left side */}
-                      <div className="relative mx-auto aspect-square w-full max-w-[330px] flex-shrink-0 xl:mx-0">
+                      <div className="relative mx-auto aspect-square w-full max-w-[280px] flex-shrink-0 sm:max-w-[330px] xl:mx-0">
                         <ResponsiveContainer width="100%" height="100%">
                           <PieChart>
                             <Pie data={deductionChartGroups} dataKey="dedAmt" nameKey="label"
-                              cx="50%" cy="50%" outerRadius={154} innerRadius={94} paddingAngle={2}>
+                              cx="50%" cy="50%" outerRadius="46%" innerRadius="28%" paddingAngle={2}>
                               {deductionChartGroups.map((g) => <Cell key={g.label} fill={g.color} />)}
                             </Pie>
                             <Tooltip formatter={(v: number) => [fmt(v), "Eligible deduction"]}
