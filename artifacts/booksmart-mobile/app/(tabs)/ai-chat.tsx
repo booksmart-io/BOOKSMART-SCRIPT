@@ -26,6 +26,25 @@ type Message = {
 
 const WELCOME = "Hi! I'm your AI financial advisor. Ask me about tax strategies, deductions, or financial planning for freelancers and small businesses.";
 
+function formatAssistantResponse(content: unknown): string {
+  if (typeof content !== "string") {
+    return "I'm sorry, I couldn't process that. Please try again.";
+  }
+
+  const trimmed = content.trim();
+  const quotePairs: Record<string, string> = {
+    '"': '"',
+    "'": "'",
+    "\u201c": "\u201d",
+    "\u2018": "\u2019",
+  };
+  const closingQuote = quotePairs[trimmed[0]];
+
+  return closingQuote && trimmed.endsWith(closingQuote)
+    ? trimmed.slice(1, -1).trim()
+    : trimmed;
+}
+
 export default function AiChatScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
@@ -82,10 +101,10 @@ export default function AiChatScreen() {
       if (!response.ok) throw new Error("API error");
 
       const json = await response.json();
-      const content =
+      const rawContent =
         json?.choices?.[0]?.message?.content ||
-        json?.content ||
-        "I'm sorry, I couldn't process that. Please try again.";
+        json?.content;
+      const content = formatAssistantResponse(rawContent);
 
       const aiMsg: Message = {
         id: (Date.now() + 1).toString(),

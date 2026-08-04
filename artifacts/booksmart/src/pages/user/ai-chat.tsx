@@ -16,6 +16,23 @@ const SYSTEM_PROMPT =
   "Help users understand tax deductions, interpret their transactions, and prepare for filing. " +
   "Be concise, accurate, and always remind users to confirm advice with a licensed CPA when appropriate.";
 
+function formatAssistantResponse(content: unknown): string {
+  if (typeof content !== "string") return "Sorry, I couldn't get a response.";
+
+  const trimmed = content.trim();
+  const quotePairs: Record<string, string> = {
+    '"': '"',
+    "'": "'",
+    "\u201c": "\u201d",
+    "\u2018": "\u2019",
+  };
+  const closingQuote = quotePairs[trimmed[0]];
+
+  return closingQuote && trimmed.endsWith(closingQuote)
+    ? trimmed.slice(1, -1).trim()
+    : trimmed;
+}
+
 export default function AiChat() {
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState<Message[]>([
@@ -71,8 +88,9 @@ export default function AiChat() {
       }
 
       const data = await res.json();
-      const reply: string =
-        data?.choices?.[0]?.message?.content ?? "Sorry, I couldn't get a response.";
+      const reply = formatAssistantResponse(
+        data?.choices?.[0]?.message?.content,
+      );
 
       setMessages((prev) => [...prev, { role: "assistant", content: reply }]);
     } catch (e: unknown) {

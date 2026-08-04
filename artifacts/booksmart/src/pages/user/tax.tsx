@@ -534,7 +534,7 @@ type PendingTx = {
   sub_category_id?: number | null;
 };
 
-function StatementReviewDialog({
+export function TransactionReviewDialog({
   importId,
   open,
   onClose,
@@ -661,7 +661,7 @@ function StatementReviewDialog({
       pollCountRef.current += 1;
       if (pollCountRef.current > maxPolls || Date.now() - pollStartedAtRef.current > maxPollMs) {
         setImportStatus("failed");
-        setErrorMsg(`Processing timed out for import #${importId}. n8n did not create pending transactions that this app can read.`);
+        setErrorMsg(`Processing timed out for import #${importId}. The system did not create any transactions for review.`);
         return;
       }
       try {
@@ -769,7 +769,7 @@ function StatementReviewDialog({
             return;
           }
           setImportStatus("failed");
-          setErrorMsg(`n8n marked import #${importId} completed, but no pending transactions were created for review.`);
+          setErrorMsg(`Import #${importId} was marked completed, but no transactions were created for review.`);
         } else {
           pollRef.current = setTimeout(poll, pollIntervalMs);
         }
@@ -2309,7 +2309,7 @@ export default function Tax() {
       )}
 
       {user && numericId !== null && reviewImportId !== null && (
-        <StatementReviewDialog
+        <TransactionReviewDialog
           importId={reviewImportId}
           open={reviewImportId !== null}
           onClose={() => setReviewImportId(null)}

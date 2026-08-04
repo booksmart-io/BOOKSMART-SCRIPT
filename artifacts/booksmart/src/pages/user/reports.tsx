@@ -46,6 +46,7 @@ import {
   CFCard,
 } from "@/components/reports/financial-statements-tab";
 import { StatementReviewDialog } from "@/components/statement-review-dialog";
+import { TransactionReviewDialog } from "@/pages/user/tax";
 import {
   createStatementReview,
   extractFinancialStatement,
@@ -55,6 +56,19 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import {
   Dialog,
   DialogContent,
@@ -116,6 +130,10 @@ import {
   FolderOpen,
   ArrowDown,
   ArrowUp,
+  Eye,
+  MoreHorizontal,
+  ZoomIn,
+  ZoomOut,
 } from "lucide-react";
 
 const PLAID_CATEGORIZATION_BATCH_LIMIT = 100;
@@ -149,6 +167,7 @@ type ExtractedReceiptTransaction = {
   account_id?: string;
   payment_method?: string;
   receipt_number?: string;
+  account_card_hint?: string;
   business_use?: "Business" | "Personal" | "Split";
   business_percentage?: number;
   reimbursable?: boolean;
@@ -297,29 +316,44 @@ async function uploadTransactionPdfPages(
   const pageFiles = await renderPdfPagesToPngFiles(file);
   const pagePaths: string[] = [];
 
-  for (const pageFile of pageFiles) {
-    const formData = new FormData();
-    formData.append("file", pageFile);
-    formData.append("originalName", pageFile.name);
-    formData.append("category", "Transactions");
+  try {
+    for (const pageFile of pageFiles) {
+      const formData = new FormData();
+      formData.append("file", pageFile);
+      formData.append("originalName", pageFile.name);
+      formData.append("category", "Transactions");
 
-    const uploadRes = await fetch("/api/document-upload", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${token}` },
-      body: formData,
-    });
+      const uploadRes = await fetch("/api/document-upload", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+        body: formData,
+      });
 
-    if (!uploadRes.ok) {
-      const errBody = (await uploadRes.json().catch(() => ({}))) as {
-        message?: string;
-      };
-      throw new Error(
-        `PDF page upload failed: ${errBody.message ?? uploadRes.status}`,
-      );
+      if (!uploadRes.ok) {
+        const errBody = (await uploadRes.json().catch(() => ({}))) as {
+          message?: string;
+        };
+        throw new Error(
+          `PDF page upload failed: ${errBody.message ?? uploadRes.status}`,
+        );
+      }
+
+      const { storagePath } = (await uploadRes.json()) as { storagePath: string };
+      pagePaths.push(storagePath);
     }
-
-    const { storagePath } = (await uploadRes.json()) as { storagePath: string };
-    pagePaths.push(storagePath);
+  } catch (error) {
+    await Promise.allSettled(
+      pagePaths.map((storagePath) =>
+        fetch(
+          `/api/document-delete?storagePath=${encodeURIComponent(storagePath)}`,
+          {
+            method: "DELETE",
+            headers: { Authorization: `Bearer ${token}` },
+          },
+        ),
+      ),
+    );
+    throw error;
   }
 
   return pagePaths;
@@ -985,19 +1019,20 @@ type DocEntry = {
   type: string;
   category: string;
   date: string;
+  createdAt: string;
+  taxYear?: string;
   status: DocStatus;
   size: string;
   fileUrl?: string;
   mimeType?: string;
 };
 
-const DOC_CATEGORIES = [
-  "All",
-  "Tax Forms",
-  "Income",
-  "Expenses",
-  "Employment",
-  "Receipts",
+const DOC_CATEGORY_ORDER = [
+  "Balance Sheet",
+  "Profit & Loss",
+  "Income Statement",
+  "Cash Flow Statement",
+  "Transactions",
 ];
 const STATUS_COLOR: Record<DocStatus, string> = {
   Uploaded: "text-emerald-400 border-emerald-400/50 bg-emerald-500/10",
@@ -2690,6 +2725,8 @@ const [plaidSyncMessage, setPlaidSyncMessage] = useState("");
   const [showDocs, setShowDocs] = useState(false);
   const [docSearch, setDocSearch] = useState("");
   const [docCategory, setDocCategory] = useState("All");
+  const [docYear, setDocYear] = useState("All");
+  const [docSort, setDocSort] = useState("newest");
   const [deleteDocTarget, setDeleteDocTarget] = useState<DocEntry | null>(null);
   const [deleteDocRunning, setDeleteDocRunning] = useState(false);
 
@@ -2719,6 +2756,8 @@ const [plaidSyncMessage, setPlaidSyncMessage] = useState("");
             day: "numeric",
             year: "numeric",
           }),
+          createdAt: row.created_at as string,
+          taxYear: row.tax_year ? String(row.tax_year) : undefined,
           status: "Uploaded" as DocStatus,
           size: sizeBytes
             ? sizeBytes > 1_000_000
@@ -2765,9 +2804,11 @@ const [plaidSyncMessage, setPlaidSyncMessage] = useState("");
   const [viewDocBlobUrl, setViewDocBlobUrl] = useState<string | null>(null);
   const [viewDocLoading, setViewDocLoading] = useState(false);
   const [viewDocError, setViewDocError] = useState<string | null>(null);
+  const [previewZoom, setPreviewZoom] = useState(100);
 
   // Whenever a doc is opened, HEAD-check the public URL to detect missing files
   useEffect(() => {
+    setPreviewZoom(100);
     if (!viewingDoc?.fileUrl) {
       setViewDocBlobUrl(null);
       setViewDocError(null);
@@ -4624,7 +4665,7 @@ async function handleConnectBank() {
       const importStartedAt = new Date().toISOString();
       setNewReceiptDocumentId(documentId);
       setNewReceiptImportId(importId);
-      toast({ title: "Receipt uploaded", description: "n8n is extracting the transaction details." });
+      toast({ title: "Receipt uploaded", description: "The system is extracting the transaction details." });
 
       let latestReceiptRows: ExtractedReceiptTransaction[] = [];
       for (let attempt = 0; attempt < 60; attempt += 1) {
@@ -4641,7 +4682,7 @@ async function handleConnectBank() {
 
         const { data: directRows, error: extractedError } = await supabase
           .from("pending_transactions")
-          .select("id,title,amount,transaction_type,date_time,description,category_id,sub_category_id")
+          .select("id,title,amount,transaction_type,date_time,description,category_id,sub_category_id,payment_method,receipt_number,business_use,business_percentage,deductible,reimbursable,account_card_hint")
           .eq("import_id", importId)
           .eq("status", "pending")
           .order("id", { ascending: true })
@@ -4651,7 +4692,7 @@ async function handleConnectBank() {
         if ((extractedRows?.length ?? 0) === 0) {
           const { data: pathRows } = await supabase
             .from("pending_transactions")
-            .select("id,title,amount,transaction_type,date_time,description,category_id,sub_category_id")
+            .select("id,title,amount,transaction_type,date_time,description,category_id,sub_category_id,payment_method,receipt_number,business_use,business_percentage,deductible,reimbursable,account_card_hint")
             .eq("document_path", statementDocumentPath)
             .eq("status", "pending")
             .order("id", { ascending: true })
@@ -4662,7 +4703,7 @@ async function handleConnectBank() {
           const since = new Date(new Date(importStartedAt).getTime() - 120000).toISOString();
           const { data: recentRows } = await supabase
             .from("pending_transactions")
-            .select("id,title,amount,transaction_type,date_time,description,category_id,sub_category_id")
+            .select("id,title,amount,transaction_type,date_time,description,category_id,sub_category_id,payment_method,receipt_number,business_use,business_percentage,deductible,reimbursable,account_card_hint")
             .eq("user_id", numericId)
             .eq("status", "pending")
             .gte("created_at", since)
@@ -4673,16 +4714,16 @@ async function handleConnectBank() {
         }
         const receiptRows = ((extractedRows ?? []) as ExtractedReceiptTransaction[]).map((row) => ({
           ...row,
-          business_type: "Business" as const,
-          business_use: "Business" as const,
-          business_percentage: 100,
+          business_type: row.business_use === "Personal" ? "Personal" as const : "Business" as const,
+          business_use: row.business_use ?? "Business",
+          business_percentage: row.business_percentage ?? (row.business_use === "Personal" ? 0 : 100),
           merchant: row.title,
-          deductible: row.transaction_type === "debit",
+          deductible: row.deductible ?? row.transaction_type === "debit",
         }));
         const extracted = receiptRows[0];
         if (!extracted) {
           if (currentImport?.status === "completed") {
-            throw new Error("n8n completed the import but did not return any transactions.");
+            throw new Error("Processing completed but did not return any transactions.");
           }
           continue;
         }
@@ -4708,7 +4749,7 @@ async function handleConnectBank() {
         setNewReceiptStatus("extracted");
         toast({
           title: `${latestReceiptRows.length} transaction${latestReceiptRows.length === 1 ? "" : "s"} extracted`,
-          description: "Review the available details. n8n did not report completion before the wait ended.",
+          description: "Review the available details. Processing did not finish before the wait ended.",
         });
         return;
       }
@@ -4737,7 +4778,7 @@ async function handleConnectBank() {
         amount: row.transaction_type === "debit" ? -Math.abs(row.amount) : Math.abs(row.amount),
         description: buildTransactionDescription(row.description ?? "", {
           merchant: row.merchant,
-          account: transactionAccountOptions.find((account) => account.id === row.account_id)?.label,
+          account: transactionAccountOptions.find((account) => account.id === row.account_id)?.label ?? row.account_card_hint,
           paymentMethod: row.payment_method,
           receiptNumber: row.receipt_number,
           businessUse: row.business_use,
@@ -4746,6 +4787,12 @@ async function handleConnectBank() {
         }),
         type: row.business_use ?? row.business_type ?? "Business",
         deductible: row.deductible ?? row.transaction_type === "debit",
+        payment_method: row.payment_method ?? null,
+        receipt_number: row.receipt_number ?? null,
+        business_use: row.business_use ?? null,
+        business_percentage: row.business_percentage ?? null,
+        reimbursable: row.reimbursable ?? null,
+        account_card_hint: row.account_card_hint ?? null,
         date_time: row.date_time,
         is_ai_verified: false,
         category_id: row.category_id ?? null,
@@ -4868,6 +4915,11 @@ async function handleConnectBank() {
 
     setUploadSaving(true);
     setUploadError("");
+    let createdDocumentId: number | null = null;
+    let uploadedStoragePath: string | null = null;
+    let uploadedPagePaths: string[] = [];
+    let uploadToken = "";
+    let rollbackTransactionUpload = false;
     try {
       // 1. Upload file to Supabase Storage via backend (uses service role key — guaranteed to work)
       const ext = uploadPickedFile.name.split(".").pop()?.toLowerCase() ?? "";
@@ -4875,6 +4927,7 @@ async function handleConnectBank() {
       const { data: sessionData } = await supabase.auth.getSession();
       const token = sessionData.session?.access_token;
       if (!token) throw new Error("Not authenticated.");
+      uploadToken = token;
 
       const formData = new FormData();
       formData.append("file", uploadPickedFile);
@@ -4898,6 +4951,8 @@ async function handleConnectBank() {
         publicUrl: string;
         storagePath: string;
       };
+      uploadedStoragePath = storagePath;
+      rollbackTransactionUpload = uploadCategory === "Transactions";
 
       // 3. Build parsed_data (period metadata)
       const parsedData = isBalanceSheetUpload
@@ -4928,6 +4983,7 @@ async function handleConnectBank() {
         .single();
       if (dbError)
         throw new Error(`Database insert failed: ${dbError.message}`);
+      createdDocumentId = Number(docData.id);
 
       const docType = categoryToDocType(uploadCategory);
       if (docType) {
@@ -4967,15 +5023,7 @@ async function handleConnectBank() {
         }
       }
 
-      // 5. Refresh document list
-      queryClient.invalidateQueries({
-        queryKey: ["user_documents", numericId],
-      });
-      queryClient.invalidateQueries({
-        queryKey: ["statement_docs", numericId],
-      });
-      setShowUpload(false);
-      resetUploadForm();
+      // Refresh the repository only after transaction import setup succeeds.
 
       // 6. If this is a bank statement / transaction document → trigger AI scan
       const isStatementDoc = uploadCategory === "Transactions";
@@ -4986,11 +5034,6 @@ async function handleConnectBank() {
           );
 
         setScanningImportId(-1);
-        toast({
-          title: "Document uploaded!",
-          description:
-            "Your transaction document was queued for n8n processing.",
-        });
 
         let extractedText: string | null = null;
         let isScanned = mimeType.startsWith("image/");
@@ -5044,6 +5087,7 @@ async function handleConnectBank() {
               uploadPickedFile,
               token,
             );
+            uploadedPagePaths = pagePaths;
             if (pagePaths.length > 0) {
               statementDocumentPath =
                 pagePaths.length > 1 ? JSON.stringify(pagePaths) : pagePaths[0];
@@ -5075,17 +5119,78 @@ async function handleConnectBank() {
         if (importError) throw new Error(importError.message);
 
         const newImportId = (importData as { id: number }).id;
+        rollbackTransactionUpload = false;
+        queryClient.invalidateQueries({
+          queryKey: ["user_documents", numericId],
+        });
+        queryClient.invalidateQueries({
+          queryKey: ["statement_docs", numericId],
+        });
+        setShowUpload(false);
+        resetUploadForm();
+        setShowDocs(false);
         setScanningImportId(newImportId);
         toast({
           title: "Transaction import started",
-          description: "n8n will extract transactions from this file.",
+          description: "The system will extract transactions from this file.",
         });
         scheduleUploadCategorization();
         return;
       } else {
+        queryClient.invalidateQueries({
+          queryKey: ["user_documents", numericId],
+        });
+        queryClient.invalidateQueries({
+          queryKey: ["statement_docs", numericId],
+        });
+        setShowUpload(false);
+        resetUploadForm();
         toast({ title: "Document uploaded successfully!" });
       }
     } catch (err: unknown) {
+      if (rollbackTransactionUpload) {
+        setScanningImportId(null);
+        const storagePaths = [uploadedStoragePath, ...uploadedPagePaths].filter(
+          (path): path is string => Boolean(path),
+        );
+        const cleanupResults = await Promise.allSettled([
+          ...(createdDocumentId !== null
+            ? [
+                supabase
+                  .from("user_documents")
+                  .delete()
+                  .eq("id", createdDocumentId)
+                  .then(({ error }) => {
+                    if (error) throw error;
+                  }),
+              ]
+            : []),
+          ...storagePaths.map((storagePath) =>
+            fetch(
+              `/api/document-delete?storagePath=${encodeURIComponent(storagePath)}`,
+              {
+                method: "DELETE",
+                headers: { Authorization: `Bearer ${uploadToken}` },
+              },
+            ).then((response) => {
+              if (!response.ok)
+                throw new Error(`Storage cleanup failed: ${response.status}`);
+            }),
+          ),
+        ]);
+        if (cleanupResults.some((result) => result.status === "rejected")) {
+          console.error(
+            "[upload] transaction upload rollback was incomplete",
+            cleanupResults,
+          );
+        }
+        queryClient.invalidateQueries({
+          queryKey: ["user_documents", numericId],
+        });
+        queryClient.invalidateQueries({
+          queryKey: ["statement_docs", numericId],
+        });
+      }
       setUploadError(
         err instanceof Error ? err.message : "Upload failed. Please try again.",
       );
@@ -5094,16 +5199,52 @@ async function handleConnectBank() {
     }
   }
 
-  const filteredDocs = docs.filter((d) => {
-    const matchSearch = (d.title ?? "")
-      .toLowerCase()
-      .includes(docSearch.toLowerCase());
-    const matchCat =
-      docCategory === "All" ||
-      d.category === docCategory ||
-      d.type === docCategory;
-    return matchSearch && matchCat;
-  });
+  const docYears = useMemo(
+    () =>
+      [...new Set(docs.map((doc) => doc.taxYear).filter(Boolean) as string[])]
+        .sort((a, b) => b.localeCompare(a)),
+    [docs],
+  );
+
+  const docCategories = useMemo(() => {
+    const categories = [
+      ...new Set(docs.map((doc) => doc.category?.trim()).filter(Boolean) as string[]),
+    ];
+    return categories.sort((a, b) => {
+      const aIndex = DOC_CATEGORY_ORDER.indexOf(a);
+      const bIndex = DOC_CATEGORY_ORDER.indexOf(b);
+      if (aIndex === -1 && bIndex === -1) return a.localeCompare(b);
+      if (aIndex === -1) return 1;
+      if (bIndex === -1) return -1;
+      return aIndex - bIndex;
+    });
+  }, [docs]);
+
+  const filteredDocs = useMemo(() => {
+    const search = docSearch.trim().toLowerCase();
+    return docs
+      .filter((doc) => {
+        const matchSearch =
+          !search ||
+          doc.title.toLowerCase().includes(search) ||
+          doc.type.toLowerCase().includes(search) ||
+          doc.category.toLowerCase().includes(search);
+        const matchCategory =
+          docCategory === "All" || doc.category === docCategory;
+        const matchYear = docYear === "All" || doc.taxYear === docYear;
+        return matchSearch && matchCategory && matchYear;
+      })
+      .sort((a, b) => {
+        if (docSort === "oldest") {
+          return a.createdAt.localeCompare(b.createdAt);
+        }
+        if (docSort === "name") return a.title.localeCompare(b.title);
+        if (docSort === "size") {
+          return b.size.localeCompare(a.size, undefined, { numeric: true });
+        }
+        return b.createdAt.localeCompare(a.createdAt);
+      });
+  }, [docs, docSearch, docCategory, docYear, docSort]);
 
   // All statement tabs and the Dashboard use the same resolved source object.
   const pnlPeriods = resolvedStatements.pnlPeriods;
@@ -8232,6 +8373,25 @@ async function handleConnectBank() {
         />
       )}
 
+      {numericId !== null && scanningImportId !== null && scanningImportId > 0 && (
+        <TransactionReviewDialog
+          importId={scanningImportId}
+          open
+          numericUserId={numericId}
+          onClose={() => setScanningImportId(null)}
+          onReviewComplete={() => {
+            queryClient.invalidateQueries({ queryKey: ["user_documents", numericId] });
+            queryClient.invalidateQueries({ queryKey: ["tx_month"] });
+            queryClient.invalidateQueries({ queryKey: ["tx_recent"] });
+            queryClient.invalidateQueries({ queryKey: ["tx_count"] });
+            queryClient.invalidateQueries({ queryKey: ["tx_period"] });
+            queryClient.invalidateQueries({ queryKey: ["tx_prev_period"] });
+            queryClient.invalidateQueries({ queryKey: ["tx_all_full"] });
+            queryClient.invalidateQueries({ queryKey: ["tx_all_balance"] });
+          }}
+        />
+      )}
+
       {/* ── Upload Financial Document Dialog ── */}
       <Dialog
         open={showUpload}
@@ -8431,17 +8591,31 @@ async function handleConnectBank() {
             }
           }}
         >
-          <DialogContent className="sm:max-w-2xl bg-card border-border/60 p-0 overflow-hidden">
-            <DialogHeader className="px-5 pt-5 pb-3 border-b border-border/40">
-              <div className="flex items-center justify-between gap-3">
-                <DialogTitle className="flex items-center gap-2 text-sm font-semibold truncate">
-                  <FileText className="h-4 w-4 text-primary flex-shrink-0" />
-                  <span className="truncate">{viewingDoc.title}</span>
-                  <span className="text-xs font-normal text-muted-foreground flex-shrink-0">
-                    {viewingDoc.type}
+          <DialogContent className="h-[min(90dvh,900px)] max-h-[calc(100dvh-1.5rem)] sm:max-w-4xl xl:max-w-5xl bg-card border-border/60 p-0 overflow-hidden gap-0 flex flex-col [&>button]:right-3 [&>button]:top-3 [&>button]:z-20">
+            <DialogHeader className="shrink-0 border-b border-border/50 bg-card px-5 py-4 pr-16 sm:px-6 sm:py-5 sm:pr-16">
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex min-w-0 items-center gap-3 text-left">
+                  <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/10 ring-1 ring-primary/20">
+                    <FileText className="h-5 w-5 text-primary" />
                   </span>
-                </DialogTitle>
-                <button
+                  <div className="min-w-0">
+                    <DialogTitle className="truncate text-base font-semibold leading-5">
+                      {viewingDoc.title}.{viewingDoc.type.toLowerCase()}
+                    </DialogTitle>
+                    <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+                      <span>{viewingDoc.category}</span>
+                      <span aria-hidden="true">·</span>
+                      <span>{viewingDoc.size}</span>
+                      <span aria-hidden="true">·</span>
+                      <span>Added {viewingDoc.date}</span>
+                      {viewingDoc.taxYear && <><span aria-hidden="true">·</span><span>Tax year {viewingDoc.taxYear}</span></>}
+                    </div>
+                  </div>
+                </div>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={!viewingDoc.fileUrl}
                   onClick={async () => {
                     if (!viewingDoc.fileUrl) return;
                     try {
@@ -8457,15 +8631,14 @@ async function handleConnectBank() {
                       });
                     }
                   }}
-                  className="flex items-center gap-1.5 text-xs text-primary hover:underline flex-shrink-0"
+                  className="h-9 shrink-0 gap-2 border-primary/40 text-primary hover:bg-primary/10 hover:text-primary"
                 >
-                  <Download className="h-3.5 w-3.5" /> Download
-                </button>
+                  <Download className="h-4 w-4" /> Download
+                </Button>
               </div>
             </DialogHeader>
             <div
-              className="bg-background/60 flex items-center justify-center"
-              style={{ minHeight: 420 }}
+              className="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden bg-muted/20"
             >
               {!viewingDoc.fileUrl ? (
                 <div className="flex flex-col items-center gap-4 py-16 text-center px-8">
@@ -8523,18 +8696,57 @@ async function handleConnectBank() {
               ) : ["PDF"].includes(viewingDoc.type) ? (
                 <iframe
                   src={viewDocBlobUrl}
-                  className="w-full"
-                  style={{ height: 500, border: "none" }}
+                  className="h-full w-full bg-white"
+                  style={{ border: "none" }}
                   title={viewingDoc.title}
                 />
               ) : ["JPG", "JPEG", "PNG", "GIF", "WEBP", "SVG"].includes(
                   viewingDoc.type,
                 ) ? (
-                <img
-                  src={viewDocBlobUrl}
-                  alt={viewingDoc.title}
-                  className="max-w-full max-h-[500px] object-contain p-4"
-                />
+                <>
+                  <div className="h-full w-full overflow-auto p-5 sm:p-8">
+                    <div className="flex min-h-full min-w-full items-center justify-center">
+                      <img
+                        src={viewDocBlobUrl}
+                        alt={viewingDoc.title}
+                        className="h-auto max-w-none rounded-sm bg-white shadow-2xl ring-1 ring-black/10 transition-[width] duration-150"
+                        style={{ width: `${previewZoom}%` }}
+                      />
+                    </div>
+                  </div>
+                  <div className="absolute bottom-4 left-1/2 flex -translate-x-1/2 items-center gap-1 rounded-full border border-border/60 bg-card/95 p-1 shadow-lg backdrop-blur">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8 rounded-full"
+                      aria-label="Zoom out"
+                      disabled={previewZoom <= 50}
+                      onClick={() => setPreviewZoom((zoom) => Math.max(50, zoom - 25))}
+                    >
+                      <ZoomOut className="h-4 w-4" />
+                    </Button>
+                    <button
+                      type="button"
+                      className="min-w-14 px-1 text-center text-xs font-medium tabular-nums text-muted-foreground"
+                      onClick={() => setPreviewZoom(100)}
+                      title="Reset zoom"
+                    >
+                      {previewZoom}%
+                    </button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8 rounded-full"
+                      aria-label="Zoom in"
+                      disabled={previewZoom >= 200}
+                      onClick={() => setPreviewZoom((zoom) => Math.min(200, zoom + 25))}
+                    >
+                      <ZoomIn className="h-4 w-4" />
+                    </Button>
+                  </div>
+                </>
               ) : (
                 <div className="flex flex-col items-center gap-4 py-16 text-center px-8">
                   <div className="h-16 w-16 rounded-2xl bg-primary/10 flex items-center justify-center">
@@ -8581,48 +8793,82 @@ async function handleConnectBank() {
       <Sheet open={showDocs} onOpenChange={setShowDocs}>
         <SheetContent
           side="right"
-          className="w-full sm:max-w-lg bg-card border-border/60 flex flex-col p-0"
+          className="w-full sm:max-w-2xl lg:max-w-3xl bg-card border-border/60 flex flex-col p-0 [&>button]:right-5 [&>button]:top-5"
         >
-          <SheetHeader className="px-5 pt-5 pb-3 border-b border-border/40">
-            <div className="flex items-center justify-between">
-              <SheetTitle className="flex items-center gap-2">
-                <FileText className="h-5 w-5 text-primary" />
-                Document Repository
-              </SheetTitle>
+          <SheetHeader className="px-5 sm:px-6 pt-5 pb-4 border-b border-border/40 space-y-4">
+            <div className="flex items-start justify-between gap-4 pr-9">
+              <div className="min-w-0">
+                <SheetTitle className="flex items-center gap-2">
+                  <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary/10">
+                    <FileText className="h-4 w-4 text-primary" />
+                  </span>
+                  Document Repository
+                </SheetTitle>
+                <p className="mt-1 pl-11 text-xs text-muted-foreground">
+                  {docsLoading
+                    ? "Loading your documents..."
+                    : `${docs.length} ${docs.length === 1 ? "document" : "documents"} stored securely`}
+                </p>
+              </div>
               <Button
                 size="sm"
                 onClick={() => setShowUpload(true)}
-                className="bg-primary text-primary-foreground gap-1.5 h-8 text-xs"
+                className="bg-primary text-primary-foreground gap-1.5 h-9 text-xs shrink-0"
               >
                 <Upload className="h-3.5 w-3.5" /> Upload Document
               </Button>
             </div>
-            {/* Search */}
-            <div className="relative mt-3">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
-              <Input
-                placeholder="Search documents…"
-                value={docSearch}
-                onChange={(e) => setDocSearch(e.target.value)}
-                className="pl-9 h-8 text-sm bg-background border-border/60"
-              />
-            </div>
-            {/* Category chips */}
-            <div className="flex gap-1.5 flex-wrap mt-2">
-              {DOC_CATEGORIES.map((cat) => (
-                <button
-                  key={cat}
-                  onClick={() => setDocCategory(cat)}
-                  className={`px-2.5 py-1 text-xs font-medium rounded-full border transition-colors ${docCategory === cat ? "bg-primary text-primary-foreground border-primary" : "border-border/60 text-muted-foreground hover:border-primary/50"}`}
-                >
-                  {cat}
-                </button>
-              ))}
+            <div className="flex flex-col gap-2 sm:flex-row">
+              <div className="relative min-w-0 flex-1">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+                <Input
+                  aria-label="Search documents"
+                  placeholder="Search name, type, or category..."
+                  value={docSearch}
+                  onChange={(e) => setDocSearch(e.target.value)}
+                  className="pl-9 h-9 text-sm bg-background border-border/60"
+                />
+              </div>
+              <div className="grid grid-cols-3 gap-2 sm:flex">
+                <Select value={docCategory} onValueChange={setDocCategory}>
+                  <SelectTrigger aria-label="Filter by category" className="h-9 min-w-0 sm:w-[145px] text-xs">
+                    <SelectValue placeholder="Category" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="All">All categories</SelectItem>
+                    {docCategories.map((category) => (
+                      <SelectItem key={category} value={category}>
+                        {category}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Select value={docYear} onValueChange={setDocYear}>
+                  <SelectTrigger aria-label="Filter by tax year" className="h-9 min-w-0 sm:w-[110px] text-xs">
+                    <SelectValue placeholder="Tax year" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="All">All years</SelectItem>
+                    {docYears.map((year) => <SelectItem key={year} value={year}>{year}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+                <Select value={docSort} onValueChange={setDocSort}>
+                  <SelectTrigger aria-label="Sort documents" className="h-9 min-w-0 sm:w-[120px] text-xs">
+                    <SelectValue placeholder="Sort" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="newest">Newest</SelectItem>
+                    <SelectItem value="oldest">Oldest</SelectItem>
+                    <SelectItem value="name">Name</SelectItem>
+                    <SelectItem value="size">Size</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
           </SheetHeader>
 
           {/* Document list */}
-          <div className="flex-1 overflow-y-auto px-5 py-4 space-y-3">
+          <div className="flex-1 overflow-y-auto px-5 sm:px-6 py-4">
             {docsLoading ? (
               <div className="flex flex-col items-center justify-center h-40 gap-3">
                 <Loader2 className="h-6 w-6 text-primary animate-spin" />
@@ -8631,13 +8877,26 @@ async function handleConnectBank() {
                 </p>
               </div>
             ) : filteredDocs.length === 0 ? (
-              <div className="flex flex-col items-center justify-center h-40 gap-3 text-center">
+              <div className="flex flex-col items-center justify-center min-h-64 gap-3 text-center">
                 <File className="h-10 w-10 text-muted-foreground/30" />
                 <p className="text-sm text-muted-foreground">
-                  {docSearch
-                    ? "No documents match your search."
+                  {docSearch || docCategory !== "All" || docYear !== "All"
+                    ? "No documents match your filters."
                     : "No documents yet. Upload your first document."}
                 </p>
+                {(docSearch || docCategory !== "All" || docYear !== "All") && (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => {
+                      setDocSearch("");
+                      setDocCategory("All");
+                      setDocYear("All");
+                    }}
+                  >
+                    Clear filters
+                  </Button>
+                )}
                 <Button
                   size="sm"
                   variant="outline"
@@ -8648,67 +8907,86 @@ async function handleConnectBank() {
                 </Button>
               </div>
             ) : (
-              filteredDocs.map((doc) => {
+              <div className="overflow-hidden rounded-xl border border-border/50">
+                <div className="hidden sm:grid grid-cols-[minmax(0,1fr)_110px_100px_80px_40px] gap-3 bg-muted/20 px-4 py-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                  <span>Document</span>
+                  <span>Category</span>
+                  <span>Date added</span>
+                  <span>Size</span>
+                  <span className="sr-only">Actions</span>
+                </div>
+                <div className="divide-y divide-border/40">
+              {filteredDocs.map((doc) => {
                 const SIcon = STATUS_ICON[doc.status] ?? CheckCircle2;
                 return (
                   <div
                     key={doc.id}
-                    className="rounded-xl border border-border/40 bg-background/50 p-4 space-y-3"
+                    className="group grid gap-3 bg-background/30 p-4 transition-colors hover:bg-muted/20 sm:grid-cols-[minmax(0,1fr)_110px_100px_80px_40px] sm:items-center"
                   >
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="flex items-start gap-3 min-w-0">
-                        <div className="mt-0.5 h-8 w-8 rounded-lg bg-primary/10 flex items-center justify-center flex-shrink-0">
-                          <FileText className="h-4 w-4 text-primary" />
-                        </div>
-                        <div className="min-w-0">
-                          <p className="text-sm font-semibold truncate">
-                            {doc.title}
-                          </p>
-                          <p className="text-xs text-muted-foreground">
-                            Type: {doc.type}
-                          </p>
-                        </div>
+                    <button
+                      onClick={() => setViewingDoc(doc)}
+                      className="flex min-w-0 items-center gap-3 rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    >
+                      <div className="h-9 w-9 rounded-lg bg-primary/10 flex items-center justify-center flex-shrink-0">
+                        <FileText className="h-4 w-4 text-primary" />
                       </div>
-                      <span
-                        className={`flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full border flex-shrink-0 ${STATUS_COLOR[doc.status]}`}
-                      >
-                        <SIcon className="h-3 w-3" />
-                        {doc.status}
+                      <span className="min-w-0">
+                        <span className="block truncate text-sm font-semibold transition-colors group-hover:text-primary">
+                          {doc.title}.{doc.type.toLowerCase()}
+                        </span>
+                        <span className="mt-0.5 flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                          <span className="inline-flex items-center gap-1 text-emerald-400">
+                            <SIcon className="h-3 w-3" /> {doc.status}
+                          </span>
+                          {doc.taxYear && <><span>·</span><span>Tax year {doc.taxYear}</span></>}
+                        </span>
                       </span>
-                    </div>
-                    <div className="flex items-center justify-between text-xs text-muted-foreground">
-                      <span>{doc.date}</span>
-                      <span>{doc.size}</span>
-                    </div>
-                    <div className="flex gap-2 pt-1 border-t border-border/30">
-                      <button
-                        onClick={() => setViewingDoc(doc)}
-                        className="flex items-center gap-1 text-xs text-primary hover:underline cursor-pointer"
-                      >
-                        <Search className="h-3 w-3" /> View
-                      </button>
-                      <button
-                        onClick={async () => {
-                          if (!doc.fileUrl) return;
-                          await proxyDownload(
-                            doc.fileUrl,
-                            `${doc.title}.${doc.type.toLowerCase()}`,
-                          );
-                        }}
-                        className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground hover:underline cursor-pointer"
-                      >
-                        <Download className="h-3 w-3" /> Download
-                      </button>
-                      <button
-                        onClick={() => setDeleteDocTarget(doc)}
-                        className="flex items-center gap-1 text-xs text-muted-foreground hover:text-destructive hover:underline cursor-pointer ml-auto"
-                      >
-                        <Trash2 className="h-3 w-3" /> Delete
-                      </button>
-                    </div>
+                    </button>
+                    <span className="text-xs text-muted-foreground sm:truncate">
+                      <span className="sm:hidden font-medium text-foreground">Category: </span>{doc.category || "—"}
+                    </span>
+                    <span className="text-xs text-muted-foreground whitespace-nowrap">
+                      <span className="sm:hidden font-medium text-foreground">Added: </span>{doc.date}
+                    </span>
+                    <span className="text-xs text-muted-foreground whitespace-nowrap">
+                      <span className="sm:hidden font-medium text-foreground">Size: </span>{doc.size}
+                    </span>
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button variant="ghost" size="icon" className="h-9 w-9 justify-self-end" aria-label={`Actions for ${doc.title}`}>
+                          <MoreHorizontal className="h-4 w-4" />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        <DropdownMenuItem onClick={() => setViewingDoc(doc)}>
+                          <Eye className="h-4 w-4" /> Preview
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          disabled={!doc.fileUrl}
+                          onClick={async () => {
+                            if (!doc.fileUrl) return;
+                            try {
+                              await proxyDownload(doc.fileUrl, `${doc.title}.${doc.type.toLowerCase()}`);
+                            } catch {
+                              toast({ title: "Download failed", description: "Could not download this file.", variant: "destructive" });
+                            }
+                          }}
+                        >
+                          <Download className="h-4 w-4" /> Download
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          className="text-destructive focus:text-destructive"
+                          onClick={() => setDeleteDocTarget(doc)}
+                        >
+                          <Trash2 className="h-4 w-4" /> Delete
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
                   </div>
                 );
               })
+                }</div>
+              </div>
             )}
           </div>
         </SheetContent>
@@ -9204,7 +9482,7 @@ async function handleConnectBank() {
                 <DialogTitle className="text-base font-semibold">
                   Add Transaction
                 </DialogTitle>
-                <DialogDescription>Add a transaction manually or upload a receipt and n8n will extract the details for you.</DialogDescription>
+                <DialogDescription>Add a transaction manually or upload a receipt and the system will extract the details for you.</DialogDescription>
               </DialogHeader>
               <div className="flex flex-col gap-4 py-2">
                 <div className={newExtractedRows.length > 0 ? "hidden" : "space-y-1.5"}>
@@ -9317,8 +9595,8 @@ async function handleConnectBank() {
                     <p className={`flex items-center gap-2 text-xs font-medium ${newExtractedRows.length > 0 ? "text-emerald-400" : "text-primary"}`}>
                       <Loader2 className="h-3.5 w-3.5 animate-spin" />
                       {newExtractedRows.length > 0
-                        ? `${newExtractedRows.length} transaction${newExtractedRows.length === 1 ? "" : "s"} found so far. Waiting for n8n to finish…`
-                        : "n8n is extracting transaction details…"}
+                        ? `${newExtractedRows.length} transaction${newExtractedRows.length === 1 ? "" : "s"} found so far. Waiting for processing to finish…`
+                        : "Extracting transaction details…"}
                     </p>
                   )}
                   {newReceiptStatus === "extracted" && (
@@ -9587,6 +9865,10 @@ async function handleConnectBank() {
                               <div className="space-y-1.5 sm:col-span-2">
                                 <label className="text-sm font-medium">Receipt / Invoice #</label>
                                 <Input value={row.receipt_number ?? ""} onChange={(event) => updateRow({ receipt_number: event.target.value })} />
+                              </div>
+                              <div className="space-y-1.5 sm:col-span-2">
+                                <label className="text-sm font-medium">Account / Card Hint</label>
+                                <Input value={row.account_card_hint ?? ""} placeholder="e.g. Business Visa ending 4242" onChange={(event) => updateRow({ account_card_hint: event.target.value })} />
                               </div>
                             </div>
                             <div className="rounded-xl border border-border/60 p-3">
