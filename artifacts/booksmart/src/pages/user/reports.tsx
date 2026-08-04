@@ -6854,8 +6854,8 @@ async function handleConnectBank() {
       {tab === "bs" && (
         <div className="space-y-5">
           {/* Header */}
-          <div className="flex items-start justify-between gap-4">
-            <div>
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
+            <div className="min-w-0">
               <h1 className="text-2xl font-bold">Balance Sheet</h1>
               <p className="text-xs text-muted-foreground">
                 Snapshot as of{" "}
@@ -6872,8 +6872,8 @@ async function handleConnectBank() {
                 </p>
               )}
             </div>
-            <div className="flex items-center gap-2 flex-shrink-0">
-              <span className="text-xs text-muted-foreground mr-1">
+            <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:flex-shrink-0 sm:justify-end">
+              <span className="w-full text-xs text-muted-foreground sm:mr-1 sm:w-auto">
                 As Of Date:{" "}
                 <strong className="text-foreground">
                   {balanceSheetAsOf.toLocaleDateString("en-US", {
@@ -6887,7 +6887,7 @@ async function handleConnectBank() {
               <Button
                 size="sm"
                 variant="outline"
-                className="border-border/60 text-muted-foreground hover:bg-secondary/50 gap-1.5 text-xs h-8"
+                className="h-11 flex-1 gap-1.5 border-border/60 text-xs text-muted-foreground hover:bg-secondary/50 sm:h-8 sm:flex-none"
                 onClick={() => {
                   setExportType("bs");
                   setShowExport(true);
@@ -6897,7 +6897,7 @@ async function handleConnectBank() {
               </Button>
               <Button
                 size="sm"
-                className="gap-1.5 text-xs h-8 bg-primary text-primary-foreground hover:bg-primary/90"
+                className="h-11 flex-1 gap-1.5 bg-primary text-xs text-primary-foreground hover:bg-primary/90 sm:h-8 sm:flex-none"
                 onClick={() => setShowDocs(true)}
               >
                 <Upload className="h-3.5 w-3.5" /> UPLOAD
@@ -7162,9 +7162,9 @@ async function handleConnectBank() {
                             {fmt(bs.totalAssets)}
                           </p>
                         </div>
-                        <div className="flex items-center gap-4 mt-3">
+                        <div className="mt-3 flex flex-col items-center gap-4 min-[420px]:flex-row min-[420px]:items-center">
                           {/* Donut */}
-                          <div className="flex-shrink-0">
+                          <div className="flex-shrink-0 self-center">
                             <ResponsiveContainer width={150} height={150}>
                               <PieChart>
                                 <Pie
@@ -7197,7 +7197,7 @@ async function handleConnectBank() {
                             </ResponsiveContainer>
                           </div>
                           {/* Breakdown */}
-                          <div className="flex-1 space-y-3 text-xs">
+                          <div className="w-full min-w-0 flex-1 space-y-3 text-xs">
                             <div>
                               <p className="text-[9px] font-bold text-[#FFC72B] uppercase tracking-widest mb-1">
                                 Current Assets
@@ -7251,9 +7251,9 @@ async function handleConnectBank() {
                             {fmt(bs.totalLiabilities + bs.equity)}
                           </p>
                         </div>
-                        <div className="flex items-center gap-4 mt-3">
+                        <div className="mt-3 flex flex-col items-center gap-4 min-[420px]:flex-row min-[420px]:items-center">
                           {/* Donut */}
-                          <div className="flex-shrink-0">
+                          <div className="flex-shrink-0 self-center">
                             <ResponsiveContainer width={150} height={150}>
                               <PieChart>
                                 <Pie
@@ -7286,7 +7286,7 @@ async function handleConnectBank() {
                             </ResponsiveContainer>
                           </div>
                           {/* Breakdown */}
-                          <div className="flex-1 space-y-3 text-xs">
+                          <div className="w-full min-w-0 flex-1 space-y-3 text-xs">
                             <div>
                               <p className="text-[9px] font-bold text-[#FFC72B] uppercase tracking-widest mb-1">
                                 Current Liabilities
@@ -7346,7 +7346,7 @@ async function handleConnectBank() {
                     {bsPeriods.map((p, i) => (
                       <div
                         key={`${p.docId}-${i}`}
-                        className="flex items-center gap-3 rounded-xl border border-border px-4 py-3"
+                        className="flex flex-wrap items-center gap-3 rounded-xl border border-border px-3 py-3 sm:flex-nowrap sm:px-4"
                         style={{
                           background:
                             "linear-gradient(135deg, hsl(var(--muted)), hsl(var(--card)))",
@@ -7366,7 +7366,7 @@ async function handleConnectBank() {
                             Balance Sheet · {statementPeriodLabel(p)}
                           </p>
                         </div>
-                        <div className="flex items-center gap-2 flex-shrink-0">
+                        <div className="ml-12 flex w-full flex-shrink-0 items-center justify-end gap-2 sm:ml-0 sm:w-auto">
                           {p.bs && (
                             <span className="text-[10px] text-muted-foreground">
                               {fmt(p.bs.totalAssets)}
