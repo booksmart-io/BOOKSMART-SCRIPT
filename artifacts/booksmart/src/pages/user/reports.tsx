@@ -2732,7 +2732,7 @@ const [plaidSyncMessage, setPlaidSyncMessage] = useState("");
   const [deleteDocRunning, setDeleteDocRunning] = useState(false);
 
   const { data: docs = [], isLoading: docsLoading } = useQuery<DocEntry[]>({
-    queryKey: ["user_documents", numericId],
+    queryKey: ["reports_user_documents", numericId],
     enabled: numericId !== null,
     staleTime: 30_000,
     queryFn: async () => {
@@ -2747,17 +2747,21 @@ const [plaidSyncMessage, setPlaidSyncMessage] = useState("");
       return (data ?? []).map((row) => {
         const ext = (row.name ?? "").split(".").pop()?.toUpperCase() ?? "FILE";
         const sizeBytes = row.file_size as number | null;
+        const createdAt =
+          typeof row.created_at === "string" && row.created_at.trim()
+            ? row.created_at
+            : new Date(0).toISOString();
         return {
           id: String(row.id),
           title: (row.name ?? "Untitled").replace(/\.[^.]+$/, ""),
           type: ext,
           category: (row.category as string) ?? "Tax Forms",
-          date: new Date(row.created_at as string).toLocaleDateString("en-US", {
+          date: new Date(createdAt).toLocaleDateString("en-US", {
             month: "short",
             day: "numeric",
             year: "numeric",
           }),
-          createdAt: row.created_at as string,
+          createdAt,
           taxYear: row.tax_year ? String(row.tax_year) : undefined,
           status: "Uploaded" as DocStatus,
           size: sizeBytes
@@ -3126,7 +3130,7 @@ const [plaidSyncMessage, setPlaidSyncMessage] = useState("");
 
       // 5. Invalidate all affected caches
       queryClient.invalidateQueries({
-        queryKey: ["user_documents", numericId],
+        queryKey: ["reports_user_documents", numericId],
       });
       queryClient.invalidateQueries({
         queryKey: ["statement_docs", numericId],
@@ -5122,7 +5126,7 @@ async function handleConnectBank() {
         const newImportId = (importData as { id: number }).id;
         rollbackTransactionUpload = false;
         queryClient.invalidateQueries({
-          queryKey: ["user_documents", numericId],
+          queryKey: ["reports_user_documents", numericId],
         });
         queryClient.invalidateQueries({
           queryKey: ["statement_docs", numericId],
@@ -5139,7 +5143,7 @@ async function handleConnectBank() {
         return;
       } else {
         queryClient.invalidateQueries({
-          queryKey: ["user_documents", numericId],
+          queryKey: ["reports_user_documents", numericId],
         });
         queryClient.invalidateQueries({
           queryKey: ["statement_docs", numericId],
@@ -5186,7 +5190,7 @@ async function handleConnectBank() {
           );
         }
         queryClient.invalidateQueries({
-          queryKey: ["user_documents", numericId],
+          queryKey: ["reports_user_documents", numericId],
         });
         queryClient.invalidateQueries({
           queryKey: ["statement_docs", numericId],
@@ -5236,14 +5240,16 @@ async function handleConnectBank() {
         return matchSearch && matchCategory && matchYear;
       })
       .sort((a, b) => {
+        const aCreatedAt = typeof a.createdAt === "string" ? a.createdAt : "";
+        const bCreatedAt = typeof b.createdAt === "string" ? b.createdAt : "";
         if (docSort === "oldest") {
-          return a.createdAt.localeCompare(b.createdAt);
+          return aCreatedAt.localeCompare(bCreatedAt);
         }
         if (docSort === "name") return a.title.localeCompare(b.title);
         if (docSort === "size") {
           return b.size.localeCompare(a.size, undefined, { numeric: true });
         }
-        return b.createdAt.localeCompare(a.createdAt);
+        return bCreatedAt.localeCompare(aCreatedAt);
       });
   }, [docs, docSearch, docCategory, docYear, docSort]);
 
@@ -8345,7 +8351,7 @@ async function handleConnectBank() {
               queryKey: ["statement_docs", numericId],
             });
             queryClient.invalidateQueries({
-              queryKey: ["user_documents", numericId],
+              queryKey: ["reports_user_documents", numericId],
             });
           }}
           onDeleteUpload={async () => {
@@ -8368,7 +8374,7 @@ async function handleConnectBank() {
               queryKey: ["statement_docs", numericId],
             });
             queryClient.invalidateQueries({
-              queryKey: ["user_documents", numericId],
+              queryKey: ["reports_user_documents", numericId],
             });
           }}
         />
@@ -8381,7 +8387,7 @@ async function handleConnectBank() {
           numericUserId={numericId}
           onClose={() => setScanningImportId(null)}
           onReviewComplete={() => {
-            queryClient.invalidateQueries({ queryKey: ["user_documents", numericId] });
+            queryClient.invalidateQueries({ queryKey: ["reports_user_documents", numericId] });
             queryClient.invalidateQueries({ queryKey: ["tx_month"] });
             queryClient.invalidateQueries({ queryKey: ["tx_recent"] });
             queryClient.invalidateQueries({ queryKey: ["tx_count"] });
@@ -9478,16 +9484,19 @@ async function handleConnectBank() {
               if (!v) setShowAddTx(false);
             }}
           >
-            <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto border-border/60 bg-card sm:max-w-2xl">
+            <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto border-border/60 bg-card p-0 sm:max-w-4xl">
               <DialogHeader>
-                <DialogTitle className="text-base font-semibold">
+                <DialogTitle className="px-6 pt-6 text-2xl font-bold tracking-tight">
                   Add Transaction
                 </DialogTitle>
-                <DialogDescription>Add a transaction manually or upload a receipt and the system will extract the details for you.</DialogDescription>
+                <DialogDescription className="px-6">Add a transaction manually or upload a receipt and we'll extract the details for you.</DialogDescription>
               </DialogHeader>
-              <div className="flex flex-col gap-4 py-2">
-                <div className={newExtractedRows.length > 0 ? "hidden" : "space-y-1.5"}>
-                  <p className="mb-3 text-sm font-semibold"><span className="mr-2 rounded bg-primary px-1.5 py-0.5 text-xs text-primary-foreground">2</span>Transaction Details</p>
+              <div className="grid grid-cols-1 gap-4 p-6 pt-2 sm:grid-cols-2">
+                <p className={newExtractedRows.length > 0 ? "hidden" : "order-2 text-base font-semibold sm:col-span-2"}>
+                  <span className="mr-3 inline-flex h-7 w-7 items-center justify-center rounded-md bg-primary text-sm text-primary-foreground">2</span>
+                  Transaction Details
+                </p>
+                <div className={newExtractedRows.length > 0 ? "hidden" : "order-3 space-y-1.5"}>
                   <label className="text-sm font-medium">Transaction Name <span className="text-destructive">*</span></label>
                   <input
                     className="w-full rounded-lg border border-border/60 bg-secondary/40 px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
@@ -9496,7 +9505,7 @@ async function handleConnectBank() {
                     onChange={(e) => setNewTitle(e.target.value)}
                   />
                 </div>
-                <div className={newExtractedRows.length > 0 ? "hidden" : "space-y-1.5"}>
+                <div className={newExtractedRows.length > 0 ? "hidden" : "order-6 space-y-1.5"}>
                   <label className="text-sm font-medium">
                     Amount (+ for income, − for expense)
                   </label>
@@ -9509,7 +9518,7 @@ async function handleConnectBank() {
                     onChange={(e) => setNewAmount(e.target.value)}
                   />
                 </div>
-                <div className={newExtractedRows.length > 0 ? "hidden" : "space-y-1.5"}>
+                <div className={newExtractedRows.length > 0 ? "hidden" : "order-7 space-y-1.5"}>
                   <label className="text-sm font-medium">Date <span className="text-destructive">*</span></label>
                   <input
                     type="date"
@@ -9518,20 +9527,23 @@ async function handleConnectBank() {
                     onChange={(e) => setNewDate(e.target.value)}
                   />
                 </div>
-                <div className={newExtractedRows.length > 0 ? "hidden" : "space-y-1.5"}>
+                <div className={newExtractedRows.length > 0 ? "hidden" : "order-3 space-y-1.5"}>
                   <label className="text-sm font-medium">Merchant / Vendor <span className="text-destructive">*</span></label>
                   <Input placeholder="e.g. Office Depot" value={newMerchant} onChange={(event) => setNewMerchant(event.target.value)} />
                 </div>
-                <div className={newExtractedRows.length > 0 ? "hidden" : "space-y-1.5"}>
+                <div className={newExtractedRows.length > 0 ? "hidden" : "order-5 space-y-1.5"}>
                   <label className="text-sm font-medium">Type <span className="text-destructive">*</span></label>
                   <div className="grid grid-cols-2 overflow-hidden rounded-lg border border-border/60">
                     <button type="button" className={`flex items-center justify-center gap-2 px-3 py-2 text-sm ${Number(newAmount) <= 0 ? "bg-rose-500/10 text-rose-400" : ""}`} onClick={() => setNewAmount((value) => String(-Math.abs(Number(value) || 0)))}><ArrowDown className="h-4 w-4" />Expense</button>
                     <button type="button" className={`flex items-center justify-center gap-2 border-l border-border/60 px-3 py-2 text-sm ${Number(newAmount) > 0 ? "bg-emerald-500/10 text-emerald-400" : ""}`} onClick={() => setNewAmount((value) => String(Math.abs(Number(value) || 0)))}><ArrowUp className="h-4 w-4" />Income</button>
                   </div>
                 </div>
-                <div className="order-first space-y-1.5 rounded-xl border border-border/60 p-4">
+                <div className="order-1 space-y-3 rounded-xl border border-border/60 bg-background/30 p-5 shadow-sm sm:col-span-2">
                   <div className="flex items-center justify-between gap-3">
-                    <label className="text-sm font-semibold"><span className="mr-2 rounded bg-primary px-1.5 py-0.5 text-xs text-primary-foreground">1</span>Upload Receipt <span className="font-normal text-muted-foreground">(Optional)</span></label>
+                    <div>
+                      <label className="text-base font-semibold"><span className="mr-3 inline-flex h-7 w-7 items-center justify-center rounded-md bg-primary text-sm text-primary-foreground">1</span>Upload Receipt <span className="font-normal text-muted-foreground">(Optional)</span></label>
+                      <p className="ml-10 mt-1 text-sm text-muted-foreground">Upload a receipt and we'll auto-fill the details.</p>
+                    </div>
                     {newReceiptFile && <button type="button" className="text-xs font-medium text-destructive" onClick={() => {
                       setNewReceiptFile(null);
                       setNewReceiptDocumentId(null);
@@ -9646,30 +9658,33 @@ async function handleConnectBank() {
                     </div>
                   )}
                 </div>
-                <div className={newExtractedRows.length > 0 ? "hidden" : "space-y-1.5"}>
+                <div className={newExtractedRows.length > 0 ? "hidden" : "order-9 space-y-1.5 sm:col-span-2"}>
                   <label className="text-sm font-medium">Business Use <span className="text-destructive">*</span></label>
-                  <select
-                    className="w-full rounded-lg border border-border/60 bg-secondary/40 px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
-                    value={newBusinessUse}
-                    onChange={(e) => {
-                      const value = e.target.value as "Business" | "Personal" | "Split";
-                      setNewBusinessUse(value);
-                      if (value === "Business") setNewBusinessPercentage(100);
-                      if (value === "Personal") setNewBusinessPercentage(0);
-                    }}
-                  >
-                    <option value="Business">Business</option>
-                    <option value="Personal">Personal</option>
-                    <option value="Split">Split</option>
-                  </select>
+                  <div className="grid grid-cols-3 overflow-hidden rounded-lg border border-border/60 bg-secondary/20">
+                    {(["Business", "Personal", "Split"] as const).map((value) => (
+                      <button
+                        key={value}
+                        type="button"
+                        aria-pressed={newBusinessUse === value}
+                        className={`px-3 py-2.5 text-sm font-medium transition-colors [&:not(:first-child)]:border-l [&:not(:first-child)]:border-border/60 ${newBusinessUse === value ? "bg-primary/15 text-primary shadow-inner" : "text-muted-foreground hover:bg-secondary/50 hover:text-foreground"}`}
+                        onClick={() => {
+                          setNewBusinessUse(value);
+                          if (value === "Business") setNewBusinessPercentage(100);
+                          if (value === "Personal") setNewBusinessPercentage(0);
+                        }}
+                      >
+                        {value}
+                      </button>
+                    ))}
+                  </div>
                 </div>
                 {newExtractedRows.length === 0 && newBusinessUse === "Split" && (
-                  <div className="space-y-1.5">
+                  <div className="order-9 space-y-1.5 sm:col-span-2">
                     <label className="text-sm font-medium">Business % <span className="text-destructive">*</span></label>
                     <Input type="number" min={1} max={99} value={newBusinessPercentage} onChange={(event) => setNewBusinessPercentage(Number(event.target.value))} />
                   </div>
                 )}
-                <div className={newExtractedRows.length > 0 ? "hidden" : "space-y-1.5"}>
+                <div className={newExtractedRows.length > 0 ? "hidden" : "order-7 space-y-1.5"}>
                   <label className="text-sm font-medium">Category <span className="text-destructive">*</span></label>
                   <select
                     className="w-full rounded-lg border border-border/60 bg-secondary/40 px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
@@ -9680,7 +9695,7 @@ async function handleConnectBank() {
                     {categories.map((category) => <option key={category.id} value={String(category.id)}>{category.name}</option>)}
                   </select>
                 </div>
-                <div className={newExtractedRows.length > 0 ? "hidden" : "grid gap-3 sm:grid-cols-2"}>
+                <div className={newExtractedRows.length > 0 ? "hidden" : "order-8 grid gap-3 sm:col-span-2 sm:grid-cols-2"}>
                   <div className="space-y-1.5">
                     <label className="text-sm font-medium">Account <span className="text-destructive">*</span></label>
                     <select className="w-full rounded-lg border border-border/60 bg-secondary/40 px-3 py-2 text-sm" value={newAccountId} onChange={(event) => setNewAccountId(event.target.value)}>
@@ -9697,9 +9712,10 @@ async function handleConnectBank() {
                     <Input placeholder="e.g. 1234-6678" value={newReceiptNumber} onChange={(event) => setNewReceiptNumber(event.target.value)} />
                   </div>
                 </div>
-                <div className={newExtractedRows.length > 0 ? "hidden" : "rounded-xl border border-border/60 p-4"}>
-                  <p className="mb-3 text-sm font-semibold"><span className="mr-2 rounded bg-primary px-1.5 py-0.5 text-xs text-primary-foreground">3</span>Tax Information</p>
-                  <div className="flex items-center justify-between rounded-lg bg-secondary/20 px-4 py-3">
+                <div className={newExtractedRows.length > 0 ? "hidden" : "order-10 rounded-xl border border-border/60 bg-background/30 p-5 shadow-sm sm:col-span-2"}>
+                  <p className="mb-4 text-base font-semibold"><span className="mr-3 inline-flex h-7 w-7 items-center justify-center rounded-md bg-primary text-sm text-primary-foreground">3</span>Tax Information</p>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="flex items-center justify-between rounded-lg border border-border/40 bg-secondary/20 px-4 py-3">
                   <span className="text-sm font-medium">Tax Deductible</span>
                   <button
                     type="button"
@@ -9713,14 +9729,15 @@ async function handleConnectBank() {
                     />
                   </button>
                   </div>
-                  <div className="mt-2 flex items-center justify-between rounded-lg bg-secondary/20 px-4 py-3">
+                  <div className="flex items-center justify-between rounded-lg border border-border/40 bg-secondary/20 px-4 py-3">
                     <span className="text-sm font-medium">Reimbursable</span>
                     <button type="button" role="switch" aria-checked={newReimbursable} onClick={() => setNewReimbursable((value) => !value)} className={`relative inline-flex h-6 w-11 items-center rounded-full ${newReimbursable ? "bg-primary" : "bg-secondary"}`}>
                       <span className={`inline-block h-4 w-4 rounded-full bg-white transition-transform ${newReimbursable ? "translate-x-6" : "translate-x-1"}`} />
                     </button>
                   </div>
+                  </div>
                 </div>
-                <div className={newExtractedRows.length > 0 ? "hidden" : "space-y-1.5"}>
+                <div className={newExtractedRows.length > 0 ? "hidden" : "order-11 space-y-1.5 sm:col-span-2"}>
                   <label className="text-sm font-medium">Notes</label>
                   <textarea
                     rows={2}
@@ -9731,7 +9748,7 @@ async function handleConnectBank() {
                   />
                 </div>
                 <Button
-                  className={newExtractedRows.length > 0 ? "order-last w-full" : "w-full"}
+                  className="order-[13] w-full sm:col-span-2"
                   disabled={
                     createMutation.isPending || newReceiptProcessing || newReceiptApprovalRunning
                     || (newExtractedRows.length === 0 && (!newTitle.trim() || !newAmount))
@@ -9788,10 +9805,10 @@ async function handleConnectBank() {
                       : "Add Transaction"}
                 </Button>
                 {newExtractedRows.length > 0 && (
-                  <div className="space-y-3 rounded-xl border border-primary/25 bg-primary/5 p-3">
+                  <div className="order-12 w-full space-y-3 rounded-xl border border-primary/25 bg-primary/5 p-4 sm:col-span-2">
                     <div>
                       <p className="text-sm font-semibold">Extracted Transactions ({newExtractedRows.length})</p>
-                      <p className="text-xs text-muted-foreground">All extracted transactions will be added using the button above.</p>
+                      <p className="text-xs text-muted-foreground">Review the extracted transactions, then use the button below to add them.</p>
                     </div>
                     <div className="max-h-72 space-y-2 overflow-y-auto pr-1">
                       {newExtractedRows.map((row, index) => {
