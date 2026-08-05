@@ -22,7 +22,7 @@ import {
 import { ArrowLeft, Edit, Loader2, MoreVertical, Plus, RefreshCw, Trash2, X } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
-const STATE_OPTIONS = [
+const FALLBACK_STATE_OPTIONS = [
   { id: 1, name: "Alabama" },
   { id: 2, name: "Alaska" },
   { id: 4, name: "Arizona" },
@@ -78,6 +78,7 @@ const STATE_OPTIONS = [
 
 type Category = { id: number; name: string };
 type SubCategory = { id: number; name: string; category_id: number };
+type StateOption = { id: number; name: string };
 type RuleGroup = { id: number; state_id: number | null; valid_from: string; valid_to: string | null; description: string | null };
 type DeductionRule = {
   id: number;
@@ -126,6 +127,16 @@ export default function AdminTaxDeductions() {
     queryKey: ["admin_sub_category"],
     queryFn: async () => {
       const { data, error } = await supabase.from("sub_category").select("id,name,category_id").eq("is_deleted", false).order("name");
+      if (error) throw error;
+      return data ?? [];
+    },
+  });
+
+  const { data: stateOptions = [] } = useQuery<StateOption[]>({
+    queryKey: ["admin_states"],
+    staleTime: Infinity,
+    queryFn: async () => {
+      const { data, error } = await supabase.from("states").select("id,name").order("name");
       if (error) throw error;
       return data ?? [];
     },
@@ -311,7 +322,7 @@ export default function AdminTaxDeductions() {
 
   function groupLabel(g: RuleGroup) {
     if (g.state_id == null) return "Federal";
-    return STATE_OPTIONS.find((state) => state.id === g.state_id)?.name || g.description?.trim() || `State ${g.state_id}`;
+    return stateOptions.find((state) => state.id === g.state_id)?.name || g.description?.trim() || `State ${g.state_id}`;
   }
 
   function groupDateLabel(g: RuleGroup) {
@@ -507,7 +518,7 @@ export default function AdminTaxDeductions() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="federal">Federal</SelectItem>
-                  {STATE_OPTIONS.map((state) => (
+                  {stateOptions.map((state) => (
                     <SelectItem key={state.id} value={String(state.id)}>{state.name}</SelectItem>
                   ))}
                 </SelectContent>

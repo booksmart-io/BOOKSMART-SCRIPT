@@ -4,6 +4,7 @@ import { useAuth } from "@/hooks/use-auth";
 import { supabase } from "@/lib/supabase";
 import { useToast } from "@/hooks/use-toast";
 import { useDeductionRuleSet, summarizeDeductions, type OrgRow } from "@/lib/deduction-engine";
+import { normalizeStateId } from "@/lib/state-id";
 import { pickActiveOrganization, useActiveOrganizationId } from "@/lib/active-organization";
 import { liabilityBalanceEntries } from "@/lib/survey-liabilities";
 import {
@@ -335,7 +336,7 @@ export default function AiStrategy() {
     },
   });
   const orgId = org?.id ?? null;
-  const orgStateId = (org?.state as number | undefined) ?? null;
+  const orgStateId = normalizeStateId(org?.state);
 
   // ── Persisted AI strategies (Supabase `ai_tax_strategies` table) ──────────
   const strategiesQueryKey = ["ai_tax_strategies", orgId];

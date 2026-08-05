@@ -40,6 +40,7 @@ import {
   summarizeDeductions,
   type OrgRow,
 } from "@/lib/deduction-engine";
+import { normalizeStateId } from "@/lib/state-id";
 import {
   PnLCard,
   BSCard,
@@ -2894,7 +2895,7 @@ const [plaidSyncMessage, setPlaidSyncMessage] = useState("");
       return (data as OrgRow | null) ?? null;
     },
   });
-  const orgStateId = (orgDetails?.state as number | undefined) ?? null;
+  const orgStateId = normalizeStateId(orgDetails?.state);
   const { groups: ruleGroups, rules: deductionRules } = useDeductionRuleSet();
 
   // Keep the dashboard's AI card in sync with the persisted AI Strategy page.
