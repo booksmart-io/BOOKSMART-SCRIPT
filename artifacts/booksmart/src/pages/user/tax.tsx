@@ -1898,7 +1898,7 @@ function UploadDialog({ open, onClose, onUploaded, onImportCreated, numericUserI
                   <Input type="date" value={asOf} onChange={(e) => setAsOf(e.target.value)} />
                 </div>
               ) : (
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   <div className="space-y-1.5">
                     <Label className="flex items-center gap-1.5">
                       <Calendar className="h-3.5 w-3.5" />Period Start *
@@ -2066,13 +2066,13 @@ export default function Tax() {
     <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">Document Repository</h1>
+          <h1 className="text-2xl font-bold tracking-tight sm:text-3xl">Document Repository</h1>
           <p className="text-muted-foreground">
             Manage your tax documents and filings.
           </p>
         </div>
         <Button
-          className="gap-2"
+          className="w-full gap-2 sm:w-auto"
           onClick={() => setUploadOpen(true)}
           disabled={!user}
         >
@@ -2083,14 +2083,14 @@ export default function Tax() {
 
       <div className="grid gap-6 md:grid-cols-3">
         {/* Document list */}
-        <Card className="col-span-2 border-border/50">
-          <CardHeader>
+        <Card className="min-w-0 border-border/50 md:col-span-2">
+          <CardHeader className="px-4 sm:px-6">
             <CardTitle>Tax Documents</CardTitle>
             <CardDescription>
               Your uploaded financial documents
             </CardDescription>
           </CardHeader>
-          <CardContent>
+          <CardContent className="px-4 sm:px-6">
             {/* Filters */}
             <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:flex-wrap">
               <div className="relative min-w-0 flex-1">
@@ -2158,7 +2158,57 @@ export default function Tax() {
                 </p>
               </div>
             ) : (
-              <div className="min-w-0 rounded-md border border-border/50">
+              <>
+                <div className="space-y-3 sm:hidden">
+                  {filtered.map((doc) => (
+                    <div key={doc.id} className="min-w-0 rounded-lg border border-border/50 p-3">
+                      <div className="flex min-w-0 items-start gap-3">
+                        <div className="mt-0.5 flex-shrink-0">
+                          <FileIcon mime={doc.mime_type} />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <p className="break-words text-sm font-medium leading-5">{doc.name}</p>
+                          {((doc.parsed_data?.statement_workflow as Record<string, unknown> | undefined)?.lifecycle_status === "confirmed") && (
+                            <p className="mt-0.5 text-[10px] text-emerald-400">Extracted and confirmed</p>
+                          )}
+                        </div>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button variant="ghost" size="icon" className="-mr-2 -mt-2 h-11 w-11 flex-shrink-0" aria-label={`Actions for ${doc.name}`}>
+                              <MoreVertical className="h-4 w-4" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            {Boolean((doc.parsed_data?.statement_workflow as Record<string, unknown> | undefined)?.confirmed_result) && (
+                              <DropdownMenuItem onClick={() => setDocToView(doc)}>
+                                <FileText className="mr-2 h-4 w-4" />
+                                View extracted data
+                              </DropdownMenuItem>
+                            )}
+                            <DropdownMenuItem onClick={async () => {
+                              const url = await getSignedUrl(doc.file_url);
+                              window.open(url, "_blank");
+                            }}>
+                              <ExternalLink className="mr-2 h-4 w-4" />
+                              Open
+                            </DropdownMenuItem>
+                            <DropdownMenuItem className="text-destructive focus:text-destructive" onClick={() => setDocToDelete(doc)}>
+                              <Trash2 className="mr-2 h-4 w-4" />
+                              Delete
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </div>
+                      <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                        <span>{doc.tax_year ?? "—"}</span>
+                        {doc.category && <Badge variant="outline" className="max-w-full text-xs">{doc.category}</Badge>}
+                        <span>{fileSizeLabel(doc.file_size) || "—"}</span>
+                        <span className="ml-auto whitespace-nowrap">{formatDate(doc.created_at)}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <div className="hidden min-w-0 overflow-x-auto rounded-md border border-border/50 sm:block">
                 <Table className="min-w-[620px]">
                   <TableHeader className="bg-secondary/20">
                     <TableRow>
@@ -2241,7 +2291,8 @@ export default function Tax() {
                     ))}
                   </TableBody>
                 </Table>
-              </div>
+                </div>
+              </>
             )}
           </CardContent>
         </Card>
@@ -2333,7 +2384,7 @@ export default function Tax() {
             const metadata = result?.metadata ?? {};
             return (
               <div className="space-y-4">
-                <div className="grid grid-cols-2 gap-2 text-sm">
+                <div className="grid grid-cols-1 gap-2 text-sm sm:grid-cols-2">
                   <div><span className="text-muted-foreground">Statement:</span> {String(metadata.statement_type ?? docToView?.category ?? "—")}</div>
                   <div><span className="text-muted-foreground">Currency:</span> {String(metadata.currency ?? "USD")}</div>
                   <div><span className="text-muted-foreground">Period start:</span> {String(metadata.period_start ?? "—")}</div>
@@ -2341,9 +2392,9 @@ export default function Tax() {
                 </div>
                 <div className="rounded-md border divide-y">
                   {Object.entries(values).map(([field, value]) => (
-                    <div key={field} className="flex justify-between gap-4 px-3 py-2 text-sm">
-                      <span className="capitalize">{field.replaceAll("_", " ")}</span>
-                      <span className="font-medium tabular-nums">
+                    <div key={field} className="flex flex-col gap-1 px-3 py-2 text-sm sm:flex-row sm:justify-between sm:gap-4">
+                      <span className="min-w-0 break-words capitalize">{field.replaceAll("_", " ")}</span>
+                      <span className="flex-shrink-0 font-medium tabular-nums">
                         {typeof value === "number"
                           ? new Intl.NumberFormat("en-US", { style: "currency", currency: String(metadata.currency ?? "USD") }).format(value)
                           : "—"}
