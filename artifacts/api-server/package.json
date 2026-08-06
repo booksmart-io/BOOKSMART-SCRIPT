@@ -8,7 +8,7 @@
     "build": "node ./build.mjs",
     "start": "node --env-file-if-exists=../../.env --enable-source-maps ./dist/index.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "tsx --test src/lib/financial-statements.test.ts src/lib/cpa-access.test.ts"
+    "test": "tsx --test src/lib/financial-statements.test.ts src/lib/cpa-access.test.ts src/lib/quickbooks-oauth.test.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.108.2",

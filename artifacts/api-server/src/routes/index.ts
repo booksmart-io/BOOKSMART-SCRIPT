@@ -21,6 +21,7 @@ import businessDocumentRouter from "./business-document";
 import avatarRouter from "./avatar";
 import cpaOrdersRouter from "./cpa-orders";
 import authProfileRouter from "./auth-profile";
+import quickbooksRouter from "./quickbooks";
 
 const router: IRouter = Router();
 
@@ -46,5 +47,6 @@ router.use(businessDocumentRouter);
 router.use(avatarRouter);
 router.use(cpaOrdersRouter);
 router.use(authProfileRouter);
+router.use(quickbooksRouter);
 
 export default router;

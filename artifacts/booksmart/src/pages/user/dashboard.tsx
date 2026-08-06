@@ -17,7 +17,7 @@ import {
   Flame, Star, Lock, Coins, FileText, BarChart2, MessageSquare, Lightbulb,
   CreditCard, Upload, ShieldCheck, Loader2, Sparkles, ArrowRight, Wallet,
   CheckCircle2, CircleAlert, Landmark,
-  ClipboardList,
+  ClipboardList, BookOpenCheck,
 } from "lucide-react";
 
 // Types
@@ -46,6 +46,12 @@ type SubscriptionStatus = {
   tier?: string;
   tokenBalance?: number;
   status?: string | null;
+};
+
+type QuickBooksActionStatus = {
+  connected: boolean;
+  stagedTotal: number;
+  unmappedAccounts: number;
 };
 
 // Helpers
@@ -378,6 +384,31 @@ export default function UserDashboard() {
     },
   });
 
+  const { data: quickBooksAction = { connected: false, stagedTotal: 0, unmappedAccounts: 0 } } = useQuery<QuickBooksActionStatus>({
+    queryKey: ["dashboard-quickbooks-action", orgId],
+    enabled: orgId !== null,
+    staleTime: 30_000,
+    queryFn: async () => {
+      const { data: session } = await supabase.auth.getSession();
+      const token = session.session?.access_token;
+      if (!token) return { connected: false, stagedTotal: 0, unmappedAccounts: 0 };
+      const headers = { Authorization: `Bearer ${token}` };
+      const [statusResponse, syncResponse, mappingsResponse] = await Promise.all([
+        fetch(`/api/integrations/quickbooks/status?organization_id=${orgId}`, { headers }),
+        fetch(`/api/integrations/quickbooks/sync-status?organization_id=${orgId}`, { headers }),
+        fetch(`/api/integrations/quickbooks/account-mappings?organization_id=${orgId}`, { headers }),
+      ]);
+      const statusBody = statusResponse.ok ? await statusResponse.json() as { connected?: boolean } : {};
+      const syncBody = syncResponse.ok ? await syncResponse.json() as { counts?: Record<string, number> } : {};
+      const mappingsBody = mappingsResponse.ok ? await mappingsResponse.json() as { rows?: Array<{ mapping: unknown | null }> } : {};
+      return {
+        connected: statusBody.connected === true,
+        stagedTotal: Object.entries(syncBody.counts ?? {}).reduce((sum, [type, count]) => type === "Account" ? sum : sum + Number(count), 0),
+        unmappedAccounts: (mappingsBody.rows ?? []).filter((row) => !row.mapping).length,
+      };
+    },
+  });
+
   const { data: uncategorizedCount = 0 } = useQuery<number>({
     queryKey: ["dashboard_uncategorized_count", orgId],
     enabled: orgId !== null,
@@ -434,6 +465,24 @@ export default function UserDashboard() {
   const planLabel = planTier.charAt(0).toUpperCase() + planTier.slice(1);
 
   const actionItems = [
+    {
+      icon: <BookOpenCheck className="h-[17px] w-[17px] text-cyan-200" />,
+      iconBg: "bg-cyan-600/90",
+      title: quickBooksAction.connected ? "QuickBooks Online" : "Connect QuickBooks",
+      detail: !quickBooksAction.connected
+        ? "Connect QuickBooks to sync and review accounting activity."
+        : quickBooksAction.stagedTotal > 0
+          ? `${quickBooksAction.stagedTotal} transaction${quickBooksAction.stagedTotal === 1 ? "" : "s"} need review.`
+          : quickBooksAction.unmappedAccounts > 0
+            ? `${quickBooksAction.unmappedAccounts} QuickBooks account${quickBooksAction.unmappedAccounts === 1 ? "" : "s"} need mapping.`
+            : "Connected, reviewed, and ready for the next sync.",
+      href: !quickBooksAction.connected
+        ? "/user/settings"
+        : quickBooksAction.stagedTotal > 0
+          ? "/user/quickbooks-review"
+          : "/user/quickbooks-review?tab=accounts",
+      cta: !quickBooksAction.connected ? "Connect" : quickBooksAction.stagedTotal > 0 ? "Review" : quickBooksAction.unmappedAccounts > 0 ? "Map" : "View",
+    },
     {
       icon: <Landmark className="h-[17px] w-[17px] text-emerald-200" />,
       iconBg: "bg-emerald-600/90",

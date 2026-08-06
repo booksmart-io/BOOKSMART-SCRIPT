@@ -33,6 +33,7 @@ import Organizations from "@/pages/user/organizations";
 import Subscription from "@/pages/user/subscription";
 import BulkReview from "@/pages/user/bulk-review";
 import RulesManagement from "@/pages/user/rules-management";
+import QuickBooksReview from "@/pages/user/quickbooks-review";
 
 // CPA Pages
 import CpaDashboard from "@/pages/cpa/dashboard";
@@ -75,11 +76,14 @@ const USER_ROUTES: Record<string, RouteEntry> = {
   "/user/orders": { role: "user", component: Orders },
   "/user/token": { role: "user", component: Token },
   "/user/settings": { role: "user", component: Settings },
+  // Compatibility for OAuth callbacks issued by older API deployments.
+  "/settings/integrations": { role: "user", component: Settings },
   "/user/profile": { role: "user", component: Profile },
   "/user/organizations": { role: "user", component: Organizations },
   "/user/subscription": { role: "user", component: Subscription },
   "/user/bulk-review": { role: "user", component: BulkReview },
   "/user/rules-management": { role: "user", component: RulesManagement },
+  "/user/quickbooks-review": { role: "user", component: QuickBooksReview },
 };
 const CPA_ROUTES: Record<string, RouteEntry> = {
   "/cpa": { role: "cpa", component: CpaDashboard },
