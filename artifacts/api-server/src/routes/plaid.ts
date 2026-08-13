@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { scheduleMonitoringEvaluation } from "../lib/monitoring-runner";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { requireAuth } from "../middlewares/require-auth";
 import { getUserTier, PLAN_LIMITS, enforceConnectedAccountLimit } from "../lib/plan-limits";
@@ -17,6 +18,10 @@ type PlaidAccount = {
   mask?: string | null;
   type?: string | null;
   subtype?: string | null;
+};
+
+type PlaidBalanceAccount = PlaidAccount & {
+  balances?: { available?: number | null; current?: number | null; limit?: number | null; iso_currency_code?: string | null };
 };
 
 type PlaidTransaction = {
@@ -314,70 +319,98 @@ router.post("/plaid/sync", requireAuth, async (req, res) => {
     let removedCount = 0;
 
     for (const item of items ?? []) {
-      let cursor = item.transactions_cursor as string | null;
-      let hasMore = true;
-
-      while (hasMore) {
-        const sync = await plaidFetch<{
-          added: PlaidTransaction[];
-          modified: PlaidTransaction[];
-          removed: Array<{ transaction_id: string }>;
-          next_cursor: string;
-          has_more: boolean;
-        }>("/transactions/sync", {
-          access_token: item.access_token,
-          cursor: cursor || undefined,
-          count: 500,
-        });
-
-        const rows = [...(sync.added ?? []), ...(sync.modified ?? [])].map((tx) => {
-          const amount = transactionAmount(tx);
-          return {
-            user_id: userRow.id,
-            org_id: item.org_id,
-            title: tx.merchant_name || tx.name || "Plaid transaction",
-            amount,
-            type: "Business",
-            date_time: new Date(tx.datetime || tx.date).toISOString(),
-            description: tx.name || tx.merchant_name || "",
-            deductible: amount < 0,
-            plaid_transaction_id: tx.transaction_id,
-            plaid_account_id: tx.account_id,
-            plaid_category: plaidCategory(tx),
-            pending: tx.pending ?? false,
-          };
-        });
-
-        if (rows.length > 0) {
-          const { error: txError } = await admin
-            .from("transactions")
-            .upsert(rows, { onConflict: "plaid_transaction_id" });
-          if (txError) throw txError;
-        }
-
-        const removedIds = (sync.removed ?? []).map((tx) => tx.transaction_id).filter(Boolean);
-        if (removedIds.length > 0) {
-          const { error: removeError } = await admin
-            .from("transactions")
-            .delete()
-            .eq("org_id", item.org_id)
-            .in("plaid_transaction_id", removedIds);
-          if (removeError) throw removeError;
-        }
-
-        addedCount += sync.added?.length ?? 0;
-        modifiedCount += sync.modified?.length ?? 0;
-        removedCount += removedIds.length;
-        cursor = sync.next_cursor;
-        hasMore = sync.has_more;
-      }
-
-      const { error: cursorError } = await admin
+      const syncStartedAt = new Date().toISOString();
+      const { error: runningStatusError } = await admin
         .from("plaid_items")
-        .update({ transactions_cursor: cursor, updated_at: new Date().toISOString() })
-        .eq("id", item.id);
-      if (cursorError) throw cursorError;
+        .update({ last_sync_status: "running", last_sync_error: null, updated_at: syncStartedAt })
+        .eq("id", item.id)
+        .eq("org_id", orgRow.id);
+      if (runningStatusError) throw runningStatusError;
+
+      try {
+        let cursor = item.transactions_cursor as string | null;
+        let hasMore = true;
+
+        while (hasMore) {
+          const sync = await plaidFetch<{
+            added: PlaidTransaction[];
+            modified: PlaidTransaction[];
+            removed: Array<{ transaction_id: string }>;
+            next_cursor: string;
+            has_more: boolean;
+          }>("/transactions/sync", {
+            access_token: item.access_token,
+            cursor: cursor || undefined,
+            count: 500,
+          });
+
+          const rows = [...(sync.added ?? []), ...(sync.modified ?? [])].map((tx) => {
+            const amount = transactionAmount(tx);
+            return {
+              user_id: userRow.id,
+              org_id: item.org_id,
+              title: tx.merchant_name || tx.name || "Plaid transaction",
+              amount,
+              type: "Business",
+              date_time: new Date(tx.datetime || tx.date).toISOString(),
+              description: tx.name || tx.merchant_name || "",
+              deductible: amount < 0,
+              plaid_transaction_id: tx.transaction_id,
+              plaid_account_id: tx.account_id,
+              plaid_category: plaidCategory(tx),
+              pending: tx.pending ?? false,
+            };
+          });
+
+          if (rows.length > 0) {
+            const { error: txError } = await admin
+              .from("transactions")
+              .upsert(rows, { onConflict: "plaid_transaction_id" });
+            if (txError) throw txError;
+          }
+
+          const removedIds = (sync.removed ?? []).map((tx) => tx.transaction_id).filter(Boolean);
+          if (removedIds.length > 0) {
+            const { error: removeError } = await admin
+              .from("transactions")
+              .delete()
+              .eq("org_id", item.org_id)
+              .in("plaid_transaction_id", removedIds);
+            if (removeError) throw removeError;
+          }
+
+          addedCount += sync.added?.length ?? 0;
+          modifiedCount += sync.modified?.length ?? 0;
+          removedCount += removedIds.length;
+          cursor = sync.next_cursor;
+          hasMore = sync.has_more;
+        }
+
+        const completedAt = new Date().toISOString();
+        const { error: cursorError } = await admin
+          .from("plaid_items")
+          .update({
+            transactions_cursor: cursor,
+            last_synced_at: completedAt,
+            last_sync_status: "completed",
+            last_sync_error: null,
+            updated_at: completedAt,
+          })
+          .eq("id", item.id)
+          .eq("org_id", orgRow.id);
+        if (cursorError) throw cursorError;
+      } catch (error) {
+        const message = errorMessage(error, "Plaid sync failed").slice(0, 500);
+        await admin
+          .from("plaid_items")
+          .update({ last_sync_status: "failed", last_sync_error: message, updated_at: new Date().toISOString() })
+          .eq("id", item.id)
+          .eq("org_id", orgRow.id);
+        throw error;
+      }
     }
+
+    if (addedCount + modifiedCount + removedCount > 0) scheduleMonitoringEvaluation(admin, Number(orgRow.id), "plaid_sync");
 
     res.json({
       ok: true,
@@ -389,6 +422,70 @@ router.post("/plaid/sync", requireAuth, async (req, res) => {
     const message = errorMessage(err, "Plaid sync failed");
     console.error("[plaid/sync]", message, err);
     res.status(500).json({ error: "plaid_sync_failed", message });
+  }
+});
+
+router.get("/plaid/balances", requireAuth, async (req, res) => {
+  try {
+    const authUserId = req.supabaseUserId;
+    if (!authUserId) { res.status(401).json({ error: "unauthorized" }); return; }
+    const admin = adminClient();
+    const { orgRow } = await getUserAndOrg(admin, authUserId, req.query?.org_id);
+    const { data: items, error } = await admin.from("plaid_items")
+      .select("id,access_token,institution_name,status").eq("org_id", orgRow.id).eq("status", "active");
+    if (error) throw error;
+    const accounts: Array<Record<string, unknown>> = [];
+    for (const item of items ?? []) {
+      const result = await plaidFetch<{ accounts?: PlaidBalanceAccount[] }>("/accounts/balance/get", { access_token: item.access_token });
+      for (const account of result.accounts ?? []) accounts.push({
+        account_id: account.account_id, name: account.name ?? account.official_name ?? "Account",
+        official_name: account.official_name ?? null, mask: account.mask ?? null, type: account.type ?? null,
+        subtype: account.subtype ?? null, institution_name: item.institution_name ?? null,
+        current: account.balances?.current ?? null, available: account.balances?.available ?? null,
+        limit: account.balances?.limit ?? null, currency: account.balances?.iso_currency_code ?? "USD",
+      });
+    }
+    const since = new Date();
+    since.setDate(since.getDate() - 30);
+    const { data: recentTransactions, error: transactionError } = await admin.from("transactions")
+      .select("plaid_account_id,amount")
+      .eq("org_id", orgRow.id)
+      .gte("date_time", since.toISOString())
+      .not("plaid_account_id", "is", null);
+    if (transactionError) throw transactionError;
+    const movementByAccount = new Map<string, number>();
+    for (const transaction of recentTransactions ?? []) {
+      const accountId = String(transaction.plaid_account_id ?? "");
+      movementByAccount.set(accountId, (movementByAccount.get(accountId) ?? 0) + Number(transaction.amount ?? 0));
+    }
+    const accountsWithTrends: Array<Record<string, unknown> & { change_amount: number; change_percent: number | null }> = accounts.map((account) => {
+      const accountId = String(account.account_id ?? "");
+      const movement = movementByAccount.get(accountId) ?? 0;
+      const isDebt = ["credit", "loan"].includes(String(account.type ?? ""));
+      const signedCurrent = (isDebt ? -1 : 1) * Number(account.current ?? account.available ?? 0);
+      const signedPrevious = signedCurrent - movement;
+      return {
+        ...account,
+        change_amount: movement,
+        change_percent: signedPrevious === 0 ? null : (movement / Math.abs(signedPrevious)) * 100,
+      };
+    });
+    const refreshedAt = new Date().toISOString();
+    if (accountsWithTrends.length > 0) {
+      const { error: snapshotError } = await admin.from("account_balance_snapshots").upsert(accountsWithTrends.map(account => ({
+        organization_id: orgRow.id, provider: "plaid", external_account_id: String(account.account_id),
+        account_name: String(account.name), account_type: account.type, account_subtype: account.subtype,
+        current_balance: account.current, available_balance: account.available, credit_limit: account.limit,
+        currency: account.currency, balance_timestamp: refreshedAt,
+        metadata: { institution_name: account.institution_name, change_amount: account.change_amount, change_percent: account.change_percent },
+      })), { onConflict: "organization_id,provider,external_account_id,balance_timestamp" });
+      if (snapshotError && snapshotError.code !== "42P01") console.warn("[plaid/balances] snapshot warning:", snapshotError.message);
+    }
+    res.json({ accounts: accountsWithTrends, refreshed_at: refreshedAt, source: "live_provider_balance" });
+  } catch (err) {
+    const message = errorMessage(err, "Plaid balances failed");
+    console.error("[plaid/balances]", message, err);
+    res.status(500).json({ error: "plaid_balances_failed", message });
   }
 });
 
@@ -458,6 +555,8 @@ router.delete("/plaid/items/:itemId", requireAuth, async (req, res) => {
       .eq("user_id", userRow.id)
       .eq("org_id", orgRow.id);
     if (itemDeleteError) throw itemDeleteError;
+
+    scheduleMonitoringEvaluation(admin, Number(orgRow.id), "plaid_disconnect");
 
     res.json({
       ok: true,

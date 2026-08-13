@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { scheduleMonitoringEvaluation } from "../lib/monitoring-runner";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { requireAuth } from "../middlewares/require-auth";
 import {
@@ -256,6 +257,7 @@ router.patch("/financial-statements/:id", requireAuth, async (req, res) => {
   const { data, error } = await admin.from("user_documents").update({ parsed_data: parsedData, updated_at: new Date().toISOString() })
     .eq("id", documentId).eq("user_id", owner.userId).select("id,name,category,parsed_data,created_at").single();
   if (error) { res.status(500).json({ error: "save_failed", message: error.message }); return; }
+  if (action === "confirm") scheduleMonitoringEvaluation(admin, organizationId, "financial_statement_approved");
   res.json({ statement: publicStatement(data as JsonMap), validation });
 });
 

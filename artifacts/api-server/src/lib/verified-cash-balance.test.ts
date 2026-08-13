@@ -1,0 +1,7 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { verifiedCashBalance } from "./verified-cash-balance";
+const now = new Date("2026-08-12T12:00:00.000Z");
+const row = (overrides: Record<string, unknown> = {}) => ({ external_account_id: "checking", account_type: "depository", current_balance: 12000, available_balance: 10000, currency: "USD", balance_timestamp: "2026-08-12T10:00:00.000Z", ...overrides });
+test("uses the latest fresh available balance for each USD depository account", () => { const result = verifiedCashBalance({ now, hasHealthyPlaidConnection: true, snapshots: [row({ available_balance: 8000, balance_timestamp: "2026-08-12T08:00:00.000Z" }), row(), row({ external_account_id: "savings", available_balance: null, current_balance: 5000 })] }); assert.equal(result.available, true); assert.equal(result.cashAvailable, 15000); assert.equal(result.accountCount, 2); });
+test("rejects stale, unhealthy, debt, and non-USD balances", () => { assert.equal(verifiedCashBalance({ now, hasHealthyPlaidConnection: true, snapshots: [row({ balance_timestamp: "2026-08-10T10:00:00.000Z" })] }).available, false); assert.equal(verifiedCashBalance({ now, hasHealthyPlaidConnection: false, snapshots: [row()] }).available, false); assert.equal(verifiedCashBalance({ now, hasHealthyPlaidConnection: true, snapshots: [row({ account_type: "credit" }), row({ external_account_id: "cad", currency: "CAD" })] }).available, false); });

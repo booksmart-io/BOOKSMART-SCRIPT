@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { scheduleMonitoringEvaluation } from "../lib/monitoring-runner";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { requireAuth } from "../middlewares/require-auth";
 import { createOAuthState, decryptToken, encryptToken, hashOAuthState, verifyOAuthState } from "../lib/quickbooks-oauth";
@@ -260,6 +261,7 @@ router.post("/integrations/quickbooks/sync", requireAuth, async (req, res) => {
     const admin = adminClient();
     const organization = await ownedOrganization(admin, req.supabaseUserId!, req.body?.organization_id);
     const result = await syncQuickBooksToStaging(admin, Number(organization.id));
+    scheduleMonitoringEvaluation(admin, Number(organization.id), "quickbooks_sync");
     res.json({ ok: true, ...result });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Could not synchronize QuickBooks";
@@ -391,6 +393,7 @@ router.post("/integrations/quickbooks/staged/import", requireAuth, async (req, r
     const transactionIds = [...new Set((importedRows ?? [])
       .map((row: { imported_transaction_id: number | null }) => Number(row.imported_transaction_id))
       .filter((id: number) => Number.isSafeInteger(id) && id > 0))];
+    if (transactionIds.length > 0) scheduleMonitoringEvaluation(admin, Number(organization.id), "quickbooks_import");
     res.json({
       ok: true,
       imported: Number(result?.imported_count ?? 0),
@@ -506,7 +509,16 @@ router.post("/integrations/quickbooks/disconnect", requireAuth, async (req, res)
       .select("refresh_token_encrypted").eq("organization_id", organization.id).eq("status", "active").maybeSingle();
     if (error) throw error;
     if (!data) { res.status(404).json({ error: "quickbooks_connection_not_found" }); return; }
-    await revokeToken(decryptToken(data.refresh_token_encrypted));
+    let revoked = false;
+    let revocationWarning: string | null = null;
+    try {
+      if (!data.refresh_token_encrypted) throw new Error("Stored QuickBooks refresh token is unavailable");
+      await revokeToken(decryptToken(data.refresh_token_encrypted));
+      revoked = true;
+    } catch (revocationError) {
+      revocationWarning = "Intuit token revocation could not be confirmed. Local credentials were removed.";
+      req.log?.warn({ err: revocationError, organizationId: organization.id }, "QuickBooks remote revocation failed; continuing local disconnect");
+    }
     const { error: updateError } = await admin.from("quickbooks_connections").update({
       access_token_encrypted: null,
       refresh_token_encrypted: null,
@@ -517,7 +529,7 @@ router.post("/integrations/quickbooks/disconnect", requireAuth, async (req, res)
       updated_at: new Date().toISOString(),
     }).eq("organization_id", organization.id);
     if (updateError) throw updateError;
-    res.json({ ok: true, connected: false });
+    res.json({ ok: true, connected: false, revoked, warning: revocationWarning });
   } catch (error) {
     req.log?.error({ err: error }, "QuickBooks disconnect failed");
     res.status(500).json({ error: "quickbooks_disconnect_failed", message: "Could not disconnect QuickBooks" });

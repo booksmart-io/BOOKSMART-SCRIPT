@@ -20,8 +20,16 @@ import financialStatementsRouter from "./financial-statements";
 import businessDocumentRouter from "./business-document";
 import avatarRouter from "./avatar";
 import cpaOrdersRouter from "./cpa-orders";
+import cpaMonitoringRouter from "./cpa-monitoring";
+import cpaClientFinancialsRouter from "./cpa-client-financials";
 import authProfileRouter from "./auth-profile";
 import quickbooksRouter from "./quickbooks";
+import monitoringRouter from "./monitoring";
+import monitoringJobsRouter from "./monitoring-jobs";
+import connectionStatusRouter from "./connection-status";
+import jobberRouter from "./jobber";
+import financialInputsRouter from "./financial-inputs";
+import financialSummaryRouter from "./financial-summary";
 
 const router: IRouter = Router();
 
@@ -46,7 +54,15 @@ router.use(financialStatementsRouter);
 router.use(businessDocumentRouter);
 router.use(avatarRouter);
 router.use(cpaOrdersRouter);
+router.use(cpaMonitoringRouter);
+router.use(cpaClientFinancialsRouter);
 router.use(authProfileRouter);
 router.use(quickbooksRouter);
+router.use(monitoringRouter);
+router.use(monitoringJobsRouter);
+router.use(connectionStatusRouter);
+router.use(jobberRouter);
+router.use(financialInputsRouter);
+router.use(financialSummaryRouter);
 
 export default router;

@@ -11,6 +11,13 @@ function base64url(value: string | Buffer): string {
   return Buffer.from(value).toString("base64url");
 }
 
+function decodeCanonicalBase64url(value: string): Buffer {
+  if (!/^[A-Za-z0-9_-]+$/.test(value)) throw new Error("Invalid base64url value");
+  const decoded = Buffer.from(value, "base64url");
+  if (decoded.toString("base64url") !== value) throw new Error("Invalid base64url value");
+  return decoded;
+}
+
 function stateSecret(): string {
   const secret = process.env.QUICKBOOKS_STATE_SECRET ?? process.env.QUICKBOOKS_CLIENT_SECRET;
   if (!secret) throw new Error("QuickBooks OAuth state secret is not configured");
@@ -39,11 +46,13 @@ export function verifyOAuthState(value: string): OAuthState {
   const [payload, signature, extra] = value.split(".");
   if (!payload || !signature || extra) throw new Error("Invalid OAuth state");
   const expected = createHmac("sha256", stateSecret()).update(payload).digest();
-  const received = Buffer.from(signature, "base64url");
+  let received: Buffer;
+  try { received = decodeCanonicalBase64url(signature); }
+  catch { throw new Error("Invalid OAuth state signature"); }
   if (received.length !== expected.length || !timingSafeEqual(received, expected)) {
     throw new Error("Invalid OAuth state signature");
   }
-  const parsed = JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) as OAuthState;
+  const parsed = JSON.parse(decodeCanonicalBase64url(payload).toString("utf8")) as OAuthState;
   if (!parsed.userId || !Number.isSafeInteger(parsed.organizationId) || parsed.organizationId <= 0 ||
       !parsed.nonce || !Number.isSafeInteger(parsed.expiresAt)) {
     throw new Error("Invalid OAuth state payload");
@@ -69,10 +78,10 @@ export function decryptToken(value: string): string {
   if (version !== "v1" || !ivValue || !tagValue || !encryptedValue || extra) {
     throw new Error("Invalid encrypted token");
   }
-  const decipher = createDecipheriv("aes-256-gcm", encryptionKey(), Buffer.from(ivValue, "base64url"));
-  decipher.setAuthTag(Buffer.from(tagValue, "base64url"));
+  const decipher = createDecipheriv("aes-256-gcm", encryptionKey(), decodeCanonicalBase64url(ivValue));
+  decipher.setAuthTag(decodeCanonicalBase64url(tagValue));
   return Buffer.concat([
-    decipher.update(Buffer.from(encryptedValue, "base64url")),
+    decipher.update(decodeCanonicalBase64url(encryptedValue)),
     decipher.final(),
   ]).toString("utf8");
 }

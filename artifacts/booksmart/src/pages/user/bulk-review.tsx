@@ -4,6 +4,7 @@ import { useAuth } from "@/hooks/use-auth";
 import { supabase } from "@/lib/supabase";
 import { checkAddTransaction } from "@/lib/plan-limits";
 import { categorizeTransaction } from "@/lib/ai-categorization";
+import { notifyFinancialDataChanged } from "@/lib/monitoring-client";
 import { pickActiveOrganization, useActiveOrganizationId } from "@/lib/active-organization";
 import { useToast } from "@/hooks/use-toast";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -135,14 +136,20 @@ export default function BulkReview() {
         .update({ status: "approved" })
         .eq("id", tx.id);
       if (updateErr) throw new Error(`Status update failed: ${updateErr.message}`);
+      return targetOrgId;
     },
-    onSuccess: () => {
+    onSuccess: (targetOrgId) => {
       qc.invalidateQueries({ queryKey: ["pending_txs", numericId] });
       qc.invalidateQueries({ queryKey: ["tx_month", orgId] });
       qc.invalidateQueries({ queryKey: ["tx_recent", orgId] });
       qc.invalidateQueries({ queryKey: ["tx_count", orgId] });
       qc.invalidateQueries({ queryKey: ["tx_period", orgId] });
       qc.invalidateQueries({ queryKey: ["pending_count", numericId] });
+      if (targetOrgId) {
+        void notifyFinancialDataChanged(targetOrgId, "transactions_approved").catch((error) => {
+          console.warn("[monitoring/financial-data-changed]", error instanceof Error ? error.message : error);
+        });
+      }
     },
     onError: (e: Error) => {
       toast({ title: "Approve failed", description: e.message, variant: "destructive" });

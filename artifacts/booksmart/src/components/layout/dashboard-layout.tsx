@@ -18,7 +18,7 @@ import {
   Settings, User, LogOut, DollarSign, ShieldCheck, Tags, Briefcase, Users,
   Sun, Moon, Bell, ArrowLeftRight, ShoppingBag,
   UserPlus, TrendingUp, Inbox, FolderOpen, BarChart2, Lightbulb,
-  LayoutTemplate, HelpCircle, ChevronRight, Link as LinkIcon,
+  LayoutTemplate, HelpCircle, ChevronRight, Link as LinkIcon, Activity, ClipboardList,
 } from "lucide-react";
 
 interface DashboardLayoutProps {
@@ -71,8 +71,12 @@ export function DashboardLayout({ children, role }: DashboardLayoutProps) {
   const navConfig = {
     user: {
       main: [
+        { title: "Home",                url: "/user",                    icon: LayoutDashboard },
+        { title: "Money",               url: "/user/money",              icon: DollarSign },
+        { title: "Tasks",               url: "/user/tasks",              icon: ClipboardList },
+        { title: "My CPA",              url: "/user/my-cpa",             icon: Briefcase },
+        { title: "Insights",            url: "/user/insights",           icon: Lightbulb },
         { title: "Switch Organization", url: "/user/organizations", icon: ArrowLeftRight },
-        { title: "Dashboard",           url: "/user",               icon: LayoutDashboard },
         { title: "AI Strategy",         url: "/user/ai-strategy",   icon: Gem },
         { title: "Financial Reports",   url: "/user/reports",       icon: Copy },
         { title: "Document Repository", url: "/user/tax",           icon: Scissors },
@@ -109,6 +113,7 @@ export function DashboardLayout({ children, role }: DashboardLayoutProps) {
         { title: "CPAs",           url: "/admin/cpas",             icon: Briefcase },
         { title: "Categories",     url: "/admin/categories",       icon: Tags },
         { title: "Tax Deductions", url: "/admin/tax-deductions",   icon: ShieldCheck },
+        { title: "Monitoring",     url: "/admin/monitoring",       icon: Activity },
         { title: "Chat",           url: "/admin/chat",             icon: MessageSquare, badge: "unread" },
       ],
       bottom: [
@@ -119,11 +124,6 @@ export function DashboardLayout({ children, role }: DashboardLayoutProps) {
 
   const items = navConfig[role].main;
   const bottomItems = navConfig[role].bottom;
-  const usesFullWidthContent =
-    location === "/user/reports" ||
-    location === "/cpa/clients" ||
-    location === "/admin/tax-deductions";
-
   const isActive = (url: string) =>
     url === "/user" || url === "/cpa" || url === "/admin"
       ? location === url
@@ -379,11 +379,7 @@ export function DashboardLayout({ children, role }: DashboardLayoutProps) {
 
           {/* Page content */}
           <div className="min-h-0 flex-1 overflow-auto px-3 pb-20 pt-3 sm:px-4 sm:pt-4 lg:px-6 lg:pt-6 2xl:px-7 2xl:pt-7">
-            <div
-              className={`mx-auto w-full min-w-0 ${
-                usesFullWidthContent ? "max-w-none" : "max-w-[1536px]"
-              }`}
-            >
+            <div className="w-full min-w-0 max-w-none">
               {children}
             </div>
           </div>

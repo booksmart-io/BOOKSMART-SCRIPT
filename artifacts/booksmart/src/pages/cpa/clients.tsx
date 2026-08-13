@@ -8,11 +8,11 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Separator } from "@/components/ui/separator";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
 import {
   Search, Loader2, Users, DollarSign, FileText, Sparkles,
@@ -21,6 +21,7 @@ import {
   PanelLeftOpen, TrendingUp, TrendingDown, Upload, Calendar,
   Clock, CheckCircle2, AlertTriangle, Share2, Building2,
   Mail, ArrowLeft, MoreHorizontal, Download,
+  WalletCards,
 } from "lucide-react";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
@@ -57,12 +58,6 @@ interface Transaction {
   deductible: boolean;
 }
 
-interface OrgRow {
-  id: number;
-  owner_id: number;
-  name: string | null;
-}
-
 interface AiStrategy {
   id: number;
   title: string;
@@ -79,6 +74,21 @@ interface Document {
   created_at: string;
   file_url: string | null;
 }
+
+type ClientFinancialSummary = {
+  organization_ids: number[]; organizations: Array<{ id: number; name: string }>; selected_organization_id: number | null;
+  generated_at: string; last_transaction_at: string | null;
+  current_month: { revenue: number; accountingExpenses: number; netIncome: number; moneyIn: number; moneyOut: number; netCashMovement: number; profitMarginPct: number | null };
+  year_to_date: { revenue: number; accountingExpenses: number; netIncome: number; moneyIn: number; moneyOut: number; netCashMovement: number; profitMarginPct: number | null };
+  health: { score: number; status: string; methodologyVersion: string; missingInputs: string[] } | null;
+  changes: { revenue: number | null; expenses: number | null; net_income: number | null; cash_movement: number | null };
+  monthly_trend: Array<{ month: string; cashIn: number; cashOut: number; netCashMovement: number }>;
+  expense_categories: Array<{ name: string; amount: number }>;
+  recent_transactions: Transaction[]; income_source_count: number;
+  tax_readiness: { available: false; missing_inputs: string[] };
+};
+type PlanningResult = { organization: { id: number; name: string }; verified_cash: { available: boolean; amount: number | null; refreshed_at: string | null }; inputs: { settings: Record<string, unknown>; items: Array<{ id: number; item_type: string; name: string; amount: number | null; due_date: string; recurrence: string }> }; readiness: { safe_to_spend: { available: boolean; safeToSpend?: number; shortfall?: number; missingInputs?: string[] }; tax_reserve: { available: boolean; remainingReserve?: number | null; missingInputs?: string[] }; forecast: { available: boolean; endingCash?: number; lowestBalance?: number; shortfall?: number; shortfallDate?: string | null; missingInputs?: string[] } } };
+type ClientPlanningSummary = { mode: "per_organization" | "single_organization"; results: PlanningResult[]; generated_at: string };
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -99,72 +109,13 @@ function fmtFull(v: number) {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 2 }).format(v);
 }
 
-function startOfMonth() {
-  const d = new Date();
-  return new Date(d.getFullYear(), d.getMonth(), 1).toISOString();
+function changeText(value: number | null | undefined) {
+  if (value == null) return "No prior-period baseline";
+  return `${value > 0 ? "+" : ""}${value.toFixed(1)}% vs last month`;
 }
 
-function buildBarTrend(txs: Transaction[]) {
-  const now = new Date();
-  const result: { month: string; "Cash In": number; "Cash Out": number }[] = [];
-  for (let i = 5; i >= 0; i--) {
-    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-    const label = d.toLocaleDateString("en-US", { month: "short" });
-    const monthTxs = txs.filter(t => t.date_time.startsWith(key));
-    result.push({
-      month: label,
-      "Cash In": Math.round(monthTxs.filter(t => t.amount > 0).reduce((s, t) => s + t.amount, 0)),
-      "Cash Out": Math.round(monthTxs.filter(t => t.amount < 0).reduce((s, t) => s + Math.abs(t.amount), 0)),
-    });
-  }
-  return result;
-}
-
-function getTopCategories(txs: Transaction[]) {
-  const map: Record<string, number> = {};
-  for (const t of txs) {
-    if (t.amount < 0) {
-      const cat = t.type || "Other";
-      map[cat] = (map[cat] ?? 0) + Math.abs(t.amount);
-    }
-  }
-  const COLORS = ["#f59e0b", "#3b82f6", "#8b5cf6", "#22c55e", "#f43f5e", "#06b6d4"];
-  return Object.entries(map)
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 6)
-    .map(([name, value], i) => ({ name, value: Math.round(value), color: COLORS[i % COLORS.length] }));
-}
-
-function calcBPS(txs: Transaction[], docs: Document[], hasOrg: boolean) {
-  let score = 15;
-  score += Math.min(30, txs.length * 3);
-  score += Math.min(20, docs.length * 5);
-  if (hasOrg) score += 10;
-  const net = txs.reduce((s, t) => s + t.amount, 0);
-  if (net > 0) score += 10;
-  return Math.min(100, Math.round(score));
-}
-
-function calcTaxReadiness(docs: Document[], strategies: AiStrategy[], orders: Order[]) {
-  let s = 20;
-  s += Math.min(40, docs.length * 8);
-  s += Math.min(25, strategies.length * 5);
-  if (orders.some(o => o.status === "completed")) s += 15;
-  return Math.min(100, s);
-}
-
-function getUpcomingDeadlines() {
-  const now = new Date();
-  const year = now.getFullYear();
-  return [
-    { label: `Q3 ${year} Est. Tax Payment`, date: new Date(year, 8, 15), daysLabel: "Sep 15" },
-    { label: `Q4 ${year} Est. Tax Payment`, date: new Date(year, 0, 15, 0, 0, 0, 0), daysLabel: "Jan 15" },
-    { label: `${year} Tax Return Due`, date: new Date(year + 1, 3, 15), daysLabel: "Apr 15" },
-  ].map(d => ({
-    ...d,
-    daysLeft: Math.ceil((d.date.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)),
-  }));
+function CpaPlanningMetric({ title, ready, value, detail }: { title: string; ready: boolean; value?: number; detail?: string }) {
+  return <div className="flex min-h-28 flex-col rounded-xl border bg-muted/10 p-4"><div className="flex items-center gap-2"><WalletCards className="h-4 w-4 text-primary" /><p className="text-xs font-semibold">{title}</p></div><div className="mt-3 flex-1">{ready && value != null ? <p className="text-xl font-bold text-emerald-500">{fmt(value)}</p> : <p className="text-sm font-medium text-amber-500">More information needed</p>}{detail && <p className="mt-1 text-xs text-muted-foreground">{detail}</p>}</div></div>;
 }
 
 // ─── Circular Score ───────────────────────────────────────────────────────────
@@ -202,33 +153,26 @@ function ClientDetailPanel({ client, orders, onBack }: {
   const [aiInsight, setAiInsight] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState("overview");
   const [taxYear] = useState(new Date().getFullYear());
+  const [selectedOrganization, setSelectedOrganization] = useState("all");
   const [, navigate] = useLocation();
 
-  const { data: org } = useQuery<OrgRow | null>({
-    queryKey: ["cpa_client_org", client.id],
+  const { data: financial, isLoading: txLoading, isError: financialError } = useQuery<ClientFinancialSummary>({
+    queryKey: ["cpa_client_financial_summary", client.id, selectedOrganization],
     queryFn: async () => {
-      const { data } = await supabase.from("organizations").select("id, owner_id, name").eq("owner_id", client.id).maybeSingle();
-      return data ?? null;
+      const response = await authenticatedApi(`/api/cpa/clients/${client.id}/financial-summary?org_id=${encodeURIComponent(selectedOrganization)}`);
+      if (!response.ok) throw new Error(await apiErrorMessage(response, "Could not load the authorized client financial summary."));
+      return response.json();
     },
+    retry: false,
   });
-
-  const sixMonthsAgo = useMemo(() => {
-    const d = new Date(); d.setMonth(d.getMonth() - 6); return d.toISOString();
-  }, []);
-
-  const { data: txs = [], isLoading: txLoading } = useQuery<Transaction[]>({
-    queryKey: ["cpa_client_txs", org?.id],
-    enabled: !!org?.id,
-    queryFn: async () => {
-      const { data } = await supabase
-        .from("transactions")
-        .select("id, title, amount, type, date_time, description, deductible")
-        .eq("org_id", org!.id)
-        .gte("date_time", sixMonthsAgo)
-        .order("date_time", { ascending: false });
-      return data ?? [];
-    },
+  const { data: planning, isLoading: planningLoading, isError: planningError } = useQuery<ClientPlanningSummary>({
+    queryKey: ["cpa_client_planning_summary", client.id, selectedOrganization],
+    queryFn: async () => { const response = await authenticatedApi(`/api/cpa/clients/${client.id}/planning-summary?org_id=${encodeURIComponent(selectedOrganization)}`); if (!response.ok) throw new Error(await apiErrorMessage(response, "Could not load client planning results.")); return response.json(); },
+    retry: false,
   });
+  const org = selectedOrganization === "all"
+    ? (financial?.organizations.length ? { id: 0, name: "All organizations (consolidated)" } : null)
+    : financial?.organizations.find(row => String(row.id) === selectedOrganization) ?? null;
 
   const { data: docs = [] } = useQuery<Document[]>({
     queryKey: ["cpa_client_docs", client.id],
@@ -243,35 +187,34 @@ function ClientDetailPanel({ client, orders, onBack }: {
   });
 
   const { data: strategies = [] } = useQuery<AiStrategy[]>({
-    queryKey: ["cpa_client_strategies", org?.id],
-    enabled: !!org?.id,
+    queryKey: ["cpa_client_strategies", client.id, financial?.organization_ids],
+    enabled: Boolean(financial?.organization_ids.length),
     queryFn: async () => {
       const { data } = await supabase
         .from("ai_tax_strategies")
         .select("id, title, summary, estimated_savings, risk_level, created_at")
-        .eq("org_id", org!.id)
+        .in("org_id", financial!.organization_ids)
         .order("created_at", { ascending: false });
       return data ?? [];
     },
   });
 
   const clientOrders = orders.filter(o => o.user_id === client.id);
-  const monthTxs = txs.filter(t => t.date_time >= startOfMonth());
-  const revenue = monthTxs.filter(t => t.amount > 0).reduce((s, t) => s + t.amount, 0);
-  const expenses = monthTxs.filter(t => t.amount < 0).reduce((s, t) => s + Math.abs(t.amount), 0);
-  const netCashFlow = revenue - expenses;
-
-  const totalRevenue = txs.filter(t => t.amount > 0).reduce((s, t) => s + t.amount, 0);
-  const totalExpenses = txs.filter(t => t.amount < 0).reduce((s, t) => s + Math.abs(t.amount), 0);
-  const netProfit = totalRevenue - totalExpenses;
-  const netProfitMargin = totalRevenue > 0 ? (netProfit / totalRevenue) * 100 : 0;
-
-  const bps = calcBPS(txs, docs, !!org);
-  const taxReadiness = calcTaxReadiness(docs, strategies, clientOrders);
-  const barData = buildBarTrend(txs);
-  const categories = getTopCategories(txs);
+  const txs = financial?.recent_transactions ?? [];
+  const revenue = financial?.current_month.revenue ?? 0;
+  const expenses = financial?.current_month.accountingExpenses ?? 0;
+  const netCashFlow = financial?.current_month.netCashMovement ?? 0;
+  const moneyIn = financial?.current_month.moneyIn ?? 0;
+  const moneyOut = financial?.current_month.moneyOut ?? 0;
+  const totalRevenue = financial?.year_to_date.revenue ?? 0;
+  const totalExpenses = financial?.year_to_date.accountingExpenses ?? 0;
+  const netProfit = financial?.year_to_date.netIncome ?? 0;
+  const netProfitMargin = financial?.year_to_date.profitMarginPct ?? 0;
+  const sharedHealth = financial?.health ?? null;
+  const barData = (financial?.monthly_trend ?? []).map(row => ({ month: row.month, "Cash In": row.cashIn, "Cash Out": row.cashOut }));
+  const categoryColors = ["#f59e0b", "#3b82f6", "#8b5cf6", "#22c55e", "#f43f5e", "#06b6d4"];
+  const categories = (financial?.expense_categories ?? []).map((row, index) => ({ name: row.name, value: row.amount, color: categoryColors[index % categoryColors.length] }));
   const totalSavings = strategies.reduce((s, st) => s + (st.estimated_savings ?? 0), 0);
-  const deadlines = getUpcomingDeadlines();
   const isActive = clientOrders.some(o => o.status === "active");
 
   // Recent activity — mix of txs and docs
@@ -283,10 +226,7 @@ function ClientDetailPanel({ client, orders, onBack }: {
     return items.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()).slice(0, 6);
   }, [txs, docs]);
 
-  const incomeSources = useMemo(() => {
-    const types = new Set(monthTxs.filter(t => t.amount > 0).map(t => t.type || "Other"));
-    return types.size;
-  }, [monthTxs]);
+  const incomeSources = financial?.income_source_count ?? 0;
 
   const openClientChat = () => navigate(`/cpa/chat?contact_id=${client.id}`);
 
@@ -330,7 +270,7 @@ function ClientDetailPanel({ client, orders, onBack }: {
         body: JSON.stringify({
           messages: [{
             role: "user",
-            content: `You are a CPA reviewing a client's financial data. Provide a concise 3–4 sentence professional insight for: ${fullName(client)} (${org.name ?? "Business"}).\n\nRevenue this month: ${fmtFull(revenue)}\nExpenses this month: ${fmtFull(expenses)}\nNet income: ${fmtFull(netCashFlow)}\nBusiness Power Score: ${bps}/100\nTax Readiness: ${taxReadiness}%\nRecent transactions:\n${txSummary}\n\nGive specific, actionable advice a CPA would tell this client.`,
+            content: `You are a CPA reviewing a client's financial data. Provide a concise 3–4 sentence professional insight for: ${fullName(client)} (${org.name ?? "Business"}).\n\nRevenue this month: ${fmtFull(revenue)}\nExpenses this month: ${fmtFull(expenses)}\nNet cash movement: ${fmtFull(netCashFlow)}\nShared financial health: ${sharedHealth ? `${sharedHealth.score}/100 (${sharedHealth.status}, ${sharedHealth.methodologyVersion})` : "More data needed"}\nTax readiness: Not configured\nRecent transactions:\n${txSummary}\n\nGive specific, actionable advice a CPA would tell this client.`,
           }],
           model: "openai/gpt-4o-mini",
           use_live_context: false,
@@ -346,15 +286,15 @@ function ClientDetailPanel({ client, orders, onBack }: {
     }
   }
 
-  const healthScore = Math.round(300 + (bps / 100) * 550);
-  const healthLabel = healthScore >= 750 ? "Excellent" : healthScore >= 670 ? "Good" : healthScore >= 580 ? "Fair" : "Poor";
-  const healthColor = healthScore >= 750 ? "#22c55e" : healthScore >= 670 ? "#22c55e" : healthScore >= 580 ? "#f59e0b" : "#f43f5e";
+  const healthScore = sharedHealth?.score ?? null;
+  const healthLabel = sharedHealth?.status ?? "More data needed";
+  const healthColor = healthScore === null ? "#94a3b8" : healthScore >= 80 ? "#22c55e" : healthScore >= 60 ? "#3b82f6" : healthScore >= 40 ? "#f59e0b" : "#f43f5e";
   const clientId = "CLI-" + String(1000 + (client.id % 9000)).padStart(4, "0");
   const clientSince = clientOrders.length > 0
     ? new Date(clientOrders[clientOrders.length - 1].created_at).toLocaleDateString("en-US", { month: "short", year: "numeric" })
     : "Jan 2024";
 
-  const TABS = ["Overview", "Financials", "Tax Readiness", "Documents", "Requests", "Insights", "Notes", "Activity"];
+  const TABS = ["Overview", "Financials", "Cash Planning", "Tax Readiness", "Documents", "Requests", "Insights", "Notes", "Activity"];
 
   return (
     <div className="flex flex-col h-full">
@@ -403,7 +343,7 @@ function ClientDetailPanel({ client, orders, onBack }: {
               </Badge>
             </div>
             {org?.name && (
-              <p className="text-[11px] text-muted-foreground mt-0.5">{org.name}{org.name ? " • Design Agency" : ""}</p>
+              <p className="text-[11px] text-muted-foreground mt-0.5">{org.name}</p>
             )}
             <div className="flex items-center gap-3 mt-1 flex-wrap">
               <span className="flex items-center gap-1 text-[11px] text-muted-foreground">
@@ -417,6 +357,16 @@ function ClientDetailPanel({ client, orders, onBack }: {
               <span className="text-[10px] text-muted-foreground/40">|</span>
               <span className="text-[10px] text-muted-foreground">Client ID: {clientId}</span>
             </div>
+          </div>
+          <div className="w-full shrink-0 sm:w-64 lg:w-72">
+            <p className="mb-1 text-[10px] font-medium text-muted-foreground">Organization</p>
+            <Select value={selectedOrganization} onValueChange={setSelectedOrganization}>
+              <SelectTrigger aria-label="Select client organization"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All organizations (consolidated)</SelectItem>
+                {(financial?.organizations ?? []).map(row => <SelectItem key={row.id} value={String(row.id)}>{row.name}</SelectItem>)}
+              </SelectContent>
+            </Select>
           </div>
           {/* Tax year selector */}
           <div className="shrink-0 text-right hidden lg:block">
@@ -448,6 +398,7 @@ function ClientDetailPanel({ client, orders, onBack }: {
 
       {/* ── Tab Content ── */}
       <div className="flex-1 overflow-auto">
+        {financialError && <div className="m-4 rounded-md border border-destructive/40 bg-destructive/10 p-4 text-sm text-destructive">The authorized financial summary could not be loaded. No values have been replaced with zero.</div>}
         {/* ══ OVERVIEW ══ */}
         {activeTab === "overview" && (
           <div className="p-4 space-y-4">
@@ -455,6 +406,8 @@ function ClientDetailPanel({ client, orders, onBack }: {
               <div className="flex items-center justify-center py-16">
                 <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
               </div>
+            ) : financialError ? (
+              <Card><CardContent className="p-6 text-sm text-destructive">The authorized financial summary could not be loaded. BookSmart will not substitute zero values.</CardContent></Card>
             ) : (
               <>
                 {/* ── KPI Row ── */}
@@ -464,10 +417,10 @@ function ClientDetailPanel({ client, orders, onBack }: {
                     <CardContent className="p-3 flex flex-col gap-1.5">
                       <p className="text-[10px] text-muted-foreground font-medium">Financial Health Score ⓘ</p>
                       <div className="flex items-end gap-2">
-                        <CircularScore score={healthScore} max={850} label={healthLabel} color={healthColor} size={72} />
+                        {healthScore === null ? <div className="py-3 text-xs text-muted-foreground">More data needed</div> : <CircularScore score={healthScore} max={100} label={healthLabel} color={healthColor} size={72} />}
                         <div className="pb-1">
                           <p className="text-[10px]" style={{ color: healthColor }}>{healthLabel}</p>
-                          <p className="text-[9px] text-muted-foreground">+{Math.round(bps * 0.12)} pts from last month</p>
+                          <p className="text-[9px] text-muted-foreground">financial-health-v1</p>
                         </div>
                       </div>
                     </CardContent>
@@ -481,7 +434,7 @@ function ClientDetailPanel({ client, orders, onBack }: {
                       <p className="text-[10px] text-muted-foreground mt-0.5">Net Cash Flow</p>
                       <div className={`flex items-center gap-0.5 mt-1.5 text-[10px] ${netCashFlow >= 0 ? "text-emerald-500" : "text-rose-500"}`}>
                         {netCashFlow >= 0 ? <ArrowUpRight className="h-3 w-3" /> : <ArrowDownRight className="h-3 w-3" />}
-                        from last month
+                        {changeText(financial?.changes.cash_movement)}
                       </div>
                     </CardContent>
                   </Card>
@@ -495,7 +448,7 @@ function ClientDetailPanel({ client, orders, onBack }: {
                         {incomeSources > 0 ? `From ${incomeSources} source${incomeSources !== 1 ? "s" : ""}` : "No income this month"}
                       </p>
                       <div className="flex items-center gap-0.5 mt-1.5 text-[10px] text-emerald-500">
-                        <ArrowUpRight className="h-3 w-3" /> this month
+                        <ArrowUpRight className="h-3 w-3" /> {changeText(financial?.changes.revenue)}
                       </div>
                     </CardContent>
                   </Card>
@@ -507,7 +460,7 @@ function ClientDetailPanel({ client, orders, onBack }: {
                       <p className="text-[19px] font-bold leading-tight text-rose-500">{fmt(expenses)}</p>
                       <p className="text-[10px] text-muted-foreground mt-0.5">This month</p>
                       <div className="flex items-center gap-0.5 mt-1.5 text-[10px] text-muted-foreground">
-                        <TrendingDown className="h-3 w-3" /> last 30 days
+                        <TrendingDown className="h-3 w-3" /> {changeText(financial?.changes.expenses)}
                       </div>
                     </CardContent>
                   </Card>
@@ -516,10 +469,8 @@ function ClientDetailPanel({ client, orders, onBack }: {
                   <Card className="bg-card border-border/60">
                     <CardContent className="p-3">
                       <p className="text-[10px] text-muted-foreground font-medium mb-1">Tax Readiness Score ⓘ</p>
-                      <p className={`text-[22px] font-bold leading-tight ${taxReadiness >= 70 ? "text-emerald-500" : "text-amber-400"}`}>{taxReadiness}%</p>
-                      <p className={`text-[10px] font-medium ${taxReadiness >= 70 ? "text-emerald-500" : "text-amber-400"}`}>{taxReadiness >= 70 ? "On Track" : "In Progress"}</p>
-                      <Progress value={taxReadiness} className="h-1 mt-1.5" />
-                      <p className="text-[9px] text-muted-foreground mt-1">Review items to improve</p>
+                      <p className="text-sm font-semibold text-muted-foreground">Not configured</p>
+                      <p className="text-[9px] text-muted-foreground mt-1">Tax strategy, reserve settings, and filing schedule are required.</p>
                     </CardContent>
                   </Card>
 
@@ -527,8 +478,8 @@ function ClientDetailPanel({ client, orders, onBack }: {
                   <Card className="bg-card border-border/60">
                     <CardContent className="p-3">
                       <p className="text-[10px] text-muted-foreground font-medium mb-1">Top Deduction Opportunities</p>
-                      <p className="text-[19px] font-bold leading-tight text-primary">{fmt(totalSavings || 4380)}</p>
-                      <p className="text-[10px] text-muted-foreground mt-0.5">Potential savings identified</p>
+                      <p className="text-[19px] font-bold leading-tight text-primary">{strategies.length ? fmt(totalSavings) : "More data needed"}</p>
+                      <p className="text-[10px] text-muted-foreground mt-0.5">{strategies.length ? "Estimated by saved tax strategies" : "No saved tax strategies"}</p>
                       <button className="mt-2 w-full text-[10px] font-medium border border-border/60 rounded py-1 text-muted-foreground hover:text-foreground hover:border-border transition-colors">
                         View Opportunities
                       </button>
@@ -551,9 +502,9 @@ function ClientDetailPanel({ client, orders, onBack }: {
                       </CardHeader>
                       <CardContent className="px-4 pb-3 space-y-2.5">
                         {[
-                          { label: "Revenue", value: totalRevenue, pct: "+19%", pctColor: "text-emerald-500", icon: <div className="w-6 h-6 rounded-md bg-indigo-500/15 flex items-center justify-center shrink-0"><ArrowUpRight className="h-3 w-3 text-indigo-500" /></div> },
-                          { label: "Expenses", value: totalExpenses, pct: "+4%", pctColor: "text-rose-400", icon: <div className="w-6 h-6 rounded-md bg-rose-500/10 flex items-center justify-center shrink-0"><ArrowDownRight className="h-3 w-3 text-rose-400" /></div> },
-                          { label: "Net Profit", value: netProfit, pct: netProfit >= 0 ? "+22%" : "-", pctColor: netProfit >= 0 ? "text-emerald-500" : "text-rose-400", icon: <div className="w-6 h-6 rounded-md bg-primary/10 flex items-center justify-center shrink-0"><DollarSign className="h-3 w-3 text-primary" /></div> },
+                          { label: "Revenue", value: totalRevenue, pct: changeText(financial?.changes.revenue), pctColor: "text-muted-foreground", icon: <div className="w-6 h-6 rounded-md bg-indigo-500/15 flex items-center justify-center shrink-0"><ArrowUpRight className="h-3 w-3 text-indigo-500" /></div> },
+                          { label: "Expenses", value: totalExpenses, pct: changeText(financial?.changes.expenses), pctColor: "text-muted-foreground", icon: <div className="w-6 h-6 rounded-md bg-rose-500/10 flex items-center justify-center shrink-0"><ArrowDownRight className="h-3 w-3 text-rose-400" /></div> },
+                          { label: "Net Profit", value: netProfit, pct: changeText(financial?.changes.net_income), pctColor: "text-muted-foreground", icon: <div className="w-6 h-6 rounded-md bg-primary/10 flex items-center justify-center shrink-0"><DollarSign className="h-3 w-3 text-primary" /></div> },
                         ].map(row => (
                           <div key={row.label} className="flex items-center justify-between">
                             <div className="flex items-center gap-2">
@@ -571,11 +522,10 @@ function ClientDetailPanel({ client, orders, onBack }: {
                           <span className="text-xs text-muted-foreground">Net Profit Margin</span>
                           <div className="flex items-center gap-2">
                             <span className="text-xs font-semibold">{netProfitMargin.toFixed(1)}%</span>
-                            <span className="text-[10px] font-medium text-emerald-500">+3.7%</span>
                           </div>
                         </div>
                         <p className="text-[9px] text-muted-foreground flex items-center gap-1">
-                          <Clock className="h-2.5 w-2.5" /> Data updated 2 hours ago ↺
+                          <Clock className="h-2.5 w-2.5" /> {financial?.last_transaction_at ? `Latest transaction ${new Date(financial.last_transaction_at).toLocaleString()}` : "No approved transactions"}
                         </p>
                       </CardContent>
                     </Card>
@@ -587,46 +537,7 @@ function ClientDetailPanel({ client, orders, onBack }: {
                           <ShieldCheck className="h-3.5 w-3.5 text-primary" /> Tax Readiness ⓘ
                         </CardTitle>
                       </CardHeader>
-                      <CardContent className="px-4 pb-3">
-                        <div className="flex items-center gap-4 mb-3">
-                          <CircularScore score={taxReadiness} label={taxReadiness >= 70 ? "On Track" : "Progress"} color={taxReadiness >= 70 ? "#22c55e" : "#f59e0b"} size={76} />
-                          <div>
-                            <p className={`text-sm font-bold ${taxReadiness >= 70 ? "text-emerald-500" : "text-amber-400"}`}>{taxReadiness}%</p>
-                            <p className={`text-[10px] font-medium ${taxReadiness >= 70 ? "text-emerald-500" : "text-amber-400"}`}>{taxReadiness >= 70 ? "On Track" : "In Progress"}</p>
-                            <p className="text-[9px] text-muted-foreground mt-0.5">
-                              {taxReadiness >= 70 ? "Great job! You're on track for tax season." : "Some items need attention."}
-                            </p>
-                          </div>
-                        </div>
-                        <div className="space-y-1">
-                          <p className="text-[9px] font-semibold text-muted-foreground uppercase tracking-wide mb-1.5">Completed</p>
-                          {[
-                            { label: "Bank Accounts Connected", done: true },
-                            { label: "Income Confirmed", done: txs.filter(t => t.amount > 0).length > 0 },
-                            { label: "Expense Categorization", done: txs.filter(t => t.amount < 0).length > 0 },
-                            { label: "Mileage Tracked", done: false },
-                          ].map(item => (
-                            <div key={item.label} className="flex items-center gap-2 text-[10px]">
-                              <span className={`w-2 h-2 rounded-full shrink-0 ${item.done ? "bg-emerald-500" : "bg-amber-400"}`} />
-                              <span className={item.done ? "text-foreground/80" : "text-muted-foreground"}>{item.label}</span>
-                            </div>
-                          ))}
-                          <p className="text-[9px] font-semibold text-muted-foreground uppercase tracking-wide mt-2 mb-1.5">To Do</p>
-                          {[
-                            { label: "Home Office Details", done: false },
-                            { label: "Retirement Contributions", done: false },
-                            { label: "Health Insurance Premiums", done: false },
-                          ].map(item => (
-                            <div key={item.label} className="flex items-center gap-2 text-[10px]">
-                              <span className="w-2 h-2 rounded-full shrink-0 bg-amber-400" />
-                              <span className="text-muted-foreground">{item.label}</span>
-                            </div>
-                          ))}
-                        </div>
-                        <button className="mt-3 text-[10px] font-medium text-indigo-500 hover:underline flex items-center gap-1">
-                          View Tax Readiness Checklist <ChevronRight className="h-3 w-3" />
-                        </button>
-                      </CardContent>
+                      <CardContent className="px-4 pb-3"><p className="text-sm font-semibold">Not configured</p><p className="mt-1 text-xs text-muted-foreground">A score will be available after the client configures a tax strategy, reserve settings, and filing schedule.</p></CardContent>
                     </Card>
                   </div>
 
@@ -649,11 +560,11 @@ function ClientDetailPanel({ client, orders, onBack }: {
                           </div>
                           <div className="flex gap-4">
                             <div>
-                              <p className="text-xs font-semibold text-emerald-500">{fmt(revenue)}</p>
+                              <p className="text-xs font-semibold text-emerald-500">{fmt(moneyIn)}</p>
                               <p className="text-[9px] text-muted-foreground">Cash In</p>
                             </div>
                             <div>
-                              <p className="text-xs font-semibold text-rose-400">{fmt(expenses)}</p>
+                              <p className="text-xs font-semibold text-rose-400">{fmt(moneyOut)}</p>
                               <p className="text-[9px] text-muted-foreground">Cash Out</p>
                             </div>
                           </div>
@@ -680,25 +591,7 @@ function ClientDetailPanel({ client, orders, onBack }: {
                       <CardHeader className="pb-2 pt-3 px-4">
                         <CardTitle className="text-xs font-semibold">Upcoming Deadlines</CardTitle>
                       </CardHeader>
-                      <CardContent className="px-4 pb-3 space-y-3">
-                        {deadlines.map(d => (
-                          <div key={d.label} className="flex items-center gap-3">
-                            <div className="w-9 h-9 rounded-lg bg-primary/10 flex flex-col items-center justify-center shrink-0">
-                              <span className="text-[8px] text-primary font-medium uppercase leading-none">{d.daysLabel.split(" ")[0]}</span>
-                              <span className="text-[13px] font-bold text-primary leading-tight">{d.daysLabel.split(" ")[1]}</span>
-                            </div>
-                            <div className="flex-1 min-w-0">
-                              <p className="text-xs font-medium truncate">{d.label}</p>
-                              <p className="text-[10px] text-muted-foreground">
-                                {d.daysLeft > 0 ? `Due in ${d.daysLeft} days` : "Overdue"}
-                              </p>
-                            </div>
-                          </div>
-                        ))}
-                        <button className="text-[10px] font-medium text-indigo-500 hover:underline flex items-center gap-1 mt-1">
-                          View All Deadlines <ChevronRight className="h-3 w-3" />
-                        </button>
-                      </CardContent>
+                      <CardContent className="px-4 pb-3"><p className="text-xs text-muted-foreground">Deadlines will appear after a verified filing schedule is configured for this client.</p></CardContent>
                     </Card>
 
                     {/* Latest Documents */}
@@ -861,7 +754,7 @@ function ClientDetailPanel({ client, orders, onBack }: {
 
         {/* ══ FINANCIALS ══ */}
         {activeTab === "financials" && (
-          <div className="p-4 space-y-4">
+          financialError ? <Card className="m-4"><CardContent className="p-6 text-sm text-destructive">The authorized financial summary could not be loaded. BookSmart will not substitute zero values.</CardContent></Card> : <div className="p-4 space-y-4">
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
               {[
                 { label: "Total Revenue", value: totalRevenue, color: "text-emerald-500" },
@@ -873,7 +766,7 @@ function ClientDetailPanel({ client, orders, onBack }: {
                   <CardContent className="p-4">
                     <p className="text-[10px] text-muted-foreground uppercase tracking-wide font-medium mb-1">{card.label}</p>
                     <p className={`text-xl font-bold ${card.color}`}>{card.display ?? fmt(card.value!)}</p>
-                    <p className="text-[10px] text-muted-foreground mt-0.5">Last 6 months</p>
+                    <p className="text-[10px] text-muted-foreground mt-0.5">Year to date</p>
                   </CardContent>
                 </Card>
               ))}
@@ -921,21 +814,20 @@ function ClientDetailPanel({ client, orders, onBack }: {
         )}
 
         {/* ══ TAX READINESS ══ */}
+        {activeTab === "cash-planning" && (
+          <div className="space-y-4 p-4">
+            <Card className="border-border/60 bg-card"><CardContent className="flex items-start gap-3 p-5"><ShieldCheck className="mt-0.5 h-5 w-5 text-emerald-500" /><div><p className="font-semibold">Client-controlled planning data</p><p className="text-sm text-muted-foreground">This view is read-only. Values are scoped to the selected organization and do not change accounting records.</p></div></CardContent></Card>
+            {planningLoading ? <div className="flex justify-center py-16"><Loader2 className="h-6 w-6 animate-spin text-primary" /></div> : planningError ? <Card><CardContent className="p-6 text-sm text-destructive">The authorized planning summary could not be loaded. No values have been substituted.</CardContent></Card> : <div className="space-y-4">{(planning?.results ?? []).map(result => <Card key={result.organization.id} className="overflow-hidden border-border/60 bg-card"><CardHeader className="border-b bg-muted/20"><div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"><div><CardTitle className="text-base">{result.organization.name}</CardTitle><p className="mt-1 text-xs text-muted-foreground">{result.verified_cash.available && result.verified_cash.refreshed_at ? `Verified cash ${fmt(result.verified_cash.amount ?? 0)} · refreshed ${new Date(result.verified_cash.refreshed_at).toLocaleString()}` : "Verified cash is unavailable or stale"}</p></div><Badge variant="outline">Read only</Badge></div></CardHeader><CardContent className="space-y-5 p-4 sm:p-6"><div className="grid gap-3 md:grid-cols-3"><CpaPlanningMetric title="Safe to Spend" ready={result.readiness.safe_to_spend.available} value={result.readiness.safe_to_spend.safeToSpend} detail={result.readiness.safe_to_spend.shortfall ? `${fmt(result.readiness.safe_to_spend.shortfall)} shortfall` : undefined} /><CpaPlanningMetric title="Remaining Tax Reserve" ready={result.readiness.tax_reserve.available} value={result.readiness.tax_reserve.remainingReserve ?? undefined} /><CpaPlanningMetric title="30-Day Ending Cash" ready={result.readiness.forecast.available} value={result.readiness.forecast.endingCash} detail={result.readiness.forecast.shortfall ? `${fmt(result.readiness.forecast.shortfall)} shortfall${result.readiness.forecast.shortfallDate ? ` on ${new Date(`${result.readiness.forecast.shortfallDate}T00:00:00`).toLocaleDateString()}` : ""}` : result.readiness.forecast.lowestBalance != null ? `Lowest point ${fmt(result.readiness.forecast.lowestBalance)}` : undefined} /></div><div><p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Saved planning inputs</p><div className="grid gap-2 sm:grid-cols-2">{result.inputs.items.length ? result.inputs.items.map(item => <div key={item.id} className="rounded-lg border p-3"><p className="text-sm font-medium">{item.name}</p><p className="mt-1 text-xs capitalize text-muted-foreground">{item.item_type.replaceAll("_", " ")} · {new Date(`${item.due_date}T00:00:00`).toLocaleDateString()} · {item.recurrence}{item.amount == null ? "" : ` · ${fmt(item.amount)}`}</p></div>) : <p className="text-sm text-muted-foreground sm:col-span-2">No dated planning items configured.</p>}</div></div></CardContent></Card>)}</div>}
+          </div>
+        )}
+
         {activeTab === "tax-readiness" && (
           <div className="p-4 space-y-4">
             <Card className="bg-card border-border/60">
-              <CardContent className="p-6 flex flex-col items-center text-center gap-3">
-                <CircularScore score={taxReadiness} max={100} label={taxReadiness >= 70 ? "On Track" : "In Progress"} color={taxReadiness >= 70 ? "#22c55e" : "#f59e0b"} size={100} />
-                <div>
-                  <p className={`text-lg font-bold ${taxReadiness >= 70 ? "text-emerald-500" : "text-amber-400"}`}>{taxReadiness >= 70 ? "On Track" : "In Progress"}</p>
-                  <p className="text-sm text-muted-foreground">{taxReadiness >= 70 ? "Client is well-prepared for tax season." : "Some items need attention."}</p>
-                </div>
-                <Progress value={taxReadiness} className="w-full max-w-xs h-2" />
-                <p className="text-xs text-muted-foreground">{taxReadiness}% complete</p>
-              </CardContent>
+              <CardContent className="p-6 flex flex-col items-center text-center gap-3"><ShieldCheck className="h-10 w-10 text-muted-foreground" /><div><p className="text-lg font-bold">Tax readiness is not configured</p><p className="text-sm text-muted-foreground">BookSmart needs a verified tax strategy, reserve settings, and filing schedule before calculating a score.</p></div></CardContent>
             </Card>
             <Card className="bg-card border-border/60">
-              <CardHeader className="pb-2"><CardTitle className="text-xs font-semibold">Checklist</CardTitle></CardHeader>
+              <CardHeader className="pb-2"><CardTitle className="text-xs font-semibold">Available system information</CardTitle></CardHeader>
               <CardContent className="space-y-3">
                 {[
                   { label: "Documents uploaded", sub: `${docs.length} document${docs.length !== 1 ? "s" : ""} on file`, done: docs.length > 0 },

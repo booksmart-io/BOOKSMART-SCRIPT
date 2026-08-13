@@ -29,17 +29,17 @@ import {
   dynamicAxisBounds,
   type FinancialReportResult,
 } from "@/lib/financial-engine";
+import { createFinancialSummary } from "@/lib/financial-summary";
+import { authenticatedApi, apiErrorMessage } from "@/lib/authenticated-api";
+import { notifyFinancialDataChanged, type FinancialDataChangeEvent } from "@/lib/monitoring-client";
 import {
   createStatementExport,
   safeStatementFilename,
   statementExportToCsv,
   type StatementExport,
 } from "@/lib/statement-export";
-import {
-  useDeductionRuleSet,
-  summarizeDeductions,
-  type OrgRow,
-} from "@/lib/deduction-engine";
+import { useDeductionRuleSet } from "@/lib/deduction-engine";
+import { summarizeDeductions, type OrgRow } from "@/lib/deduction-calculation";
 import { normalizeStateId } from "@/lib/state-id";
 import {
   PnLCard,
@@ -48,6 +48,7 @@ import {
 } from "@/components/reports/financial-statements-tab";
 import { StatementReviewDialog } from "@/components/statement-review-dialog";
 import { TransactionReviewDialog } from "@/pages/user/tax";
+import { FinancialSummaryShadowObserver } from "@/components/monitoring/financial-summary-shadow-observer";
 import {
   createStatementReview,
   extractFinancialStatement,
@@ -135,9 +136,15 @@ import {
   MoreHorizontal,
   ZoomIn,
   ZoomOut,
+  X,
 } from "lucide-react";
 
 const PLAID_CATEGORIZATION_BATCH_LIMIT = 100;
+const canonicalReportsEnabled = import.meta.env.VITE_CANONICAL_REPORTS === "true";
+
+type CanonicalReportsSummary = ReturnType<typeof createFinancialSummary> & {
+  sources: { pnl: "transactions" | "uploaded"; cashFlow: "transactions" | "uploaded"; balanceSheet: "transactions" | "uploaded" };
+};
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -2546,7 +2553,10 @@ export default function Reports() {
   const [editSubCategoryId, setEditSubCategoryId] = useState<number | null>(
     null,
   );
+  const [categoryChangePendingSave, setCategoryChangePendingSave] =
+    useState(false);
   const [categoryPickerOpen, setCategoryPickerOpen] = useState(false);
+  const suppressEditorCloseRef = useRef(false);
   const [catSearchQuery, setCatSearchQuery] = useState("");
   const [expandedCatIds, setExpandedCatIds] = useState<Set<number>>(new Set());
   const [aiCatLoading, setAiCatLoading] = useState(false);
@@ -2931,11 +2941,19 @@ const [plaidSyncMessage, setPlaidSyncMessage] = useState("");
     keys.forEach((k) => queryClient.invalidateQueries({ queryKey: k }));
   }
 
+  function refreshMonitoring(eventType: FinancialDataChangeEvent) {
+    if (!orgId) return;
+    void notifyFinancialDataChanged(orgId, eventType).catch((error) => {
+      console.warn("[monitoring/financial-data-changed]", error instanceof Error ? error.message : error);
+    });
+  }
+
   async function handleBulkCategorize() {
     if (!orgId || bulkCategorizing) return;
     setBulkCategorizing(true);
     try {
       const result = await categorizeUncategorizedTransactions(100, orgId);
+      if (result.updated > 0) refreshMonitoring("bulk_categorization_completed");
       invalidateTransactionReports();
       queryClient.invalidateQueries({ queryKey: ["tx_deductions"] });
       toast({
@@ -3068,6 +3086,7 @@ const [plaidSyncMessage, setPlaidSyncMessage] = useState("");
         description:
           "Your income, expense, and net profit figures are now accurate.",
       });
+      if (count > 0) refreshMonitoring("transaction_deleted");
     } catch (err) {
       toast({
         title: "Delete failed",
@@ -3152,6 +3171,7 @@ const [plaidSyncMessage, setPlaidSyncMessage] = useState("");
         description:
           "Document and its imported transactions have been removed.",
       });
+      refreshMonitoring("transaction_deleted");
     } catch (err) {
       toast({
         title: "Delete failed",
@@ -3191,6 +3211,7 @@ const [plaidSyncMessage, setPlaidSyncMessage] = useState("");
       toast({
         title: `${ids.length} transaction${ids.length > 1 ? "s" : ""} deleted`,
       });
+      refreshMonitoring("transaction_deleted");
     },
     onError: (err: Error) => {
       toast({
@@ -3221,8 +3242,22 @@ const [plaidSyncMessage, setPlaidSyncMessage] = useState("");
         .eq("id", id);
       if (error) throw error;
     },
-    onSuccess: () => {
-      setDetailTx(null);
+    onSuccess: (_data, variables) => {
+      const keepEditorOpen = categoryChangePendingSave;
+      setCategoryChangePendingSave(false);
+      if (keepEditorOpen) {
+        setDetailTx((current) =>
+          current
+            ? {
+                ...current,
+                category_id: variables.category_id,
+                sub_category_id: variables.sub_category_id,
+              }
+            : current,
+        );
+      } else {
+        setDetailTx(null);
+      }
       const keysToInvalidate = [
         ["tx_period", orgId, period],
         ["tx_prev_period", orgId, period],
@@ -3234,7 +3269,13 @@ const [plaidSyncMessage, setPlaidSyncMessage] = useState("");
       keysToInvalidate.forEach((k) =>
         queryClient.invalidateQueries({ queryKey: k }),
       );
-      toast({ title: "Transaction updated" });
+      toast({
+        title: keepEditorOpen ? "Category saved" : "Transaction updated",
+        description: keepEditorOpen
+          ? "The transaction editor will remain open."
+          : undefined,
+      });
+      refreshMonitoring("transaction_updated");
     },
     onError: (err: Error) => {
       toast({
@@ -3305,6 +3346,7 @@ const [plaidSyncMessage, setPlaidSyncMessage] = useState("");
       ];
       keys.forEach((k) => queryClient.invalidateQueries({ queryKey: k }));
       toast({ title: "Transaction added" });
+      refreshMonitoring("transaction_created");
     },
     onError: (err: Error) => {
       toast({
@@ -3399,6 +3441,7 @@ Respond with ONLY valid JSON, no explanation:
     setEditNotes(tx.description || "");
     setEditCategoryId(tx.category_id ?? null);
     setEditSubCategoryId(tx.sub_category_id ?? null);
+    setCategoryChangePendingSave(false);
     setAiCatLoading(false);
     setAiCatSuggested(false);
   }
@@ -3569,6 +3612,7 @@ async function handleConnectBank() {
 
             if (categorization.updated === 0) break;
           }
+          if (categorized > 0) refreshMonitoring("bulk_categorization_completed");
 
           setPlaidSyncStage("refreshing");
           setPlaidSyncMessage(
@@ -3913,6 +3957,41 @@ async function handleConnectBank() {
       ? (earliestFinancialDate(allTxsFull, statementPeriods, end) ?? end)
       : requestedRange.start;
   const { start: prevStart, end: prevEnd } = getPrevRange(txPeriod, start, end);
+  const canonicalReports = useQuery({
+    queryKey: ["canonical-reports-summary", orgId, start.toISOString(), end.toISOString()],
+    enabled: canonicalReportsEnabled && orgId !== null,
+    retry: false,
+    queryFn: async () => {
+      const query = new URLSearchParams({ startInstant: start.toISOString(), endInstant: end.toISOString() });
+      const response = await authenticatedApi(`/api/organizations/${orgId}/financial-summary?${query}`);
+      if (!response.ok) throw new Error(await apiErrorMessage(response, "Canonical Reports summary is unavailable."));
+      return response.json() as Promise<CanonicalReportsSummary>;
+    },
+  });
+  const canonicalReportsRequestStartedAt = useRef(Date.now());
+  const recordedReportsRollout = useRef<string | null>(null);
+  useEffect(() => {
+    canonicalReportsRequestStartedAt.current = Date.now();
+    recordedReportsRollout.current = null;
+  }, [orgId, start.getTime(), end.getTime()]);
+  useEffect(() => {
+    if (canonicalReportsEnabled && canonicalReports.isError) console.warn("[canonical-reports] using the existing trusted calculation", canonicalReports.error);
+  }, [canonicalReports.error, canonicalReports.isError]);
+  useEffect(() => {
+    if (!canonicalReportsEnabled || orgId === null) return;
+    const mode = canonicalReports.data ? "canonical" : canonicalReports.isError ? "fallback" : null;
+    if (!mode) return;
+    const observationKey = `${start.toISOString()}:${end.toISOString()}:${mode}`;
+    if (recordedReportsRollout.current === observationKey) return;
+    recordedReportsRollout.current = observationKey;
+    const failureReason = canonicalReports.error instanceof Error ? canonicalReports.error.message : null;
+    void authenticatedApi(`/api/organizations/${orgId}/financial-summary/rollout-event`, {
+      method: "POST",
+      body: JSON.stringify({ surface: "reports", mode, response_ms: Date.now() - canonicalReportsRequestStartedAt.current, failure_reason: failureReason }),
+    }).then(response => {
+      if (!response.ok) console.warn("[canonical-reports] rollout telemetry was not recorded", response.status);
+    }).catch(() => undefined);
+  }, [canonicalReports.data, canonicalReports.error, canonicalReports.isError, end, orgId, start]);
 
   // ── Derived metrics ────────────────────────────────────────────────────────
   const currentFinancialReport = useMemo(
@@ -4072,9 +4151,12 @@ async function handleConnectBank() {
   const prevCfNet = previousResolvedStatements.cashFlow.netChange;
 
   // Dashboard and report tabs consume this same range-resolved source.
-  const overviewIncome = resolvedStatements.pnl.totalRevenue;
-  const overviewExpenses = resolvedStatements.pnl.totalExpenses;
-  const overviewNetIncome = resolvedStatements.pnl.netIncome;
+  const legacyOverviewIncome = resolvedStatements.pnl.totalRevenue;
+  const legacyOverviewExpenses = resolvedStatements.pnl.totalExpenses;
+  const legacyOverviewNetIncome = resolvedStatements.pnl.netIncome;
+  const overviewIncome = canonicalReports.data?.revenue ?? legacyOverviewIncome;
+  const overviewExpenses = canonicalReports.data?.accountingExpenses ?? legacyOverviewExpenses;
+  const overviewNetIncome = canonicalReports.data?.netIncome ?? legacyOverviewNetIncome;
   const overviewMargin =
     overviewIncome > 0 ? (overviewNetIncome / overviewIncome) * 100 : 0;
   const totalAssets = resolvedStatements.balanceSheet.totalAssets;
@@ -4083,9 +4165,9 @@ async function handleConnectBank() {
   const debtToEquity = equity > 0 ? totalLiabilities / equity : 0;
   const previousTotalAssets =
     previousResolvedStatements.balanceSheet.totalAssets;
-  const overviewMoneyIn = cfMoneyIn;
-  const overviewMoneyOut = cfMoneyOut;
-  const overviewNetCash = cfNetCash;
+  const overviewMoneyIn = canonicalReports.data?.moneyIn ?? cfMoneyIn;
+  const overviewMoneyOut = canonicalReports.data?.moneyOut ?? cfMoneyOut;
+  const overviewNetCash = canonicalReports.data?.netCashMovement ?? cfNetCash;
   const allTimeCfIn = overviewMoneyIn;
   const allTimeCfOut = overviewMoneyOut;
   const allTimeCfNet = overviewNetCash;
@@ -4166,17 +4248,24 @@ async function handleConnectBank() {
       : 0;
   }, [allTxsFull]);
 
-  // Business Health Score
-  const bhs = Math.min(
-    100,
-    Math.round(
-      15 +
-        (overviewNetIncome > 0 ? 25 : 0) +
-        Math.min(25, (overviewIncome / 1000) * 2) +
-        (overviewMargin > 20 ? 20 : overviewMargin > 5 ? 10 : 0) +
-        (deductionPct > 50 ? 15 : deductionPct > 20 ? 8 : 0),
-    ),
+  // Shared financial summary: future Home, Money, Insights, and CPA views must
+  // consume this same accounting-engine-backed contract rather than recalculate.
+  const legacyFinancialSummary = useMemo(
+    () => createFinancialSummary({
+      report: currentFinancialReport,
+      source: resolvedStatements.sources.pnl === "uploaded" || resolvedStatements.sources.cashFlow === "uploaded" ? "uploaded_statement" : "transactions",
+      revenue: legacyOverviewIncome,
+      accountingExpenses: legacyOverviewExpenses,
+      netIncome: legacyOverviewNetIncome,
+      moneyIn: cfMoneyIn,
+      moneyOut: cfMoneyOut,
+      netCashMovement: cfNetCash,
+      deductibleAmount: deductibleAmt,
+    }),
+    [cfMoneyIn, cfMoneyOut, cfNetCash, currentFinancialReport, deductibleAmt, legacyOverviewExpenses, legacyOverviewIncome, legacyOverviewNetIncome, resolvedStatements.sources.cashFlow, resolvedStatements.sources.pnl],
   );
+  const sharedFinancialSummary = canonicalReports.data ?? legacyFinancialSummary;
+  const bhs = sharedFinancialSummary.health.score;
 
   // Trend chart data
   const trendData = useMemo(
@@ -4548,6 +4637,7 @@ async function handleConnectBank() {
           queryClient.invalidateQueries({
             queryKey: ["tx_all_balance", orgId],
           });
+          refreshMonitoring("bulk_categorization_completed");
         }
       }, delay);
     });
@@ -4838,6 +4928,7 @@ async function handleConnectBank() {
       [["tx_period", orgId, period], ["tx_prev_period", orgId, period], ["tx_all_balance", orgId], ["tx_all_full", orgId], ["tx_month", orgId], ["tx_recent", orgId], ["tx_count", orgId]]
         .forEach((queryKey) => queryClient.invalidateQueries({ queryKey }));
       toast({ title: `${rows.length} transaction${rows.length === 1 ? "" : "s"} approved` });
+      refreshMonitoring("document_transactions_approved");
     } catch (error) {
       toast({
         title: "Could not approve transactions",
@@ -5487,6 +5578,7 @@ async function handleConnectBank() {
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
     <div className="-mt-2 min-w-0 space-y-0 animate-in fade-in slide-in-from-bottom-4 duration-500">
+      {orgId && <FinancialSummaryShadowObserver organizationId={orgId} surface="reports" start={start} end={end} values={{ revenue: legacyFinancialSummary.revenue, accountingExpenses: legacyFinancialSummary.accountingExpenses, netIncome: legacyFinancialSummary.netIncome, moneyIn: legacyFinancialSummary.moneyIn, moneyOut: legacyFinancialSummary.moneyOut, netCashMovement: legacyFinancialSummary.netCashMovement, healthScore: legacyFinancialSummary.health.score }} sources={resolvedStatements.sources} />}
       {/* ── Flutter-style Tab Bar ── */}
       <div
         className="-mx-3 mb-6 flex items-stretch overflow-x-auto px-0 sm:-mx-6"
@@ -10014,9 +10106,16 @@ async function handleConnectBank() {
 
           {/* Update Transaction dialog */}
           <Dialog
+            modal={false}
             open={detailTx !== null}
             onOpenChange={(v) => {
-              if (!v) setDetailTx(null);
+              if (
+                !v &&
+                !categoryPickerOpen &&
+                !suppressEditorCloseRef.current
+              ) {
+                setDetailTx(null);
+              }
             }}
           >
             <DialogContent className="sm:max-w-md bg-card border-border/60 max-h-[90vh] overflow-y-auto">
@@ -10161,6 +10260,18 @@ async function handleConnectBank() {
                       </span>
                       <ChevronDown className="h-4 w-4 text-muted-foreground flex-shrink-0" />
                     </button>
+                    {categoryChangePendingSave && (
+                      <div
+                        role="status"
+                        className="flex items-start gap-2 rounded-lg border border-primary/50 bg-primary/10 px-3 py-2.5 text-xs text-foreground"
+                      >
+                        <Check className="mt-0.5 h-3.5 w-3.5 flex-shrink-0 text-primary" />
+                        <span>
+                          Category selected. Click <strong>Save changes</strong>{" "}
+                          below to apply it to this transaction.
+                        </span>
+                      </div>
+                    )}
                   </div>
 
                   {/* Type */}
@@ -10206,7 +10317,7 @@ async function handleConnectBank() {
 
                   {/* Save button */}
                   <Button
-                    className="w-full"
+                    className={`w-full ${categoryChangePendingSave ? "shadow-[0_0_0_3px_hsl(var(--primary)/0.18)]" : ""}`}
                     disabled={
                       updateMutation.isPending ||
                       !editTitle.trim() ||
@@ -10235,26 +10346,47 @@ async function handleConnectBank() {
                     ) : null}
                     {updateMutation.isPending
                       ? "Saving…"
-                      : "Update Transaction"}
+                      : categoryChangePendingSave
+                        ? "Save category change"
+                        : "Save changes"}
                   </Button>
                 </div>
               )}
             </DialogContent>
           </Dialog>
 
-          {/* Select Category modal */}
-          <Dialog
-            open={categoryPickerOpen}
-            onOpenChange={(v) => {
-              if (!v) setCategoryPickerOpen(false);
-            }}
-          >
-            <DialogContent className="sm:max-w-md bg-card border-border/60 max-h-[85vh] flex flex-col p-0 gap-0">
-              <DialogHeader className="px-5 pt-5 pb-3 border-b border-border/40">
-                <DialogTitle className="text-base font-semibold">
-                  Select Category
-                </DialogTitle>
-              </DialogHeader>
+          {/* Category chooser intentionally avoids a nested Dialog. Nested modal
+              focus handling could dismiss the transaction editor on selection. */}
+          {categoryPickerOpen && (
+            <div
+              className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 p-4"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="category-picker-title"
+            >
+              <div className="flex max-h-[85vh] w-full max-w-md flex-col overflow-hidden rounded-lg border border-border/60 bg-card shadow-2xl">
+                <div className="flex items-center justify-between border-b border-border/40 px-5 pb-3 pt-5">
+                  <h2
+                    id="category-picker-title"
+                    className="text-base font-semibold"
+                  >
+                    Select Category
+                  </h2>
+                  <button
+                    type="button"
+                    aria-label="Close category chooser"
+                    className="rounded p-1 text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+                    onClick={() => {
+                      suppressEditorCloseRef.current = true;
+                      setCategoryPickerOpen(false);
+                      window.setTimeout(() => {
+                        suppressEditorCloseRef.current = false;
+                      }, 150);
+                    }}
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
 
               {/* Search */}
               <div className="px-4 py-3 border-b border-border/40">
@@ -10376,7 +10508,7 @@ async function handleConnectBank() {
                                     onClick={() => {
                                       setEditCategoryId(cat.id);
                                       setEditSubCategoryId(sub.id);
-                                      setCategoryPickerOpen(false);
+                                      setCategoryChangePendingSave(true);
                                     }}
                                   >
                                     <span className="flex-1">{sub.name}</span>
@@ -10394,8 +10526,30 @@ async function handleConnectBank() {
                   });
                 })()}
               </div>
-            </DialogContent>
-          </Dialog>
+              <div className="flex flex-col gap-3 border-t border-border/40 bg-card px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+                <p className="text-xs text-muted-foreground">
+                  Select a category, then confirm your choice.
+                </p>
+                <Button
+                  type="button"
+                  disabled={!categoryChangePendingSave}
+                  onClick={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    suppressEditorCloseRef.current = true;
+                    setCategoryPickerOpen(false);
+                    window.setTimeout(() => {
+                      suppressEditorCloseRef.current = false;
+                    }, 150);
+                  }}
+                >
+                  <Check className="mr-2 h-4 w-4" />
+                  Use selected category
+                </Button>
+              </div>
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>

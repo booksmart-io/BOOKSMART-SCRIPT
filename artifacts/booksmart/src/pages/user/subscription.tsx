@@ -254,7 +254,7 @@ export default function Subscription() {
   }
 
   return (
-    <div className="mx-auto max-w-6xl space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500 sm:space-y-8">
+    <div className="w-full max-w-none space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500 sm:space-y-8">
       <StripeCheckoutModal
         clientSecret={checkoutClientSecret}
         title="Complete Your Subscription"

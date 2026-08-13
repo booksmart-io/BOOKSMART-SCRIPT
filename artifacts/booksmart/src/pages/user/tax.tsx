@@ -3,6 +3,7 @@ import { useSearch } from "wouter";
 import { supabase } from "@/lib/supabase";
 import { checkAddTransaction } from "@/lib/plan-limits";
 import { categorizeTransaction } from "@/lib/ai-categorization";
+import { notifyFinancialDataChanged } from "@/lib/monitoring-client";
 import { pickActiveOrganization, useActiveOrganizationId } from "@/lib/active-organization";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/hooks/use-auth";
@@ -825,6 +826,9 @@ export function TransactionReviewDialog({
 
       setRows((prev) => prev.filter((r) => r.id !== row.id));
       invalidateDashboard();
+      void notifyFinancialDataChanged(row.org_id, "document_transactions_approved").catch((error) => {
+        console.warn("[monitoring/financial-data-changed]", error instanceof Error ? error.message : error);
+      });
       return true;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);

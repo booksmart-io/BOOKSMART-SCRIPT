@@ -1,0 +1,18 @@
+# Separate Render Blueprint for BookSmart's monitoring scheduler.
+# Import this file only when the API deployment is ready. It does not replace
+# or modify the existing manually-managed web/API services.
+services:
+  - type: cron
+    name: booksmart-monitoring-daily
+    runtime: node
+    plan: starter
+    schedule: "0 12 * * *"
+    buildCommand: corepack enable && pnpm install --frozen-lockfile
+    startCommand: pnpm --filter @workspace/api-server run monitoring:trigger
+    envVars:
+      - key: NODE_VERSION
+        value: "24"
+      - key: BOOKSMART_API_BASE_URL
+        sync: false
+      - key: MONITORING_CRON_SECRET
+        sync: false

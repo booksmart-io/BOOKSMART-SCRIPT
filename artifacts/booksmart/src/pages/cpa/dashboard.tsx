@@ -13,13 +13,15 @@ import { useAuth } from "@/hooks/use-auth";
 import { isActiveCpaEngagement } from "@/lib/route-access";
 import { toast } from "sonner";
 import { formatDistanceToNow } from "date-fns";
+import { calculateBusinessHealthFromActivity } from "@/lib/financial-summary";
+import { trustedTransactions } from "@/lib/trusted-transactions";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 interface OrderRow { id: number; user_id: number; status: string; created_at: string }
 interface UserRow  { id: number; first_name: string | null; last_name: string | null; email: string }
 interface OrgRow   { id: number; owner_id: number; name: string | null }
-interface TxRow    { id: number; org_id: number; amount: number; title: string; date_time: string }
+interface TxRow    { id: number; org_id: number; amount: number; title: string; date_time: string; deductible?: boolean | null }
 interface DocRow   { user_id: number }
 interface StratRow { user_id: number }
 
@@ -52,14 +54,6 @@ function getGreeting() {
   if (h < 21) return "evening";
   return "night";
 }
-function calcBPS(txCount: number, docCount: number, hasOrg: boolean, netPositive: boolean) {
-  let score = 15;
-  score += Math.min(30, txCount * 3);
-  score += Math.min(20, docCount * 5);
-  if (hasOrg) score += 10;
-  if (netPositive) score += 10;
-  return Math.min(100, Math.round(score));
-}
 function calcTaxReadiness(docCount: number, stratCount: number, hasCompleted: boolean) {
   let s = 20;
   s += Math.min(40, docCount * 8);
@@ -74,7 +68,8 @@ function startOfMonth() {
 
 // ─── Health ring ──────────────────────────────────────────────────────────────
 
-function HealthRing({ score, label }: { score: number; label: string }) {
+function HealthRing({ score, label }: { score: number | null; label: string }) {
+  if (score === null) return <div className="text-[10px] text-muted-foreground">More data needed</div>;
   const r = 16, circ = 2 * Math.PI * r;
   const offset = circ * (1 - score / 100);
   const color = healthColor(score);
@@ -184,22 +179,22 @@ export default function CpaDashboard() {
         .in("org_id", orgIds)
         .gte("date_time", startOfMonth());
       if (error) throw error;
-      return data ?? [];
+      return trustedTransactions("transactions", data ?? []);
     },
   });
 
   // ── 5. All-time tx counts per org (for health score) ─────────────────────
-  const { data: allTimeTxs = [] } = useQuery<{ org_id: number }[]>({
+  const { data: allTimeTxs = [] } = useQuery<Array<{ id: number; org_id: number; amount: number; deductible: boolean | null; date_time: string }>>({
     queryKey: ["cpa_dash_txcount", orgIds],
     enabled: orgIds.length > 0,
     staleTime: 60_000,
     queryFn: async () => {
       const { data, error } = await supabase
         .from("transactions")
-        .select("org_id")
+        .select("id, org_id, amount, deductible, date_time")
         .in("org_id", orgIds);
       if (error) throw error;
-      return data ?? [];
+      return trustedTransactions("transactions", data ?? []);
     },
   });
 
@@ -246,7 +241,7 @@ export default function CpaDashboard() {
         .order("date_time", { ascending: false })
         .limit(6);
       if (error) throw error;
-      return data ?? [];
+      return trustedTransactions("transactions", data ?? []);
     },
   });
 
@@ -259,8 +254,8 @@ export default function CpaDashboard() {
     const txByOrg: Record<number, TxRow[]> = {};
     for (const t of monthTxs) { if (!txByOrg[t.org_id]) txByOrg[t.org_id] = []; txByOrg[t.org_id].push(t); }
 
-    const allTxCountByOrg: Record<number, number> = {};
-    for (const t of allTimeTxs) allTxCountByOrg[t.org_id] = (allTxCountByOrg[t.org_id] ?? 0) + 1;
+    const allTxByOrg: Record<number, Array<{ amount: number; deductible: boolean | null }>> = {};
+    for (const t of allTimeTxs) { if (!allTxByOrg[t.org_id]) allTxByOrg[t.org_id] = []; allTxByOrg[t.org_id].push(t); }
 
     const docCountByUser: Record<number, number> = {};
     for (const d of docRows) docCountByUser[d.user_id] = (docCountByUser[d.user_id] ?? 0) + 1;
@@ -274,19 +269,15 @@ export default function CpaDashboard() {
     return clientUsers.map((u, i) => {
       const org = orgByOwner[u.id];
       const orgTxs = org ? (txByOrg[org.id] ?? []) : [];
-      const allTxCount = org ? (allTxCountByOrg[org.id] ?? 0) : 0;
       const docCount = docCountByUser[u.id] ?? 0;
       const stratCount = stratCountByUser[u.id] ?? 0;
       const userOrders = ordersByUser[u.id] ?? [];
 
-      const net = orgTxs.reduce((s, t) => s + t.amount, 0);
-      const bps = calcBPS(allTxCount, docCount, !!org, net > 0);
+      const health = org ? calculateBusinessHealthFromActivity(allTxByOrg[org.id] ?? []) : null;
       const taxR = calcTaxReadiness(docCount, stratCount, userOrders.some(o => o.status === "completed"));
       const thisMonth = orgTxs.filter(t => t.amount > 0).reduce((s, t) => s + t.amount, 0);
 
       const name = fullName(u);
-      const healthLabel = bps >= 90 ? "Excellent" : bps >= 70 ? "Good" : bps >= 50 ? "Fair" : "Poor";
-
       return {
         id: u.id,
         name,
@@ -294,32 +285,33 @@ export default function CpaDashboard() {
         initials: name.slice(0, 2).toUpperCase(),
         color: AVATAR_COLORS[i % AVATAR_COLORS.length],
         business: org?.name ?? "—",
-        healthScore: bps,
-        healthLabel,
+        healthScore: health?.score ?? null,
+        healthLabel: health?.status ?? "More data needed",
         thisMonth,
         taxReadiness: taxR,
       };
     });
   }, [clientUsers, orgs, monthTxs, allTimeTxs, docRows, stratRows, allOrders]);
 
-  const avgHealth = clientRows.length
-    ? Math.round(clientRows.reduce((s, c) => s + c.healthScore, 0) / clientRows.length)
+  const scoredClients = clientRows.filter((client): client is typeof client & { healthScore: number } => client.healthScore !== null);
+  const avgHealth = scoredClients.length
+    ? Math.round(scoredClients.reduce((s, c) => s + c.healthScore, 0) / scoredClients.length)
     : 0;
 
   const healthDonut = useMemo(() => {
-    const total = clientRows.length;
+    const total = scoredClients.length;
     if (total === 0) return [];
-    const excellent = clientRows.filter(c => c.healthScore >= 90).length;
-    const good      = clientRows.filter(c => c.healthScore >= 70 && c.healthScore < 90).length;
-    const fair      = clientRows.filter(c => c.healthScore >= 50 && c.healthScore < 70).length;
-    const poor      = clientRows.filter(c => c.healthScore < 50).length;
+    const excellent = scoredClients.filter(c => c.healthScore >= 80).length;
+    const good      = scoredClients.filter(c => c.healthScore >= 60 && c.healthScore < 80).length;
+    const fair      = scoredClients.filter(c => c.healthScore >= 40 && c.healthScore < 60).length;
+    const poor      = scoredClients.filter(c => c.healthScore < 40).length;
     return [
-      { name: "Excellent (90–100)", value: excellent, color: "#22c55e" },
-      { name: "Good (70–89)",       value: good,      color: "#3b82f6" },
-      { name: "Fair (50–69)",       value: fair,      color: "#f59e0b" },
+      { name: "Excellent (80–100)", value: excellent, color: "#22c55e" },
+      { name: "Good (60–79)",       value: good,      color: "#3b82f6" },
+      { name: "Fair (40–59)",       value: fair,      color: "#f59e0b" },
       { name: "Needs Attention",    value: poor,      color: "#ef4444" },
     ].filter(d => d.value > 0);
-  }, [clientRows]);
+  }, [scoredClients]);
 
   const activityItems = useMemo(() => {
     const orgByIdMap: Record<number, OrgRow> = {};
@@ -354,7 +346,7 @@ export default function CpaDashboard() {
   };
 
   const totalClients = clientRows.length;
-  const avgHealthLabel = avgHealth >= 90 ? "Excellent" : avgHealth >= 70 ? "Good" : avgHealth >= 50 ? "Fair" : "Poor";
+  const avgHealthLabel = scoredClients.length === 0 ? "More data needed" : avgHealth >= 80 ? "Excellent" : avgHealth >= 60 ? "Good" : avgHealth >= 40 ? "Fair" : avgHealth >= 20 ? "Poor" : "Critical";
 
   return (
     <div className="space-y-5 animate-in fade-in slide-in-from-bottom-4 duration-500">
@@ -417,10 +409,10 @@ export default function CpaDashboard() {
                 {avgHealth > 0 ? avgHealth : "—"}
               </p>
               <p className="text-[10px] mt-1" style={{ color: avgHealth > 0 ? healthColor(avgHealth) : "#7F96BA" }}>
-                {avgHealth > 0 ? avgHealthLabel : "No data yet"}
+                {avgHealthLabel}
               </p>
             </div>
-            <HealthGauge value={avgHealth} />
+            {scoredClients.length > 0 ? <HealthGauge value={avgHealth} /> : <div className="max-w-24 text-right text-[10px] text-muted-foreground">Financial activity is required.</div>}
           </CardContent>
         </Card>
 

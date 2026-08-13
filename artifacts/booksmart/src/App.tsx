@@ -34,6 +34,13 @@ import Subscription from "@/pages/user/subscription";
 import BulkReview from "@/pages/user/bulk-review";
 import RulesManagement from "@/pages/user/rules-management";
 import QuickBooksReview from "@/pages/user/quickbooks-review";
+import MonitoringHome from "@/pages/user/monitoring-home";
+import Money from "@/pages/user/money";
+import MyCpa from "@/pages/user/my-cpa";
+import MonitoringTasks from "@/pages/user/monitoring-tasks";
+import MonitoringInsights from "@/pages/user/monitoring-insights";
+import JobberRecords from "@/pages/user/jobber-records";
+import FinancialInputs from "@/pages/user/financial-inputs";
 
 // CPA Pages
 import CpaDashboard from "@/pages/cpa/dashboard";
@@ -58,6 +65,7 @@ import AdminCategories from "@/pages/admin/categories";
 import AdminTaxDeductions from "@/pages/admin/tax-deductions";
 import AdminSettings from "@/pages/admin/settings";
 import AdminChat from "@/pages/admin/chat";
+import AdminMonitoring from "@/pages/admin/monitoring";
 
 const queryClient = new QueryClient();
 
@@ -66,7 +74,8 @@ type Role = "user" | "cpa" | "admin";
 // Route table: path → { role, component }
 type RouteEntry = { role: Role; component: React.ComponentType };
 const USER_ROUTES: Record<string, RouteEntry> = {
-  "/user": { role: "user", component: UserDashboard },
+  "/user": { role: "user", component: MonitoringHome },
+  "/user/dashboard": { role: "user", component: UserDashboard },
   "/user/ai-strategy": { role: "user", component: AiStrategy },
   "/user/ai-chat": { role: "user", component: AiChat },
   "/user/chat": { role: "user", component: Chat },
@@ -84,6 +93,13 @@ const USER_ROUTES: Record<string, RouteEntry> = {
   "/user/bulk-review": { role: "user", component: BulkReview },
   "/user/rules-management": { role: "user", component: RulesManagement },
   "/user/quickbooks-review": { role: "user", component: QuickBooksReview },
+  "/user/monitoring-preview": { role: "user", component: MonitoringHome },
+  "/user/money": { role: "user", component: Money },
+  "/user/my-cpa": { role: "user", component: MyCpa },
+  "/user/tasks": { role: "user", component: MonitoringTasks },
+  "/user/insights": { role: "user", component: MonitoringInsights },
+  "/user/jobber-records": { role: "user", component: JobberRecords },
+  "/user/financial-inputs": { role: "user", component: FinancialInputs },
 };
 const CPA_ROUTES: Record<string, RouteEntry> = {
   "/cpa": { role: "cpa", component: CpaDashboard },
@@ -108,6 +124,7 @@ const ADMIN_ROUTES: Record<string, RouteEntry> = {
   "/admin/tax-deductions": { role: "admin", component: AdminTaxDeductions },
   "/admin/settings": { role: "admin", component: AdminSettings },
   "/admin/chat": { role: "admin", component: AdminChat },
+  "/admin/monitoring": { role: "admin", component: AdminMonitoring },
 };
 const ALL_ROUTES = { ...USER_ROUTES, ...CPA_ROUTES, ...ADMIN_ROUTES };
 

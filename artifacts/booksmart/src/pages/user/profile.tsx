@@ -494,7 +494,7 @@ export default function Profile() {
 
   return (
     <div className="min-w-0 animate-in fade-in slide-in-from-bottom-4 duration-500">
-      <div className="mx-auto w-full max-w-6xl px-3 pt-4 sm:px-4 sm:pt-6">
+      <div className="w-full max-w-none px-0 pt-0">
         <h1 className="mb-3 text-center text-2xl font-bold tracking-tight sm:mb-4">Set Up Your Profile</h1>
         <p className="mb-7 text-center text-sm text-muted-foreground sm:mb-10">
           Complete your profile and add your business before BookSmart starts the onboarding survey.

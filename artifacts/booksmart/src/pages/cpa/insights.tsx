@@ -1,179 +1,49 @@
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Lightbulb, TrendingUp, Users, AlertCircle, CheckCircle2 } from "lucide-react";
-import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, BarChart, Bar, XAxis, YAxis, CartesianGrid } from "recharts";
+import { useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { AlertCircle, CalendarDays, CheckCircle2, Loader2, MessageSquarePlus, ShieldCheck, Users } from "lucide-react";
+import { authenticatedApi, apiErrorMessage } from "@/lib/authenticated-api";
+import { Badge } from "@/components/ui/badge";
+import { Card, CardContent } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { useToast } from "@/hooks/use-toast";
 
-const HEALTH_DONUT = [
-  { name: "Excellent (90–100)", value: 5, color: "#22c55e" },
-  { name: "Good (70–89)", value: 12, color: "#3b82f6" },
-  { name: "Fair (50–69)", value: 7, color: "#f59e0b" },
-  { name: "Needs Attention (0–49)", value: 4, color: "#ef4444" },
-];
+type CpaTask = {
+  id: number; organization_id: number; organization_name: string; client_name: string;
+  title: string; description: string; category: string; priority: string;
+  status: "open" | "in_progress" | "waiting"; due_date: string | null;
+  requires_cpa: boolean; assignment_role: "owner" | "cpa" | "booksmart";
+  collaboration_events: Array<{ id: number; event_type: "cpa_acknowledged" | "cpa_note"; note: string | null; created_at: string }>;
+};
 
-const REVENUE_TREND = [
-  { month: "Oct", revenue: 185000 },
-  { month: "Nov", revenue: 210000 },
-  { month: "Dec", revenue: 198000 },
-  { month: "Jan", revenue: 230000 },
-  { month: "Feb", revenue: 245000 },
-  { month: "Mar", revenue: 268000 },
-  { month: "Apr", revenue: 312000 },
-];
+async function loadCpaTasks() {
+  const response = await authenticatedApi("/api/cpa/monitoring/tasks");
+  if (!response.ok) throw new Error(await apiErrorMessage(response, "Could not load client tasks."));
+  return response.json() as Promise<{ tasks: CpaTask[]; generated_at: string }>;
+}
 
-const TAX_READINESS = [
-  { name: "Smith Designs LLC", score: 85, color: "#22c55e" },
-  { name: "Prime Build Co.", score: 65, color: "#f59e0b" },
-  { name: "Bloom Wellness", score: 52, color: "#ef4444" },
-  { name: "Wilson Consulting", score: 91, color: "#22c55e" },
-  { name: "White Legal LLC", score: 73, color: "#f59e0b" },
-];
-
-function fmtShort(v: number) {
-  if (v >= 1_000_000) return `$${(v / 1_000_000).toFixed(1)}M`;
-  if (v >= 1_000) return `$${(v / 1_000).toFixed(0)}K`;
-  return `$${v}`;
+async function collaborate(taskId: number, action: "acknowledge" | "note", note?: string) {
+  const response = await authenticatedApi(`/api/cpa/monitoring/tasks/${taskId}/events`, { method: "POST", body: JSON.stringify({ action, note }) });
+  if (!response.ok) throw new Error(await apiErrorMessage(response, "Could not save CPA activity."));
+  return response.json();
 }
 
 export default function CpaInsights() {
-  return (
-    <div className="space-y-5 animate-in fade-in slide-in-from-bottom-4 duration-500">
-
-      {/* Header */}
-      <div>
-        <h1 className="text-2xl font-bold text-white">Insights</h1>
-        <p className="text-sm text-muted-foreground mt-0.5">Analytics and intelligence across your client portfolio.</p>
-      </div>
-
-      {/* KPI row */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        {[
-          { label: "Avg. Health Score", value: "78", sub: "Across 28 clients", color: "text-emerald-400", icon: TrendingUp, bg: "bg-emerald-500/15" },
-          { label: "Tax Ready Clients", value: "19", sub: "68% of portfolio", color: "text-blue-400", icon: CheckCircle2, bg: "bg-blue-500/15" },
-          { label: "At-Risk Clients", value: "4", sub: "Need attention", color: "text-rose-400", icon: AlertCircle, bg: "bg-rose-500/15" },
-          { label: "Portfolio Revenue", value: "$108K", sub: "This month", color: "text-primary", icon: Users, bg: "bg-primary/15" },
-        ].map(s => (
-          <Card key={s.label} className="border-border/60 bg-card">
-            <CardContent className="p-4 flex items-center gap-3">
-              <div className={`w-9 h-9 rounded-full ${s.bg} flex items-center justify-center flex-shrink-0`}>
-                <s.icon className={`h-4.5 w-4.5 ${s.color}`} style={{ height: 18, width: 18 }} />
-              </div>
-              <div>
-                <p className="text-[11px] text-muted-foreground">{s.label}</p>
-                <p className={`text-xl font-bold ${s.color}`}>{s.value}</p>
-                <p className="text-[10px] text-muted-foreground">{s.sub}</p>
-              </div>
-            </CardContent>
-          </Card>
-        ))}
-      </div>
-
-      <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
-
-        {/* Revenue trend */}
-        <div className="xl:col-span-2 space-y-4">
-          <Card className="border-border/60 bg-card">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-semibold text-white">Portfolio Revenue Trend</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <ResponsiveContainer width="100%" height={200}>
-                <BarChart data={REVENUE_TREND} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
-                  <CartesianGrid vertical={false} horizontal={false} />
-                  <XAxis dataKey="month" tick={{ fontSize: 10, fill: "#6E86AD" }} axisLine={false} tickLine={false} />
-                  <YAxis tick={{ fontSize: 10, fill: "#6E86AD" }} axisLine={false} tickLine={false} tickFormatter={fmtShort} width={44} />
-                  <Tooltip
-                    formatter={(v: number) => fmtShort(v)}
-                    contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 8, fontSize: 11 }}
-                    labelStyle={{ color: "#EAF2FF" }}
-                  />
-                  <Bar dataKey="revenue" name="Revenue" fill="#FFC72B" radius={[3, 3, 0, 0]} barSize={24} fillOpacity={0.9} />
-                </BarChart>
-              </ResponsiveContainer>
-            </CardContent>
-          </Card>
-
-          {/* Tax readiness by client */}
-          <Card className="border-border/60 bg-card">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-semibold text-white">Tax Readiness by Client</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              {TAX_READINESS.map(c => (
-                <div key={c.name} className="flex items-center gap-3">
-                  <span className="text-xs text-foreground w-36 truncate flex-shrink-0">{c.name}</span>
-                  <div className="flex-1 h-2 rounded-full bg-foreground/10 overflow-hidden">
-                    <div className="h-full rounded-full transition-all" style={{ width: `${c.score}%`, background: c.color }} />
-                  </div>
-                  <span className="text-[11px] font-semibold w-8 text-right flex-shrink-0" style={{ color: c.color }}>{c.score}%</span>
-                </div>
-              ))}
-            </CardContent>
-          </Card>
-        </div>
-
-        {/* Health overview donut */}
-        <div className="space-y-4">
-          <Card className="border-border/60 bg-card">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-semibold text-white">Health Score Distribution</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="flex justify-center mb-3">
-                <div className="relative">
-                  <ResponsiveContainer width={160} height={160}>
-                    <PieChart>
-                      <Pie data={HEALTH_DONUT} cx="50%" cy="50%" innerRadius={40} outerRadius={70}
-                        paddingAngle={2} dataKey="value" startAngle={90} endAngle={-270}>
-                        {HEALTH_DONUT.map((d, i) => <Cell key={i} fill={d.color} />)}
-                      </Pie>
-                      <Tooltip contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 8, fontSize: 11 }} />
-                    </PieChart>
-                  </ResponsiveContainer>
-                  <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-                    <span className="text-xl font-bold text-white">28</span>
-                    <span className="text-[10px] text-muted-foreground">Clients</span>
-                  </div>
-                </div>
-              </div>
-              <div className="space-y-2">
-                {HEALTH_DONUT.map(d => (
-                  <div key={d.name} className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ background: d.color }} />
-                      <span className="text-[11px] text-muted-foreground">{d.name}</span>
-                    </div>
-                    <div className="flex items-center gap-1.5">
-                      <span className="text-[11px] font-semibold text-foreground">{d.value}</span>
-                      <span className="text-[10px] text-muted-foreground">({Math.round(d.value / 28 * 100)}%)</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* Key insights */}
-          <Card className="border-border/60 bg-card">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-semibold text-white flex items-center gap-2">
-                <Lightbulb className="h-4 w-4 text-primary" /> Key Insights
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              {[
-                { color: "#22c55e", text: "Wilson Consulting has the highest health score (91) — schedule a strategy review." },
-                { color: "#f59e0b", text: "Bloom Wellness tax readiness is below 60% — request missing documents." },
-                { color: "#3b82f6", text: "Portfolio revenue grew 19% MoM in April — above target." },
-                { color: "#ef4444", text: "4 clients need immediate attention — low health scores detected." },
-              ].map((ins, i) => (
-                <div key={i} className="flex items-start gap-2.5">
-                  <span className="w-2 h-2 rounded-full mt-1.5 flex-shrink-0" style={{ background: ins.color }} />
-                  <p className="text-[11px] text-muted-foreground leading-relaxed">{ins.text}</p>
-                </div>
-              ))}
-            </CardContent>
-          </Card>
-        </div>
-      </div>
-    </div>
-  );
+  const [notes, setNotes] = useState<Record<number, string>>({});
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  const query = useQuery({ queryKey: ["cpa-monitoring-tasks"], queryFn: loadCpaTasks, retry: false });
+  const mutation = useMutation({
+    mutationFn: ({ taskId, action, note }: { taskId: number; action: "acknowledge" | "note"; note?: string }) => collaborate(taskId, action, note),
+    onSuccess: (_, variables) => { setNotes(current => ({ ...current, [variables.taskId]: "" })); queryClient.invalidateQueries({ queryKey: ["cpa-monitoring-tasks"] }); toast({ title: variables.action === "acknowledge" ? "Task acknowledged" : "CPA note saved" }); },
+    onError: error => toast({ title: "Could not save activity", description: error instanceof Error ? error.message : "Try again.", variant: "destructive" }),
+  });
+  const tasks = query.data?.tasks ?? [];
+  return <div className="space-y-5 animate-in fade-in slide-in-from-bottom-4 duration-500">
+    <div><h1 className="text-2xl font-bold">Client attention</h1><p className="mt-0.5 text-sm text-muted-foreground">Read-only tasks requiring CPA awareness across active client relationships.</p></div>
+    <Card><CardContent className="flex gap-3 p-4 text-sm text-muted-foreground"><ShieldCheck className="h-5 w-5 shrink-0 text-emerald-400" /><p>Only active clients and tasks marked for CPA involvement appear here. You can acknowledge or leave a note; task status and financial changes remain with the business owner.</p></CardContent></Card>
+    {query.isLoading ? <div className="flex min-h-60 items-center justify-center"><Loader2 className="h-6 w-6 animate-spin text-primary" /></div>
+      : query.isError ? <Card><CardContent className="p-6 text-sm text-destructive">{query.error instanceof Error ? query.error.message : "Client tasks are unavailable."}</CardContent></Card>
+      : tasks.length === 0 ? <Card><CardContent className="flex flex-col items-center gap-3 p-10 text-center"><CheckCircle2 className="h-8 w-8 text-emerald-400" /><div><p className="font-semibold">No client tasks need CPA attention</p><p className="mt-1 text-sm text-muted-foreground">BookSmart will show relevant tasks here when an active client needs your involvement.</p></div></CardContent></Card>
+      : <div className="grid gap-3">{tasks.map(task => <Card key={task.id}><CardContent className="space-y-3 p-4"><div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center"><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><h2 className="font-semibold">{task.title}</h2><Badge variant="outline" className="capitalize">{task.priority}</Badge><Badge variant="secondary" className="capitalize">{task.status.replaceAll("_", " ")}</Badge></div><p className="mt-1 text-sm text-muted-foreground">{task.description}</p><div className="mt-2 flex flex-wrap gap-3 text-xs text-muted-foreground"><span className="flex items-center gap-1"><Users className="h-3.5 w-3.5" />{task.client_name} · {task.organization_name}</span>{task.due_date && <span className="flex items-center gap-1"><CalendarDays className="h-3.5 w-3.5" />Due {new Date(`${task.due_date}T00:00:00`).toLocaleDateString()}</span>}</div></div><div className="flex items-center gap-2 text-xs text-amber-300"><AlertCircle className="h-4 w-4" />CPA awareness</div></div>{task.collaboration_events.length > 0 && <div className="space-y-2 rounded-md border bg-background/30 p-3"><p className="text-xs font-medium">CPA activity</p>{task.collaboration_events.map(event => <div key={event.id} className="text-xs"><div className="flex flex-wrap justify-between gap-2"><span className="capitalize">{event.event_type.replaceAll("_", " ")}</span><span className="text-muted-foreground">{new Date(event.created_at).toLocaleString()}</span></div>{event.note && <p className="mt-1 whitespace-pre-wrap text-muted-foreground">{event.note}</p>}</div>)}</div>}<div className="flex flex-col gap-2 border-t pt-3 sm:flex-row"><textarea value={notes[task.id] ?? ""} onChange={event => setNotes(current => ({ ...current, [task.id]: event.target.value }))} maxLength={1000} rows={2} placeholder="Add a note for the business owner" className="min-h-10 flex-1 resize-y rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring" /><div className="flex gap-2 sm:items-start"><Button variant="outline" disabled={mutation.isPending} onClick={() => mutation.mutate({ taskId: task.id, action: "acknowledge" })}><CheckCircle2 className="mr-1.5 h-4 w-4" />Acknowledge</Button><Button disabled={mutation.isPending || !(notes[task.id] ?? "").trim()} onClick={() => mutation.mutate({ taskId: task.id, action: "note", note: notes[task.id] })}><MessageSquarePlus className="mr-1.5 h-4 w-4" />Add note</Button></div></div></CardContent></Card>)}</div>}
+  </div>;
 }

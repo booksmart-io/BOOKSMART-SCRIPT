@@ -1,0 +1,21 @@
+Date,Description,Transaction Type,Amount,Category,Notes
+2026-06-16,Client payment - Oak Street Project,Credit,5000.00,Income,Prior 30-day comparison period
+2026-06-20,Office rent,Debit,-1800.00,Rent,Prior 30-day comparison period
+2026-06-23,Software subscriptions,Debit,-450.00,Software,Prior 30-day comparison period
+2026-06-27,Client payment - Pine Avenue,Credit,4000.00,Income,Prior 30-day comparison period
+2026-07-01,Contractor payment,Debit,-1600.00,Contract Labor,Prior 30-day comparison period
+2026-07-04,Utilities,Debit,-350.00,Utilities,Prior 30-day comparison period
+2026-07-07,Client payment - Lakeview Consulting,Credit,3000.00,Income,Prior 30-day comparison period
+2026-07-11,Client payment - Harbor Project,Credit,6500.00,Income,Current 30-day monitoring period
+2026-07-13,Office rent,Debit,-1800.00,Rent,Current 30-day monitoring period
+2026-07-15,Digital advertising campaign,Debit,-2400.00,Advertising,Intentional expense increase
+2026-07-18,Contractor payment,Debit,-2600.00,Contract Labor,Intentional expense increase
+2026-07-21,Client payment - Westside Project,Credit,5500.00,Income,Current 30-day monitoring period
+2026-07-23,Software subscriptions,Debit,-620.00,Software,Current 30-day monitoring period
+2026-07-25,Equipment purchase,Debit,-1850.00,Equipment,Current 30-day monitoring period
+2026-07-28,Client payment - Monthly Retainer,Credit,3500.00,Income,Current 30-day monitoring period
+2026-07-30,Utilities,Debit,-410.00,Utilities,Current 30-day monitoring period
+2026-08-01,Business insurance,Debit,-900.00,Insurance,Current 30-day monitoring period
+2026-08-03,Client payment - Rush Project,Credit,4500.00,Income,Current 30-day monitoring period
+2026-08-05,Travel and lodging,Debit,-1200.00,Travel,Current 30-day monitoring period
+2026-08-07,Unclassified vendor charge,Debit,-375.00,,Leave uncategorized to test review task
