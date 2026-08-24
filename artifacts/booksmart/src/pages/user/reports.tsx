@@ -29,7 +29,6 @@ import {
   dynamicAxisBounds,
   type FinancialReportResult,
 } from "@/lib/financial-engine";
-import { createFinancialSummary } from "@/lib/financial-summary";
 import { authenticatedApi, apiErrorMessage } from "@/lib/authenticated-api";
 import { notifyFinancialDataChanged, type FinancialDataChangeEvent } from "@/lib/monitoring-client";
 import {
@@ -48,7 +47,6 @@ import {
 } from "@/components/reports/financial-statements-tab";
 import { StatementReviewDialog } from "@/components/statement-review-dialog";
 import { TransactionReviewDialog } from "@/pages/user/tax";
-import { FinancialSummaryShadowObserver } from "@/components/monitoring/financial-summary-shadow-observer";
 import {
   createStatementReview,
   extractFinancialStatement,
@@ -140,10 +138,15 @@ import {
 } from "lucide-react";
 
 const PLAID_CATEGORIZATION_BATCH_LIMIT = 100;
-const canonicalReportsEnabled = import.meta.env.VITE_CANONICAL_REPORTS === "true";
 
-type CanonicalReportsSummary = ReturnType<typeof createFinancialSummary> & {
-  sources: { pnl: "transactions" | "uploaded"; cashFlow: "transactions" | "uploaded"; balanceSheet: "transactions" | "uploaded" };
+type CanonicalReportsSummary = {
+  revenue: number;
+  accountingExpenses: number;
+  netIncome: number;
+  moneyIn: number;
+  moneyOut: number;
+  netCashMovement: number;
+  health: { score: number };
 };
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -3958,40 +3961,27 @@ async function handleConnectBank() {
       : requestedRange.start;
   const { start: prevStart, end: prevEnd } = getPrevRange(txPeriod, start, end);
   const canonicalReports = useQuery({
-    queryKey: ["canonical-reports-summary", orgId, start.toISOString(), end.toISOString()],
-    enabled: canonicalReportsEnabled && orgId !== null,
+    queryKey: ["canonical-reports-summary", orgId, txPeriod, start.toISOString(), end.toISOString()],
+    enabled: orgId !== null,
     retry: false,
     queryFn: async () => {
-      const query = new URLSearchParams({ startInstant: start.toISOString(), endInstant: end.toISOString() });
-      const response = await authenticatedApi(`/api/organizations/${orgId}/financial-summary?${query}`);
+      if (txPeriod === "all") {
+        const query = new URLSearchParams({ startInstant: start.toISOString(), endInstant: end.toISOString() });
+        const response = await authenticatedApi(`/api/organizations/${orgId}/financial-summary?${query}`);
+        if (!response.ok) throw new Error(await apiErrorMessage(response, "Canonical Reports summary is unavailable."));
+        return { current: await response.json() as CanonicalReportsSummary, previous: null };
+      }
+      const query = new URLSearchParams({
+        currentStartInstant: start.toISOString(),
+        currentEndInstant: end.toISOString(),
+        previousStartInstant: prevStart.toISOString(),
+        previousEndInstant: prevEnd.toISOString(),
+      });
+      const response = await authenticatedApi(`/api/organizations/${orgId}/financial-summary/home-pair?${query}`);
       if (!response.ok) throw new Error(await apiErrorMessage(response, "Canonical Reports summary is unavailable."));
-      return response.json() as Promise<CanonicalReportsSummary>;
+      return response.json() as Promise<{ current: CanonicalReportsSummary; previous: CanonicalReportsSummary | null }>;
     },
   });
-  const canonicalReportsRequestStartedAt = useRef(Date.now());
-  const recordedReportsRollout = useRef<string | null>(null);
-  useEffect(() => {
-    canonicalReportsRequestStartedAt.current = Date.now();
-    recordedReportsRollout.current = null;
-  }, [orgId, start.getTime(), end.getTime()]);
-  useEffect(() => {
-    if (canonicalReportsEnabled && canonicalReports.isError) console.warn("[canonical-reports] using the existing trusted calculation", canonicalReports.error);
-  }, [canonicalReports.error, canonicalReports.isError]);
-  useEffect(() => {
-    if (!canonicalReportsEnabled || orgId === null) return;
-    const mode = canonicalReports.data ? "canonical" : canonicalReports.isError ? "fallback" : null;
-    if (!mode) return;
-    const observationKey = `${start.toISOString()}:${end.toISOString()}:${mode}`;
-    if (recordedReportsRollout.current === observationKey) return;
-    recordedReportsRollout.current = observationKey;
-    const failureReason = canonicalReports.error instanceof Error ? canonicalReports.error.message : null;
-    void authenticatedApi(`/api/organizations/${orgId}/financial-summary/rollout-event`, {
-      method: "POST",
-      body: JSON.stringify({ surface: "reports", mode, response_ms: Date.now() - canonicalReportsRequestStartedAt.current, failure_reason: failureReason }),
-    }).then(response => {
-      if (!response.ok) console.warn("[canonical-reports] rollout telemetry was not recorded", response.status);
-    }).catch(() => undefined);
-  }, [canonicalReports.data, canonicalReports.error, canonicalReports.isError, end, orgId, start]);
 
   // ── Derived metrics ────────────────────────────────────────────────────────
   const currentFinancialReport = useMemo(
@@ -4105,9 +4095,6 @@ async function handleConnectBank() {
   const income = resolvedStatements.pnl.totalRevenue;
   const expenses = resolvedStatements.pnl.totalExpenses;
   const netIncome = resolvedStatements.pnl.netIncome;
-  const prevIncome = previousResolvedStatements.pnl.totalRevenue;
-  const prevExpenses = previousResolvedStatements.pnl.totalExpenses;
-  const prevNet = previousResolvedStatements.pnl.netIncome;
 
   const transactionMoneyIn = currentFinancialReport.classifiedTransactions
     .filter((transaction) => !transaction.isTransfer && transaction.amount > 0)
@@ -4128,35 +4115,17 @@ async function handleConnectBank() {
         Math.max(0, -resolvedStatements.cashFlow.financing)
       : transactionMoneyOut;
   const cfNetCash = resolvedStatements.cashFlow.netChange;
-  const prevCfIn =
-    previousResolvedStatements.sources.cashFlow === "uploaded"
-      ? Math.max(0, previousResolvedStatements.cashFlow.operating) +
-        Math.max(0, previousResolvedStatements.cashFlow.investing) +
-        Math.max(0, previousResolvedStatements.cashFlow.financing)
-      : previousFinancialReport.classifiedTransactions
-          .filter(
-            (transaction) => !transaction.isTransfer && transaction.amount > 0,
-          )
-          .reduce((sum, transaction) => sum + transaction.amount, 0);
-  const prevCfOut =
-    previousResolvedStatements.sources.cashFlow === "uploaded"
-      ? Math.max(0, -previousResolvedStatements.cashFlow.operating) +
-        Math.max(0, -previousResolvedStatements.cashFlow.investing) +
-        Math.max(0, -previousResolvedStatements.cashFlow.financing)
-      : previousFinancialReport.classifiedTransactions
-          .filter(
-            (transaction) => !transaction.isTransfer && transaction.amount < 0,
-          )
-          .reduce((sum, transaction) => sum + Math.abs(transaction.amount), 0);
-  const prevCfNet = previousResolvedStatements.cashFlow.netChange;
 
-  // Dashboard and report tabs consume this same range-resolved source.
-  const legacyOverviewIncome = resolvedStatements.pnl.totalRevenue;
-  const legacyOverviewExpenses = resolvedStatements.pnl.totalExpenses;
-  const legacyOverviewNetIncome = resolvedStatements.pnl.netIncome;
-  const overviewIncome = canonicalReports.data?.revenue ?? legacyOverviewIncome;
-  const overviewExpenses = canonicalReports.data?.accountingExpenses ?? legacyOverviewExpenses;
-  const overviewNetIncome = canonicalReports.data?.netIncome ?? legacyOverviewNetIncome;
+  // Dashboard summary values come only from the authoritative server contract.
+  // Detailed statement tabs continue to use the existing accounting machinery.
+  const canonicalCurrent = canonicalReports.data?.current;
+  const canonicalPrevious = canonicalReports.data?.previous;
+  const overviewIncome = canonicalCurrent?.revenue ?? 0;
+  const overviewExpenses = canonicalCurrent?.accountingExpenses ?? 0;
+  const overviewNetIncome = canonicalCurrent?.netIncome ?? 0;
+  const overviewPrevIncome = canonicalPrevious?.revenue ?? 0;
+  const overviewPrevExpenses = canonicalPrevious?.accountingExpenses ?? 0;
+  const overviewPrevNetIncome = canonicalPrevious?.netIncome ?? 0;
   const overviewMargin =
     overviewIncome > 0 ? (overviewNetIncome / overviewIncome) * 100 : 0;
   const totalAssets = resolvedStatements.balanceSheet.totalAssets;
@@ -4165,9 +4134,12 @@ async function handleConnectBank() {
   const debtToEquity = equity > 0 ? totalLiabilities / equity : 0;
   const previousTotalAssets =
     previousResolvedStatements.balanceSheet.totalAssets;
-  const overviewMoneyIn = canonicalReports.data?.moneyIn ?? cfMoneyIn;
-  const overviewMoneyOut = canonicalReports.data?.moneyOut ?? cfMoneyOut;
-  const overviewNetCash = canonicalReports.data?.netCashMovement ?? cfNetCash;
+  const overviewMoneyIn = canonicalCurrent?.moneyIn ?? 0;
+  const overviewMoneyOut = canonicalCurrent?.moneyOut ?? 0;
+  const overviewNetCash = canonicalCurrent?.netCashMovement ?? 0;
+  const overviewPrevMoneyIn = canonicalPrevious?.moneyIn ?? 0;
+  const overviewPrevMoneyOut = canonicalPrevious?.moneyOut ?? 0;
+  const overviewPrevNetCash = canonicalPrevious?.netCashMovement ?? 0;
   const allTimeCfIn = overviewMoneyIn;
   const allTimeCfOut = overviewMoneyOut;
   const allTimeCfNet = overviewNetCash;
@@ -4248,24 +4220,7 @@ async function handleConnectBank() {
       : 0;
   }, [allTxsFull]);
 
-  // Shared financial summary: future Home, Money, Insights, and CPA views must
-  // consume this same accounting-engine-backed contract rather than recalculate.
-  const legacyFinancialSummary = useMemo(
-    () => createFinancialSummary({
-      report: currentFinancialReport,
-      source: resolvedStatements.sources.pnl === "uploaded" || resolvedStatements.sources.cashFlow === "uploaded" ? "uploaded_statement" : "transactions",
-      revenue: legacyOverviewIncome,
-      accountingExpenses: legacyOverviewExpenses,
-      netIncome: legacyOverviewNetIncome,
-      moneyIn: cfMoneyIn,
-      moneyOut: cfMoneyOut,
-      netCashMovement: cfNetCash,
-      deductibleAmount: deductibleAmt,
-    }),
-    [cfMoneyIn, cfMoneyOut, cfNetCash, currentFinancialReport, deductibleAmt, legacyOverviewExpenses, legacyOverviewIncome, legacyOverviewNetIncome, resolvedStatements.sources.cashFlow, resolvedStatements.sources.pnl],
-  );
-  const sharedFinancialSummary = canonicalReports.data ?? legacyFinancialSummary;
-  const bhs = sharedFinancialSummary.health.score;
+  const bhs = canonicalCurrent?.health.score ?? 0;
 
   // Trend chart data
   const trendData = useMemo(
@@ -5578,7 +5533,6 @@ async function handleConnectBank() {
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
     <div className="-mt-2 min-w-0 space-y-0 animate-in fade-in slide-in-from-bottom-4 duration-500">
-      {orgId && <FinancialSummaryShadowObserver organizationId={orgId} surface="reports" start={start} end={end} values={{ revenue: legacyFinancialSummary.revenue, accountingExpenses: legacyFinancialSummary.accountingExpenses, netIncome: legacyFinancialSummary.netIncome, moneyIn: legacyFinancialSummary.moneyIn, moneyOut: legacyFinancialSummary.moneyOut, netCashMovement: legacyFinancialSummary.netCashMovement, healthScore: legacyFinancialSummary.health.score }} sources={resolvedStatements.sources} />}
       {/* ── Flutter-style Tab Bar ── */}
       <div
         className="-mx-3 mb-6 flex items-stretch overflow-x-auto px-0 sm:-mx-6"
@@ -5668,10 +5622,17 @@ async function handleConnectBank() {
             </div>
           </div>
 
-          {isLoading ? (
+          {isLoading || canonicalReports.isLoading ? (
             <div className="flex justify-center py-20">
               <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
             </div>
+          ) : !canonicalCurrent ? (
+            <Card className="border-amber-500/30 bg-amber-500/5">
+              <CardContent className="space-y-2 p-6">
+                <p className="font-semibold">Financial dashboard summary is unavailable</p>
+                <p className="text-sm text-muted-foreground">BookSmart will not substitute independently calculated revenue, expenses, profit, cash movement, or health score. Detailed statement and transaction tabs remain available.</p>
+              </CardContent>
+            </Card>
           ) : (
             <>
               {/* ── KPI row ── */}
@@ -5711,7 +5672,7 @@ async function handleConnectBank() {
                     <div className="flex items-center gap-2">
                       <ChangeBadge
                         curr={overviewNetIncome}
-                        prev={hasPriorComparison ? prevNet : null}
+                        prev={hasPriorComparison ? overviewPrevNetIncome : null}
                       />
                       <span className="text-xs text-muted-foreground">
                         {comparisonCaption}
@@ -5757,7 +5718,7 @@ async function handleConnectBank() {
                     <div className="flex items-center gap-2">
                       <ChangeBadge
                         curr={allTimeCfNet}
-                        prev={hasPriorComparison ? prevCfNet : null}
+                        prev={hasPriorComparison ? overviewPrevNetCash : null}
                       />
                       <span className="text-xs text-muted-foreground">
                         {comparisonCaption}
@@ -5786,19 +5747,19 @@ async function handleConnectBank() {
                         {
                           label: "Income",
                           val: overviewIncome,
-                          prev: prevIncome,
+                          prev: overviewPrevIncome,
                           positiveIsGood: true,
                         },
                         {
                           label: "Expenses",
                           val: overviewExpenses,
-                          prev: prevExpenses,
+                          prev: overviewPrevExpenses,
                           positiveIsGood: false,
                         },
                         {
                           label: "Net Income",
                           val: overviewNetIncome,
-                          prev: prevNet,
+                          prev: overviewPrevNetIncome,
                           positiveIsGood: true,
                         },
                       ].map((r) => (
@@ -5901,19 +5862,19 @@ async function handleConnectBank() {
                         {
                           label: "Money In",
                           val: allTimeCfIn,
-                          prev: prevCfIn,
+                          prev: overviewPrevMoneyIn,
                           positiveIsGood: true,
                         },
                         {
                           label: "Money Out",
                           val: allTimeCfOut,
-                          prev: prevCfOut,
+                          prev: overviewPrevMoneyOut,
                           positiveIsGood: false,
                         },
                         {
                           label: "Net Cash",
                           val: allTimeCfNet,
-                          prev: prevCfNet,
+                          prev: overviewPrevNetCash,
                           positiveIsGood: true,
                         },
                       ].map((r) => (

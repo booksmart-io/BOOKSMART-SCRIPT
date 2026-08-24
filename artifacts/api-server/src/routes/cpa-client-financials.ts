@@ -3,11 +3,12 @@ import { createClient } from "@supabase/supabase-js";
 import { requireAuth } from "../middlewares/require-auth";
 import { requireApprovedCpa } from "../middlewares/require-approved-cpa";
 import { calculateFinancialReport, type FinancialCategory, type FinancialSubCategory, type FinancialTransaction } from "../../../booksmart/src/lib/financial-engine";
-import { createFinancialSummary } from "../../../booksmart/src/lib/financial-summary";
+import { buildCanonicalFinancialSummary, type CanonicalStatementDocument } from "../lib/canonical-financial-summary";
+import type { DeductionRule, DeductionRuleGroup, OrgRow } from "../../../booksmart/src/lib/deduction-calculation";
 import { trustedTransactions } from "../../../booksmart/src/lib/trusted-transactions";
 import { CPA_MONITORING_ENGAGEMENT_STATUSES } from "../lib/cpa-monitoring-access";
-import { calculateSafeToSpend, calculateThirtyDayForecast, taxReserveAvailability } from "../../../booksmart/src/lib/future-financial-services";
-import { verifiedCashBalance, type BalanceSnapshot } from "../lib/verified-cash-balance";
+import { buildFinancialPlanningSummary, type PlanningItem, type PlanningSettings } from "../lib/financial-planning-summary";
+import type { BalanceSnapshot } from "../lib/verified-cash-balance";
 
 const router = Router();
 const SUPABASE_URL = process.env.SUPABASE_URL ?? "https://pvppwmkswnluidlwnnck.supabase.co";
@@ -33,7 +34,7 @@ router.get("/cpa/clients/:clientId/financial-summary", requireAuth, requireAppro
     const [{ data: engagement, error: engagementError }, { data: organizations, error: organizationError }] = await Promise.all([
       admin.from("orders").select("id").eq("cpa_id", req.cpaUserId!).eq("user_id", clientId)
         .in("status", [...CPA_MONITORING_ENGAGEMENT_STATUSES]).limit(1).maybeSingle(),
-      admin.from("organizations").select("id,name").eq("owner_id", clientId).order("id"),
+      admin.from("organizations").select("*").eq("owner_id", clientId).order("id"),
     ]);
     if (engagementError || organizationError) throw engagementError ?? organizationError;
     if (!engagement || !organizations?.length) { res.status(403).json({ error: "forbidden" }); return; }
@@ -45,18 +46,28 @@ router.get("/cpa/clients/:clientId/financial-summary", requireAuth, requireAppro
     const now = new Date(); const ytdStart = new Date(now.getFullYear(), 0, 1);
     const sixMonthStart = new Date(now.getFullYear(), now.getMonth() - 5, 1);
     const fetchStart = ytdStart < sixMonthStart ? ytdStart : sixMonthStart;
-    const [{ data: txRows, error: txError }, { data: categoryRows, error: categoryError }, { data: subRows, error: subError }] = await Promise.all([
-      admin.from("transactions").select("id,org_id,title,amount,type,date_time,description,deductible,category_id,sub_category_id")
+    const [transactionResult, categoryResult, subCategoryResult, documentResult, ruleGroupResult, ruleResult] = await Promise.all([
+      admin.from("transactions").select("id,org_id,title,amount,type,date_time,description,deductible,category_id,sub_category_id,pending")
         .in("org_id", organizationIds).gte("date_time", fetchStart.toISOString()).lte("date_time", now.toISOString()).order("date_time", { ascending: false }),
       admin.from("category").select("id,name"), admin.from("sub_category").select("id,name,category_id"),
+      admin.from("user_documents").select("id,name,category,tax_year,parsed_data").eq("user_id", clientId),
+      admin.from("deduction_rule_groups").select("*"), admin.from("deduction_rules").select("*"),
     ]);
-    if (txError || categoryError || subError) throw txError ?? categoryError ?? subError;
-    const transactions = trustedTransactions("transactions", (txRows ?? []) as FinancialTransaction[]);
-    const categories = (categoryRows ?? []) as FinancialCategory[]; const subCategories = (subRows ?? []) as FinancialSubCategory[];
+    const loadError = transactionResult.error ?? categoryResult.error ?? subCategoryResult.error ?? documentResult.error ?? ruleGroupResult.error ?? ruleResult.error;
+    if (loadError) throw loadError;
+    const transactions = trustedTransactions("transactions", (transactionResult.data ?? []) as FinancialTransaction[]);
+    const categories = (categoryResult.data ?? []) as FinancialCategory[]; const subCategories = (subCategoryResult.data ?? []) as FinancialSubCategory[];
+    const canonicalOrganization = selectedOrganizations.length === 1
+      ? (organizations.find(row => Number(row.id) === selectedOrganizations[0]!.id) as OrgRow | undefined) ?? null
+      : null;
     const summarize = (start: Date, end: Date) => {
       const report = calculateFinancialReport({ transactions, categories, subCategories, start, end });
-      const deductibleAmount = report.classifiedTransactions.filter(tx => !tx.isTransfer && tx.amount < 0 && tx.deductible === true && expenseClasses.has(tx.classification)).reduce((sum, tx) => sum + Math.abs(tx.amount), 0);
-      return { report, summary: createFinancialSummary({ report, deductibleAmount }) };
+      const summary = buildCanonicalFinancialSummary({
+        organizationId: organizationIds[0]!, start, end, transactions, categories, subCategories,
+        documents: (documentResult.data ?? []) as CanonicalStatementDocument[], organization: canonicalOrganization,
+        deductionRuleGroups: (ruleGroupResult.data ?? []) as DeductionRuleGroup[], deductionRules: (ruleResult.data ?? []) as DeductionRule[],
+      });
+      return { report, summary };
     };
     const currentMonth = summarize(monthStart(now), now); const previousDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
     const previousMonth = summarize(monthStart(previousDate), monthEnd(previousDate)); const ytd = summarize(ytdStart, now);
@@ -73,7 +84,7 @@ router.get("/cpa/clients/:clientId/financial-summary", requireAuth, requireAppro
     const current = currentMonth.summary; const previous = previousMonth.summary;
     res.json({
       organization_ids: organizationIds, organizations: ownedOrganizations, selected_organization_id: requestedOrganizationId, generated_at: new Date().toISOString(), last_transaction_at: transactions[0]?.date_time ?? null,
-      current_month: current, year_to_date: ytd.summary, health: ytd.summary.transactionCount > 0 ? ytd.summary.health : null, monthly_trend: monthlyTrend, expense_categories: expenseCategories,
+      current_month: current, year_to_date: ytd.summary, health: ytd.summary.completeness.approvedTransactionCount > 0 ? ytd.summary.health : null, monthly_trend: monthlyTrend, expense_categories: expenseCategories,
       changes: { revenue: pctChange(current.revenue, previous.revenue), expenses: pctChange(current.accountingExpenses, previous.accountingExpenses), net_income: pctChange(current.netIncome, previous.netIncome), cash_movement: pctChange(current.netCashMovement, previous.netCashMovement) },
       recent_transactions: transactions.slice(0, 25), income_source_count: new Set(currentMonth.report.classifiedTransactions.filter(tx => tx.classification === "revenue").map(tx => tx.category_name ?? tx.type ?? "Revenue")).size,
       tax_readiness: { available: false, missing_inputs: ["tax_reserve_settings", "estimated_tax_strategy", "filing_schedule"] },
@@ -104,14 +115,15 @@ router.get("/cpa/clients/:clientId/planning-summary", requireAuth, requireApprov
     ]);
     const error = settings.error ?? items.error ?? snapshots.error ?? plaid.error; if (error) throw error;
     const results = selected.map(org => {
-      const id = Number(org.id); const config: any = settings.data?.find(row => Number(row.organization_id) === id) ?? {}; const rows: any[] = items.data?.filter(row => Number(row.organization_id) === id) ?? [];
-      const cash = verifiedCashBalance({ snapshots: (snapshots.data?.filter(row => Number(row.organization_id) === id) ?? []) as BalanceSnapshot[], hasHealthyPlaidConnection: (plaid.data ?? []).some(row => Number(row.org_id) === id && row.status === "active" && row.last_sync_status !== "failed") });
-      const obligations = rows.filter(row => row.item_type === "obligation"); const filings = rows.filter(row => row.item_type === "filing_schedule"); const taxRequirement = config.tax_effective_rate == null || config.projected_taxable_income == null || config.tax_amount_set_aside == null ? undefined : Math.max(0, Number(config.projected_taxable_income) * Number(config.tax_effective_rate) / 100 - Number(config.tax_amount_set_aside));
-      return { organization: { id, name: org.name ?? "Organization" }, verified_cash: { available: cash.available, amount: cash.cashAvailable ?? null, refreshed_at: cash.latestBalanceAt }, inputs: { settings: config, items: rows }, readiness: {
-        safe_to_spend: calculateSafeToSpend({ cashAvailable: cash.cashAvailable, balanceFresh: cash.balanceFresh, knownObligations: obligations.length ? obligations.reduce((sum, row) => sum + Number(row.amount ?? 0), 0) : undefined, payrollRequirement: config.payroll_amount == null ? undefined : Number(config.payroll_amount), taxReserveRequirement: taxRequirement, operatingBuffer: config.operating_buffer == null ? undefined : Number(config.operating_buffer) }),
-        tax_reserve: taxReserveAvailability({ taxStrategyConfigured: filings.length > 0, effectiveRate: config.tax_effective_rate == null ? undefined : Number(config.tax_effective_rate), projectedTaxableIncome: config.projected_taxable_income == null ? undefined : Number(config.projected_taxable_income), amountSetAside: config.tax_amount_set_aside == null ? undefined : Number(config.tax_amount_set_aside) }),
-        forecast: calculateThirtyDayForecast({ openingCash: cash.cashAvailable, balanceFresh: cash.balanceFresh, payrollAmount: config.payroll_amount == null ? undefined : Number(config.payroll_amount), payrollCadence: config.payroll_cadence ?? undefined, nextPayrollDate: config.next_payroll_date ?? undefined, items: rows.map(row => ({ id: Number(row.id), itemType: row.item_type, name: row.name, amount: Number(row.amount ?? 0), dueDate: row.due_date, recurrence: row.recurrence })) }),
-      } };
+      const id = Number(org.id);
+      const config = (settings.data?.find(row => Number(row.organization_id) === id) ?? null) as PlanningSettings | null;
+      const rows = (items.data?.filter(row => Number(row.organization_id) === id) ?? []) as PlanningItem[];
+      const summary = buildFinancialPlanningSummary({
+        settings: config, items: rows,
+        snapshots: (snapshots.data?.filter(row => Number(row.organization_id) === id) ?? []) as BalanceSnapshot[],
+        connections: (plaid.data ?? []).filter(row => Number(row.org_id) === id),
+      });
+      return { organization: { id, name: org.name ?? "Organization" }, ...summary, inputs: { settings: config ?? {}, items: rows } };
     });
     res.json({ mode: requestedId === null ? "per_organization" : "single_organization", results, generated_at: new Date().toISOString() });
   } catch (error) { console.error("[cpa/client-planning-summary]", error); res.status(503).json({ error: "cpa_planning_summary_unavailable", message: error instanceof Error ? error.message : "Could not load planning summary." }); }

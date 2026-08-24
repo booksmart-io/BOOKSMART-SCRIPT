@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+export {};
 
 const baseUrl = process.env.BOOKSMART_API_BASE_URL?.trim().replace(/\/$/, "");
 const secret = process.env.MONITORING_CRON_SECRET?.trim();
@@ -17,7 +17,6 @@ try {
     headers: {
       "content-type": "application/json",
       "x-monitoring-secret": secret,
-      "x-monitoring-run-id": `render-${new Date().toISOString().slice(0, 10)}-${randomUUID()}`,
     },
     body: "{}",
     signal: controller.signal,

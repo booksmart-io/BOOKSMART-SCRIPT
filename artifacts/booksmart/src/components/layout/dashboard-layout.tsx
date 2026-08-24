@@ -14,7 +14,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
-  LayoutDashboard, Gem, Copy, Scissors, MapPin, Coins, MessageSquare, Globe,
+  LayoutDashboard, Gem, Scissors, MapPin, Coins, MessageSquare, Globe,
   Settings, User, LogOut, DollarSign, ShieldCheck, Tags, Briefcase, Users,
   Sun, Moon, Bell, ArrowLeftRight, ShoppingBag,
   UserPlus, TrendingUp, Inbox, FolderOpen, BarChart2, Lightbulb,
@@ -78,7 +78,6 @@ export function DashboardLayout({ children, role }: DashboardLayoutProps) {
         { title: "Insights",            url: "/user/insights",           icon: Lightbulb },
         { title: "Switch Organization", url: "/user/organizations", icon: ArrowLeftRight },
         { title: "AI Strategy",         url: "/user/ai-strategy",   icon: Gem },
-        { title: "Financial Reports",   url: "/user/reports",       icon: Copy },
         { title: "Document Repository", url: "/user/tax",           icon: Scissors },
         { title: "CPA Network",         url: "/user/cpa-network",   icon: MapPin },
         { title: "Tokens",              url: "/user/token",         icon: Coins },

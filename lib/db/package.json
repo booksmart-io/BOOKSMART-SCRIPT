@@ -8,10 +8,16 @@
     "./schema": "./src/schema/index.ts"
   },
   "scripts": {
+    "audit:jobber-readiness": "node --env-file=../../.env ./scripts/audit-jobber-readiness.mjs",
+    "audit:jobber-sync": "node --env-file=../../.env ./scripts/audit-jobber-sync.mjs",
+    "audit:jobber-pilot": "node --env-file=../../.env ./scripts/audit-jobber-pilot.mjs",
+    "audit:contractor-intelligence": "node --env-file=../../.env ./scripts/audit-contractor-intelligence.mjs",
+    "audit:contractor-organization": "node --env-file=../../.env ./scripts/audit-contractor-organization.mjs",
     "push": "drizzle-kit push --config ./drizzle.config.ts",
     "push-force": "drizzle-kit push --force --config ./drizzle.config.ts"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.108.2",
     "drizzle-orm": "catalog:",
     "drizzle-zod": "^0.8.3",
     "pg": "^8.22.0",

@@ -13,7 +13,7 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { useLocation } from "wouter";
-import { Building2, CheckCircle2, ChevronRight, Landmark, Link2, Loader2, RefreshCw, Unplug } from "lucide-react";
+import { Building2, CheckCircle2, ChevronRight, ExternalLink, Eye, Landmark, Link2, Loader2, RefreshCw, ShieldCheck, Unplug } from "lucide-react";
 import { toast } from "sonner";
 
 type Organization = { id: number; name: string };
@@ -71,6 +71,54 @@ type JobberSyncStatus = {
   counts: Record<string, { active: number; archived: number }>;
   states: Array<{ object_type: string; status: string; sync_mode: "full" | "incremental"; completed_at: string | null; last_error: string | null; records_seen: number; records_changed: number; pages_processed: number }>;
 };
+
+type JobberMonitoringCandidate = {
+  signalKey: string;
+  severity: "info" | "positive" | "low" | "medium" | "high" | "critical";
+  title: string;
+  description: string;
+  currentValue: number;
+  comparisonValue: number | null;
+  percentage: number | null;
+  recommendedAction: string;
+  sourceIds?: Array<number | string>;
+  directUrl?: string | null;
+  sourceRecordType?: string;
+};
+
+type JobberMonitoringPreview = {
+  dry_run: true;
+  persisted: false;
+  organization_id: number;
+  last_successful_sync_at: string | null;
+  calculation_version: string;
+  candidate_count: number;
+  candidates: JobberMonitoringCandidate[];
+};
+
+type JobberCpaSharing = {
+  organization_id: number;
+  enabled: boolean;
+  consented_at: string | null;
+  updated_at: string | null;
+};
+
+type ContractorFinancialSettings = {
+  targetGrossMargin: number | null;
+  targetMarginSource: "organization" | "industry" | null;
+  updatedAt: string | null;
+};
+
+const previewSeverityClass: Record<JobberMonitoringCandidate["severity"], string> = {
+  info: "bg-sky-500/10 text-sky-700 dark:text-sky-400",
+  positive: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400",
+  low: "bg-slate-500/10 text-slate-700 dark:text-slate-300",
+  medium: "bg-amber-500/10 text-amber-700 dark:text-amber-400",
+  high: "bg-orange-500/10 text-orange-700 dark:text-orange-400",
+  critical: "bg-rose-500/10 text-rose-700 dark:text-rose-400",
+};
+
+const jobberPreviewUiEnabled = import.meta.env.VITE_JOBBER_MONITORING_PREVIEW_UI === "true";
 
 type PlaidBalanceAccount = {
   account_id: string; name: string; mask: string | null; type: string | null;
@@ -137,7 +185,9 @@ export default function Settings() {
   const queryClient = useQueryClient();
   const [, navigate] = useLocation();
   const [disconnectOpen, setDisconnectOpen] = useState(false);
+  const [jobberDisconnectOpen, setJobberDisconnectOpen] = useState(false);
   const [bankDisconnectTarget, setBankDisconnectTarget] = useState<ConnectionProviderStatus | null>(null);
+  const [targetMarginPercent, setTargetMarginPercent] = useState("");
 
   const firstName = (profile as { first_name?: string })?.first_name ?? "";
   const lastName  = (profile as { last_name?: string  })?.last_name  ?? "";
@@ -175,6 +225,49 @@ export default function Settings() {
   });
   const activeOrganization = pickActiveOrganization(organizations, activeOrgId);
   const organizationId = activeOrganization?.id ?? null;
+
+  const contractorSettings = useQuery<ContractorFinancialSettings>({
+    queryKey: ["contractor-financial-settings", organizationId],
+    enabled: organizationId != null,
+    queryFn: async () => {
+      const token = await accessToken();
+      const response = await fetch(`/api/organizations/${organizationId}/contractor-financial-settings`, { headers: { Authorization: `Bearer ${token}` } });
+      if (!response.ok) throw await readApiError(response, "Could not load the target margin.");
+      return response.json() as Promise<ContractorFinancialSettings>;
+    },
+  });
+
+  useEffect(() => {
+    const value = contractorSettings.data?.targetGrossMargin;
+    setTargetMarginPercent(value == null ? "" : String(Number((value * 100).toFixed(2))));
+  }, [contractorSettings.data?.targetGrossMargin, organizationId]);
+
+  const contractorSettingsMutation = useMutation({
+    mutationFn: async () => {
+      if (organizationId == null) throw new Error("Add an organization before setting a target margin.");
+      const trimmed = targetMarginPercent.trim();
+      const percentage = trimmed === "" ? null : Number(trimmed);
+      if (percentage !== null && (!Number.isFinite(percentage) || percentage < 0 || percentage > 100)) throw new Error("Enter a target between 0% and 100%, or leave it empty.");
+      const token = await accessToken();
+      const response = await fetch(`/api/organizations/${organizationId}/contractor-financial-settings`, {
+        method: "PUT", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ targetGrossMargin: percentage == null ? null : percentage / 100,
+          targetMarginSource: percentage == null ? null : "organization" }),
+      });
+      if (!response.ok) throw await readApiError(response, "Could not save the target margin.");
+      return response.json() as Promise<ContractorFinancialSettings>;
+    },
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["contractor-financial-settings", organizationId] }),
+        queryClient.invalidateQueries({ queryKey: ["contractor-home-intelligence", organizationId] }),
+        queryClient.invalidateQueries({ queryKey: ["contractor-money-intelligence", organizationId] }),
+        queryClient.invalidateQueries({ queryKey: ["contractor-insights", organizationId] }),
+      ]);
+      toast.success(targetMarginPercent.trim() ? "Job margin target saved." : "Job margin target cleared.");
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
 
   const bankConnections = useQuery({
     queryKey: ["settings-bank-connections", organizationId],
@@ -241,6 +334,18 @@ export default function Settings() {
       const response = await fetch(`/api/integrations/jobber/sync-status?organization_id=${organizationId}`, { headers: { Authorization: `Bearer ${token}` } });
       if (!response.ok) throw await readApiError(response, "Could not check Jobber sync status.");
       return response.json() as Promise<JobberSyncStatus>;
+    },
+  });
+
+  const jobberCpaSharing = useQuery<JobberCpaSharing>({
+    queryKey: ["jobber-cpa-sharing", organizationId],
+    enabled: organizationId != null && jobberStatus.data?.connected === true,
+    retry: false,
+    queryFn: async () => {
+      const token = await accessToken();
+      const response = await fetch(`/api/integrations/jobber/cpa-sharing?organization_id=${organizationId}`, { headers: { Authorization: `Bearer ${token}` } });
+      if (!response.ok) throw await readApiError(response, "Could not load CPA sharing preferences.");
+      return response.json() as Promise<JobberCpaSharing>;
     },
   });
 
@@ -417,12 +522,20 @@ export default function Settings() {
         body: JSON.stringify({ organization_id: organizationId }),
       });
       if (!response.ok) throw await readApiError(response, "Could not disconnect Jobber.");
-      return response.json() as Promise<{ revoked: boolean; warning: string | null }>;
+      return response.json() as Promise<{ revoked: boolean; warning: string | null; deleted?: { deleted_records?: number } }>;
     },
     onSuccess: async (result) => {
-      await queryClient.invalidateQueries({ queryKey: ["jobber-status", organizationId] });
+      setJobberDisconnectOpen(false);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["jobber-status", organizationId] }),
+        queryClient.invalidateQueries({ queryKey: ["jobber-sync-status", organizationId] }),
+        queryClient.invalidateQueries({ queryKey: ["contractor-home-intelligence", organizationId] }),
+        queryClient.invalidateQueries({ queryKey: ["contractor-money-intelligence", organizationId] }),
+        queryClient.invalidateQueries({ queryKey: ["contractor-insights", organizationId] }),
+        queryClient.invalidateQueries({ queryKey: ["contractor-match-queue", organizationId] }),
+      ]);
       if (result.warning) toast.warning(result.warning);
-      else toast.success("Jobber disconnected successfully.");
+      else toast.success(`Jobber disconnected. ${result.deleted?.deleted_records ?? 0} synchronized records were permanently deleted.`);
     },
     onError: (error: Error) => toast.error(error.message),
   });
@@ -442,6 +555,38 @@ export default function Settings() {
       toast.success(`${result.mode === "full" ? "Full refresh" : "Incremental sync"} completed. ${scanned} scanned, ${changed} changed.`);
     },
     onError: (error: Error) => { void queryClient.invalidateQueries({ queryKey: ["jobber-sync-status", organizationId] }); toast.error(error.message); },
+  });
+
+  const jobberPreviewMutation = useMutation({
+    mutationFn: async () => {
+      if (organizationId == null) throw new Error("No active organization is available.");
+      const token = await accessToken();
+      const response = await fetch(`/api/integrations/jobber/monitoring-preview?organization_id=${organizationId}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!response.ok) throw await readApiError(response, "Could not generate the Jobber monitoring preview.");
+      return response.json() as Promise<JobberMonitoringPreview>;
+    },
+  });
+
+  const jobberCpaSharingMutation = useMutation({
+    mutationFn: async (enabled: boolean) => {
+      if (organizationId == null) throw new Error("No active organization is available.");
+      const token = await accessToken();
+      const response = await fetch("/api/integrations/jobber/cpa-sharing", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ organization_id: organizationId, enabled }),
+      });
+      if (!response.ok) throw await readApiError(response, "Could not update CPA sharing preferences.");
+      return response.json() as Promise<JobberCpaSharing & { cpa_visibility_changed: false }>;
+    },
+    onSuccess: async (result) => {
+      await queryClient.invalidateQueries({ queryKey: ["jobber-cpa-sharing", organizationId] });
+      await queryClient.invalidateQueries({ queryKey: ["jobber-cpa-escalation-preview", organizationId] });
+      toast.success(result.enabled ? "CPA sharing consent saved. Nothing has been shared yet." : "CPA sharing consent revoked.");
+    },
+    onError: (error: Error) => toast.error(error.message),
   });
 
   useEffect(() => {
@@ -501,6 +646,36 @@ export default function Settings() {
           <p className="text-sm text-muted-foreground truncate">{email}</p>
         </div>
       </button>
+
+      <Separator className="bg-border/30" />
+
+      <section className="py-5" aria-labelledby="contractor-target-title">
+        <div className="mb-4">
+          <h2 id="contractor-target-title" className="text-sm font-semibold">Job profitability target</h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Set the gross margin target BookSmart should use when evaluating jobs for this business.
+          </p>
+        </div>
+        <div className="rounded-xl border bg-card p-5">
+          <label htmlFor="target-gross-margin" className="text-sm font-medium">Target gross margin</label>
+          <div className="mt-2 flex max-w-sm items-center gap-2">
+            <div className="relative flex-1">
+              <input id="target-gross-margin" type="number" min="0" max="100" step="0.1" inputMode="decimal"
+                value={targetMarginPercent} onChange={(event) => setTargetMarginPercent(event.target.value)}
+                placeholder="Not configured" disabled={!organizationId || contractorSettings.isLoading || contractorSettingsMutation.isPending}
+                className="h-10 w-full rounded-md border border-input bg-background px-3 pr-8 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring" />
+              <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">%</span>
+            </div>
+            <Button onClick={() => contractorSettingsMutation.mutate()} disabled={!organizationId || contractorSettings.isLoading || contractorSettingsMutation.isPending}>
+              {contractorSettingsMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : "Save"}
+            </Button>
+          </div>
+          <p className="mt-2 text-xs text-muted-foreground">
+            This is your organization’s target, not a universal recommendation. Leave it empty to avoid target-based margin warnings.
+          </p>
+          {contractorSettings.isError && <p className="mt-2 text-xs text-destructive">The current target could not be loaded. Nothing was changed.</p>}
+        </div>
+      </section>
 
       <Separator className="bg-border/30" />
 
@@ -624,7 +799,7 @@ export default function Settings() {
                     {jobberStatus.data.health.message}
                   </p>
                 )}
-                {jobberStatus.data?.connection?.last_successful_sync_at && (
+                {jobberStatus.data?.connected && jobberStatus.data?.connection?.last_successful_sync_at && (
                   <p className="mt-1 text-xs text-muted-foreground">Last synced {new Date(jobberStatus.data.connection.last_successful_sync_at).toLocaleString()} · {Object.values(jobberSyncStatus.data?.counts ?? {}).reduce((sum, count) => sum + count.active, 0)} active records</p>
                 )}
                 {jobberStatus.data?.connection?.api_version_warning && <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">{jobberStatus.data.connection.api_version_warning}</p>}
@@ -652,7 +827,7 @@ export default function Settings() {
                     variant="outline"
                     className="w-full text-destructive sm:w-auto"
                     disabled={jobberDisconnectMutation.isPending}
-                    onClick={() => jobberDisconnectMutation.mutate()}
+                    onClick={() => setJobberDisconnectOpen(true)}
                   >
                     {jobberDisconnectMutation.isPending ? <Loader2 className="animate-spin" /> : <Unplug />}
                     Disconnect
@@ -685,6 +860,134 @@ export default function Settings() {
                     </div>
                   );
                 })}
+              </div>
+            )}
+            {jobberStatus.data?.connected && (
+              <div className="mt-4 border-t border-border/60 pt-4">
+                <div className="rounded-lg border border-violet-500/25 bg-violet-500/5 p-4">
+                  <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                    <div className="max-w-3xl">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <ShieldCheck className="h-4 w-4 text-violet-600 dark:text-violet-400" />
+                        <p className="text-sm font-semibold">CPA sharing consent</p>
+                        <span className="rounded-full bg-violet-500/10 px-2 py-0.5 text-[11px] font-medium text-violet-700 dark:text-violet-300">Preview only</span>
+                      </div>
+                      <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                        Allow BookSmart to evaluate whether material Jobber work may need future CPA attention. Nothing is currently shared, and Jobber amounts never become recognized accounting revenue.
+                      </p>
+                      <p className="mt-2 text-xs text-muted-foreground">Requires at least $5,000 explicitly uninvoiced, an explicit completion date, and 14 full days unresolved.</p>
+                    </div>
+                    {jobberCpaSharing.isLoading ? (
+                      <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                    ) : jobberCpaSharing.isError ? (
+                      <Button size="sm" variant="outline" onClick={() => void jobberCpaSharing.refetch()}>Retry preferences</Button>
+                    ) : (
+                      <div className="flex shrink-0 items-center gap-3 rounded-lg border border-border/60 bg-background/50 px-3 py-2">
+                        <span className="text-xs font-medium">{jobberCpaSharing.data?.enabled ? "Consent on" : "Consent off"}</span>
+                        <Switch
+                          aria-label="Allow future CPA sharing of qualifying Jobber alerts"
+                          checked={jobberCpaSharing.data?.enabled === true}
+                          disabled={jobberCpaSharingMutation.isPending}
+                          onCheckedChange={(enabled) => jobberCpaSharingMutation.mutate(enabled)}
+                        />
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="mt-4 flex flex-col gap-3 border-t border-violet-500/20 pt-4 sm:flex-row sm:items-center sm:justify-between">
+                    <p className="text-xs text-muted-foreground">Review qualifying Jobber items from My CPA. Results remain owner-only and are not shared.</p>
+                    <Button asChild size="sm" variant="outline"><a href="/user/my-cpa">Review in My CPA</a></Button>
+                  </div>
+                </div>
+              </div>
+            )}
+            {jobberPreviewUiEnabled && jobberStatus.data?.connected && (
+              <div className="mt-4 border-t border-border/60 pt-4">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <ShieldCheck className="h-4 w-4 text-sky-600 dark:text-sky-400" />
+                      <p className="text-sm font-medium">Monitoring preview</p>
+                    </div>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Dry run only. This reviews synchronized Jobber records and creates no signals, tasks, notifications, or accounting entries.
+                    </p>
+                  </div>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    disabled={jobberPreviewMutation.isPending}
+                    onClick={() => jobberPreviewMutation.mutate()}
+                  >
+                    {jobberPreviewMutation.isPending ? <Loader2 className="animate-spin" /> : <Eye />}
+                    {jobberPreviewMutation.data ? "Refresh preview" : "Preview monitoring"}
+                  </Button>
+                </div>
+
+                {jobberPreviewMutation.isPending && (
+                  <div className="mt-4 flex items-center gap-2 rounded-lg border border-border/60 bg-background/40 p-4 text-sm text-muted-foreground" role="status">
+                    <Loader2 className="h-4 w-4 animate-spin" /> Evaluating synchronized records&hellip;
+                  </div>
+                )}
+
+                {jobberPreviewMutation.isError && (
+                  <div className="mt-4 rounded-lg border border-amber-500/30 bg-amber-500/5 p-4" role="alert">
+                    <p className="text-sm font-medium text-amber-800 dark:text-amber-300">Preview unavailable</p>
+                    <p className="mt-1 text-xs text-muted-foreground">{jobberPreviewMutation.error.message}</p>
+                    <p className="mt-1 text-xs text-muted-foreground">Your Jobber connection and synchronized records were not changed.</p>
+                  </div>
+                )}
+
+                {jobberPreviewMutation.data?.organization_id === organizationId && !jobberPreviewMutation.isPending && (
+                  <div className="mt-4 rounded-lg border border-border/60 bg-background/30 p-4">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div>
+                        <p className="text-sm font-medium">
+                          {jobberPreviewMutation.data.candidate_count === 0
+                            ? "No proposed signals"
+                            : `${jobberPreviewMutation.data.candidate_count} proposed signal${jobberPreviewMutation.data.candidate_count === 1 ? "" : "s"}`}
+                        </p>
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          Based on the latest synchronized Jobber data. Nothing shown here has been saved.
+                        </p>
+                      </div>
+                      <span className="rounded-full bg-sky-500/10 px-2.5 py-1 text-xs font-medium text-sky-700 dark:text-sky-400">Dry run</span>
+                    </div>
+
+                    {jobberPreviewMutation.data.candidates.length === 0 ? (
+                      <p className="mt-4 rounded-md border border-dashed border-border/70 p-4 text-sm text-muted-foreground">
+                        The current records do not meet any preview thresholds. Sync Jobber and refresh the preview after operational data changes.
+                      </p>
+                    ) : (
+                      <div className="mt-4 grid gap-3 lg:grid-cols-2">
+                        {jobberPreviewMutation.data.candidates.map((candidate) => (
+                          <article key={candidate.signalKey} className="rounded-lg border border-border/60 bg-card p-4">
+                            <div className="flex flex-wrap items-start justify-between gap-2">
+                              <h3 className="text-sm font-semibold">{candidate.title}</h3>
+                              <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium capitalize ${previewSeverityClass[candidate.severity]}`}>
+                                {candidate.severity}
+                              </span>
+                            </div>
+                            <p className="mt-2 text-xs leading-5 text-muted-foreground">{candidate.description}</p>
+                            <div className="mt-3 rounded-md bg-muted/40 p-3">
+                              <p className="text-xs font-medium">Suggested next step</p>
+                              <p className="mt-1 text-xs text-muted-foreground">{candidate.recommendedAction}</p>
+                            </div>
+                            <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+                              <span>{candidate.sourceIds?.length ?? 0} source record{candidate.sourceIds?.length === 1 ? "" : "s"}</span>
+                              {candidate.directUrl?.startsWith("https://") && (
+                                <a className="inline-flex items-center gap-1 font-medium text-primary hover:underline" href={candidate.directUrl} target="_blank" rel="noreferrer">
+                                  Open in Jobber <ExternalLink className="h-3 w-3" />
+                                </a>
+                              )}
+                            </div>
+                          </article>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -770,6 +1073,28 @@ export default function Settings() {
             >
               {disconnectMutation.isPending && <Loader2 className="animate-spin" />}
               Disconnect
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={jobberDisconnectOpen} onOpenChange={(open) => { if (!jobberDisconnectMutation.isPending) setJobberDisconnectOpen(open); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Disconnect Jobber and delete its data?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This permanently deletes all synchronized Jobber customers, jobs, quotes, invoices, payments, schedules, matching suggestions, tracked job-cost assignments, Jobber signals, and related tasks for this organization. Accounting transactions and uploaded documents will not be deleted. This cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={jobberDisconnectMutation.isPending}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground"
+              disabled={jobberDisconnectMutation.isPending}
+              onClick={(event) => { event.preventDefault(); jobberDisconnectMutation.mutate(); }}
+            >
+              {jobberDisconnectMutation.isPending && <Loader2 className="animate-spin" />}
+              Disconnect and delete Jobber data
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

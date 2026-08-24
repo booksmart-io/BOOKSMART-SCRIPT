@@ -31,13 +31,14 @@ router.get("/cpa/monitoring/tasks", requireAuth, requireApprovedCpa, async (req,
     if (!orgIds.length) { res.json({ tasks: [], generated_at: new Date().toISOString() }); return; }
 
     const { data: tasks, error: taskError } = await admin.from("financial_tasks")
-      .select("id,organization_id,title,description,category,priority,status,due_date,requires_cpa,assignment_role,created_at,updated_at")
+      .select("id,organization_id,title,description,category,priority,status,due_date,requires_cpa,assignment_role,assigned_user_id,created_at,updated_at")
       .in("organization_id", orgIds).in("status", ["open", "in_progress", "waiting"])
       .order("due_date", { ascending: true, nullsFirst: false }).limit(200);
     if (taskError) throw taskError;
     const orgById = new Map((organizations ?? []).map(org => [Number(org.id), org]));
     const userById = new Map((users ?? []).map(user => [Number(user.id), user]));
-    const relevantTasks = (tasks ?? []).filter(isCpaRelevantTask);
+    const relevantTasks = (tasks ?? []).filter(task => isCpaRelevantTask(task)
+      && (task.assignment_role !== "cpa" || task.assigned_user_id == null || Number(task.assigned_user_id) === req.cpaUserId));
     const taskIds = relevantTasks.map(task => Number(task.id));
     const { data: collaborationEvents, error: eventError } = taskIds.length
       ? await admin.from("financial_task_events").select("id,task_id,event_type,note,created_at")
@@ -71,10 +72,13 @@ router.post("/cpa/monitoring/tasks/:id/events", requireAuth, requireApprovedCpa,
   try {
     const admin = adminClient();
     const { data: task, error: taskError } = await admin.from("financial_tasks")
-      .select("id,organization_id,status,requires_cpa,assignment_role")
+      .select("id,organization_id,status,requires_cpa,assignment_role,assigned_user_id")
       .eq("id", taskId).in("status", ["open", "in_progress", "waiting"]).maybeSingle();
     if (taskError) throw taskError;
-    if (!task || !isCpaRelevantTask(task)) { res.status(404).json({ error: "task_not_found" }); return; }
+    if (!task || !isCpaRelevantTask(task)
+      || (task.assignment_role === "cpa" && task.assigned_user_id != null && Number(task.assigned_user_id) !== req.cpaUserId)) {
+      res.status(404).json({ error: "task_not_found" }); return;
+    }
     const { data: organization, error: orgError } = await admin.from("organizations")
       .select("owner_id").eq("id", task.organization_id).maybeSingle();
     if (orgError) throw orgError;

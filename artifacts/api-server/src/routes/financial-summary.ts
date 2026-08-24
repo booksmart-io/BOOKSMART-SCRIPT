@@ -15,31 +15,44 @@ function adminClient(): SupabaseClient {
   return createClient(SUPABASE_URL, key, { auth: { persistSession: false } });
 }
 
+async function timeQuery<T>(timings: Map<string, number>, name: string, query: PromiseLike<T>): Promise<T> {
+  const startedAt = performance.now();
+  try {
+    return await query;
+  } finally {
+    timings.set(name, performance.now() - startedAt);
+  }
+}
+
 router.get("/organizations/:organizationId/financial-summary", requireAuth, async (req, res) => {
+  const requestStartedAt = performance.now();
   const organizationId = Number(req.params.organizationId);
   const period = parseFinancialSummaryInstantPeriod(req.query.startInstant, req.query.endInstant)
     ?? parseFinancialSummaryPeriod(req.query.start, req.query.end);
   if (!Number.isSafeInteger(organizationId) || organizationId <= 0) { res.status(400).json({ error: "invalid_organization" }); return; }
   if (!period) { res.status(400).json({ error: "invalid_period", message: "Provide a valid date range or exact start and end instants." }); return; }
   try {
+    const queryTimings = new Map<string, number>();
     const admin = adminClient();
-    const { data: user, error: userError } = await admin.from("users").select("id").eq("auth_id", req.supabaseUserId!).maybeSingle();
+    const { data: user, error: userError } = await timeQuery(queryTimings, "user", admin.from("users").select("id").eq("auth_id", req.supabaseUserId!).maybeSingle());
     if (userError) throw userError;
     if (!user) { res.status(403).json({ error: "forbidden" }); return; }
-    const { data: organization, error: organizationError } = await admin.from("organizations").select("*").eq("id", organizationId).eq("owner_id", user.id).maybeSingle();
+    const { data: organization, error: organizationError } = await timeQuery(queryTimings, "organization", admin.from("organizations").select("*").eq("id", organizationId).eq("owner_id", user.id).maybeSingle());
     if (organizationError) throw organizationError;
     if (!organization) { res.status(403).json({ error: "forbidden" }); return; }
+    const dataStartedAt = performance.now();
     const [transactions, categories, subCategories, documents, deductionRuleGroups, deductionRules] = await Promise.all([
-      admin.from("transactions").select("id,title,amount,type,date_time,description,deductible,category_id,sub_category_id,pending").eq("org_id", organizationId).gte("date_time", period.start.toISOString()).lte("date_time", period.end.toISOString()),
-      admin.from("category").select("id,name"),
-      admin.from("sub_category").select("id,name,category_id"),
-      admin.from("user_documents").select("id,name,category,tax_year,parsed_data").eq("user_id", user.id),
-      admin.from("deduction_rule_groups").select("*"),
-      admin.from("deduction_rules").select("*"),
+      timeQuery(queryTimings, "transactions", admin.from("transactions").select("id,title,amount,type,date_time,description,deductible,category_id,sub_category_id,pending").eq("org_id", organizationId).gte("date_time", period.start.toISOString()).lte("date_time", period.end.toISOString())),
+      timeQuery(queryTimings, "categories", admin.from("category").select("id,name")),
+      timeQuery(queryTimings, "subcategories", admin.from("sub_category").select("id,name,category_id")),
+      timeQuery(queryTimings, "documents", admin.from("user_documents").select("id,name,category,tax_year,parsed_data").eq("user_id", user.id)),
+      timeQuery(queryTimings, "rulegroups", admin.from("deduction_rule_groups").select("*")),
+      timeQuery(queryTimings, "rules", admin.from("deduction_rules").select("*")),
     ]);
     const error = transactions.error ?? categories.error ?? subCategories.error ?? documents.error ?? deductionRuleGroups.error ?? deductionRules.error;
     if (error) throw error;
-    res.json(buildCanonicalFinancialSummary({
+    const dataCompletedAt = performance.now();
+    const summary = buildCanonicalFinancialSummary({
       organizationId,
       start: period.start,
       end: period.end,
@@ -50,7 +63,15 @@ router.get("/organizations/:organizationId/financial-summary", requireAuth, asyn
       organization: organization as OrgRow,
       deductionRuleGroups: (deductionRuleGroups.data ?? []) as DeductionRuleGroup[],
       deductionRules: (deductionRules.data ?? []) as DeductionRule[],
-    }));
+    });
+    const calculationCompletedAt = performance.now();
+    res.setHeader("Server-Timing", [
+      ...Array.from(queryTimings, ([name, duration]) => `${name};dur=${duration.toFixed(1)}`),
+      `data;dur=${(dataCompletedAt - dataStartedAt).toFixed(1)}`,
+      `calculate;dur=${(calculationCompletedAt - dataCompletedAt).toFixed(1)}`,
+      `total;dur=${(calculationCompletedAt - requestStartedAt).toFixed(1)}`,
+    ].join(", "));
+    res.json(summary);
   } catch (error) {
     res.status(503).json({ error: "financial_summary_unavailable", message: error instanceof Error ? error.message : "Financial summary is unavailable." });
   }

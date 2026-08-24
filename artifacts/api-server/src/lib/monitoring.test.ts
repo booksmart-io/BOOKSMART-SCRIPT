@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { canTransitionTask, evaluateConnectionHealth, evaluateTrustedSummary, isFinancialDataChangeEvent, signalCreatesTask, taskDueDate } from "./monitoring";
+import { canTransitionSignal, canTransitionTask, evaluateConnectionHealth, evaluateTrustedSummary, isFinancialDataChangeEvent, signalCreatesTask, taskDueDate, validTaskAssignmentRole, validTaskDueDate, validTaskPriority } from "./monitoring";
 
 test("monitoring rules produce deterministic signals from the shared summary", () => {
   const signals = evaluateTrustedSummary({
@@ -44,6 +44,15 @@ test("task lifecycle rejects invalid shortcuts", () => {
   assert.equal(canTransitionTask("completed", "open"), true);
 });
 
+test("signal lifecycle permits only explicit state changes", () => {
+  assert.equal(canTransitionSignal("active", "dismiss"), true);
+  assert.equal(canTransitionSignal("active", "resolve"), true);
+  assert.equal(canTransitionSignal("active", "reopen"), false);
+  assert.equal(canTransitionSignal("resolved", "reopen"), true);
+  assert.equal(canTransitionSignal("dismissed", "resolve"), false);
+  assert.equal(canTransitionSignal("expired", "reopen"), true);
+});
+
 test("connection rules create actionable signals only for unhealthy live connections", () => {
   const signals = evaluateConnectionHealth([
     { id: "plaid:1", name: "Healthy Bank", type: "plaid", status: "healthy", stale: false, error: null },
@@ -77,4 +86,14 @@ test("financial-data event bridge accepts only explicit accounting events", () =
   assert.equal(isFinancialDataChangeEvent("document_transactions_approved"), true);
   assert.equal(isFinancialDataChangeEvent("delete_organization"), false);
   assert.equal(isFinancialDataChangeEvent(null), false);
+});
+
+test("task management accepts only bounded canonical values", () => {
+  assert.equal(validTaskPriority("critical"), true);
+  assert.equal(validTaskPriority("urgent"), false);
+  assert.equal(validTaskAssignmentRole("cpa"), true);
+  assert.equal(validTaskAssignmentRole("admin"), false);
+  assert.equal(validTaskDueDate("2026-02-28"), true);
+  assert.equal(validTaskDueDate("2026-02-30"), false);
+  assert.equal(validTaskDueDate(null), true);
 });

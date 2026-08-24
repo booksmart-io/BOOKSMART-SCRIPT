@@ -1,11 +1,13 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { calculateFinancialReport, type FinancialCategory, type FinancialSubCategory, type FinancialTransaction } from "../../../booksmart/src/lib/financial-engine";
-import { createFinancialSummary } from "../../../booksmart/src/lib/financial-summary";
+import { buildCanonicalHomeSummaryPair, CANONICAL_FINANCIAL_SUMMARY_VERSION, type CanonicalStatementDocument } from "./canonical-financial-summary";
+import type { DeductionRule, DeductionRuleGroup, OrgRow } from "../../../booksmart/src/lib/deduction-calculation";
 import { evaluateConnectionHealth, evaluateTrustedSummary, signalCreatesTask, taskDueDate, type SignalCandidate } from "./monitoring";
 import { loadConnectionStatus } from "./connection-status";
-import { evaluateJobberOperationalPlanning, evaluateJobberOperationalRecords, jobberMonitoringEnabled, type JobberMonitoringRecord } from "./jobber-monitoring";
+import { evaluateApprovedJobberCandidates, isJobberLifecycleKey, jobberMonitoringEnabled, type JobberMonitoringRecord } from "./jobber-monitoring";
 import { trustedTransactions } from "../../../booksmart/src/lib/trusted-transactions";
 import { monitoringRunStatus } from "./monitoring-scheduler";
+import { contractorMonitoringEnabled, evaluateContractorSignals, isContractorLifecycleKey } from "./contractor-monitoring";
 
 type Trigger = "manual" | "scheduled" | "event";
 type RunCounters = { organizations_evaluated: number; signals_created: number; signals_updated: number; signals_resolved: number; tasks_created: number; notification_events_created: number; error_count: number };
@@ -30,7 +32,7 @@ async function persistCandidate(admin: SupabaseClient, organizationId: number, r
     amount: candidate.currentValue, current_value: candidate.currentValue, comparison_value: candidate.comparisonValue,
     percentage: candidate.percentage, recommended_action: candidate.recommendedAction,
     cta_label: candidate.ctaLabel, cta_route: candidate.ctaRoute, requires_cpa_review: candidate.requiresCpaReview,
-    cpa_review_level: candidate.cpaReviewLevel, calculation_version: candidate.calculationVersion ?? "financial-summary-v1",
+    cpa_review_level: candidate.cpaReviewLevel, calculation_version: candidate.calculationVersion ?? "monitoring-rules-v1",
     cpa_review_reason: candidate.requiresCpaReview ? candidate.recommendedAction : null,
     confidence: candidate.confidence ?? 1, last_seen_run_id: runId, updated_at: now, last_evaluated_at: now, expires_at: null,
     period_start: trace.periodStart, period_end: trace.periodEnd,
@@ -58,6 +60,16 @@ async function persistCandidate(admin: SupabaseClient, organizationId: number, r
   }
   const { data, error } = await admin.from("business_signals").insert({ ...payload, status: "active", detected_at: now })
     .select("id").single();
+  if (error?.code === "23505") {
+    const { data: concurrent, error: concurrentError } = await admin.from("business_signals").select("id")
+      .eq("organization_id", organizationId).eq("signal_key", candidate.signalKey).eq("status", "active").maybeSingle();
+    if (concurrentError) throw concurrentError;
+    if (concurrent) {
+      const { error: updateError } = await admin.from("business_signals").update(payload).eq("id", concurrent.id);
+      if (updateError) throw updateError;
+      return { id: Number(concurrent.id), created: false, actionable: true };
+    }
+  }
   if (error) throw error;
   return { id: Number(data.id), created: true, actionable: true };
 }
@@ -65,6 +77,25 @@ async function persistCandidate(admin: SupabaseClient, organizationId: number, r
 async function ensureTask(admin: SupabaseClient, organizationId: number, signalId: number, candidate: SignalCandidate) {
   if (!signalCreatesTask(candidate)) return null;
   const sourceId = String(signalId);
+  const { data: sameConditionTasks, error: sameConditionError } = await admin.from("financial_tasks").select("id,status,source_id,metadata")
+    .eq("organization_id", organizationId).eq("source", "signal").contains("metadata", { signal_key: candidate.signalKey })
+    .in("status", ["open", "in_progress", "waiting"]).order("created_at", { ascending: true });
+  if (sameConditionError) throw sameConditionError;
+  if ((sameConditionTasks ?? []).length) {
+    const duplicates = (sameConditionTasks ?? []).slice(1);
+    const completedAt = new Date().toISOString();
+    for (const duplicate of duplicates) {
+      const { error: duplicateError } = await admin.from("financial_tasks").update({ status: "completed", completed_at: completedAt, updated_at: completedAt,
+        metadata: { ...(duplicate.metadata && typeof duplicate.metadata === "object" ? duplicate.metadata : {}), resolution: "duplicate_signal_task", completed_by: "monitoring_runner" } })
+        .eq("id", duplicate.id).eq("organization_id", organizationId);
+      if (duplicateError) throw duplicateError;
+      const { error: eventError } = await admin.from("financial_task_events").insert({ organization_id: organizationId, task_id: duplicate.id,
+        actor_user_id: null, event_type: "completed", from_status: duplicate.status, to_status: "completed",
+        note: "Duplicate monitoring task completed automatically; the original task remains active.", metadata: { source: "monitoring_runner", resolution: "duplicate_signal_task" } });
+      if (eventError) throw eventError;
+    }
+    return null;
+  }
   const { data: existing } = await admin.from("financial_tasks").select("id,status").eq("organization_id", organizationId)
     .eq("source", "signal").eq("source_id", sourceId).order("created_at", { ascending: false }).limit(1).maybeSingle();
   if (existing) return null;
@@ -75,7 +106,7 @@ async function ensureTask(admin: SupabaseClient, organizationId: number, signalI
     title: candidate.title, description: candidate.recommendedAction, status: "open", cta_label: candidate.ctaLabel,
     cta_route: candidate.ctaRoute, requires_cpa: candidate.requiresCpaReview, assigned_user_id: organization?.owner_id ?? null,
     due_date: taskDueDate(candidate),
-    assignment_role: "owner", metadata: { signal_key: candidate.signalKey, calculation_version: candidate.calculationVersion ?? "financial-summary-v1", provider: candidate.provider ?? "booksmart", accounting_effect: "none" },
+    assignment_role: "owner", metadata: { signal_key: candidate.signalKey, calculation_version: candidate.calculationVersion ?? "monitoring-rules-v1", provider: candidate.provider ?? "booksmart", accounting_effect: "none" },
   }).select("id").single();
   if (error?.code === "23505") return null;
   if (error) throw error;
@@ -93,22 +124,37 @@ async function evaluateOrganization(admin: SupabaseClient, organizationId: numbe
   const currentStart = new Date(today); currentStart.setDate(currentStart.getDate() - 29);
   const previousStart = new Date(currentStart); previousStart.setDate(previousStart.getDate() - 30);
   const previousEnd = new Date(currentStart); previousEnd.setMilliseconds(-1);
-  const [{ data, error }, { data: organization, error: organizationError }] = await Promise.all([
+  const { data: organization, error: organizationError } = await admin.from("organizations").select("*").eq("id", organizationId).single();
+  if (organizationError) throw organizationError;
+  const [transactionResult, documentResult, ruleGroupResult, ruleResult] = await Promise.all([
     admin.from("transactions")
-    .select("id,title,amount,type,date_time,description,deductible,category_id,sub_category_id")
+    .select("id,title,amount,type,date_time,description,deductible,category_id,sub_category_id,pending")
     .eq("org_id", organizationId).gte("date_time", previousStart.toISOString()).lte("date_time", new Date().toISOString()),
-    admin.from("organizations").select("owner_id").eq("id", organizationId).single(),
+    admin.from("user_documents").select("id,name,category,tax_year,parsed_data").eq("user_id", organization.owner_id).limit(500),
+    admin.from("deduction_rule_groups").select("*"),
+    admin.from("deduction_rules").select("*"),
   ]);
-  if (error || organizationError) throw error ?? organizationError;
-  const transactions = trustedTransactions("transactions", (data ?? []) as FinancialTransaction[]);
+  const loadError = transactionResult.error ?? documentResult.error ?? ruleGroupResult.error ?? ruleResult.error;
+  if (loadError) throw loadError;
+  const transactions = trustedTransactions("transactions", (transactionResult.data ?? []) as FinancialTransaction[]);
   const currentReport = calculateFinancialReport({ transactions, categories, subCategories, start: currentStart, end: new Date() });
   const previousReport = calculateFinancialReport({ transactions, categories, subCategories, start: previousStart, end: previousEnd });
-  const current = createFinancialSummary({ report: currentReport });
-  const previous = createFinancialSummary({ report: previousReport });
+  const { current, previous } = buildCanonicalHomeSummaryPair({
+    organizationId,
+    currentStart,
+    currentEnd: new Date(),
+    previousStart,
+    previousEnd,
+    transactions,
+    categories,
+    subCategories,
+    documents: (documentResult.data ?? []) as CanonicalStatementDocument[],
+    organization: organization as OrgRow,
+    deductionRuleGroups: (ruleGroupResult.data ?? []) as DeductionRuleGroup[],
+    deductionRules: (ruleResult.data ?? []) as DeductionRule[],
+  });
   const connectionStatus = await loadConnectionStatus(admin, organizationId, Number(organization.owner_id));
-  const { data: documentRows, error: documentError } = await admin.from("user_documents")
-    .select("id,parsed_data").eq("user_id", organization.owner_id).limit(500);
-  if (documentError) throw documentError;
+  const documentRows = documentResult.data ?? [];
   const pendingDocumentIds = (documentRows ?? []).filter(row => {
     const parsed = row.parsed_data && typeof row.parsed_data === "object" ? row.parsed_data as Record<string, unknown> : {};
     const workflow = parsed.statement_workflow && typeof parsed.statement_workflow === "object" ? parsed.statement_workflow as Record<string, unknown> : {};
@@ -133,22 +179,60 @@ async function evaluateOrganization(admin: SupabaseClient, organizationId: numbe
     .map(transaction => ({ id: Number(transaction.id), title: transaction.title ?? transaction.description ?? "Transaction", amount: transaction.amount }));
   const financialCandidates = [...evaluateTrustedSummary({
     revenue: current.revenue, accountingExpenses: current.accountingExpenses, netIncome: current.netIncome,
-    netCashMovement: current.netCashMovement, unclassifiedTransactionCount: current.unclassifiedTransactionCount,
+    netCashMovement: current.netCashMovement, unclassifiedTransactionCount: current.completeness.uncategorizedTransactionCount,
     healthScore: current.health.score, comparison: { revenue: previous.revenue, accountingExpenses: previous.accountingExpenses, netIncome: previous.netIncome },
     categorySpending, largeApprovedTransactions,
     pendingDocumentReview: { count: pendingDocumentIds.length, sourceIds: pendingDocumentIds },
-  }), ...evaluateConnectionHealth(connectionStatus.providers)];
-  const jobberEnabled = jobberMonitoringEnabled();
+  }).map(candidate => ({ ...candidate, calculationVersion: current.calculationVersion })), ...evaluateConnectionHealth(connectionStatus.providers)];
+  const jobberEnabled = jobberMonitoringEnabled(organizationId);
+  const contractorEnabled = contractorMonitoringEnabled();
   let jobberCandidates: SignalCandidate[] = [];
-  if (jobberEnabled) {
+  let normalizedJobberRows: JobberMonitoringRecord[] = [];
+  if (jobberEnabled || contractorEnabled) {
     const { data: jobberRows, error: jobberError } = await admin.from("jobber_records")
       .select("external_id,object_type,record_number,status,title,amount,starts_at,ends_at,source_created_at,source_updated_at,direct_url,is_archived,payload")
       .eq("organization_id", organizationId).in("object_type", ["jobs", "scheduled_items", "quotes", "invoices"]);
     if (jobberError) throw jobberError;
-    const normalizedJobberRows = (jobberRows ?? []) as JobberMonitoringRecord[];
-    jobberCandidates = [...evaluateJobberOperationalRecords(normalizedJobberRows), ...evaluateJobberOperationalPlanning(normalizedJobberRows)];
+    normalizedJobberRows = (jobberRows ?? []) as JobberMonitoringRecord[];
+    if (jobberEnabled) jobberCandidates = evaluateApprovedJobberCandidates(normalizedJobberRows);
   }
-  const candidates = [...financialCandidates, ...jobberCandidates];
+  let contractorCandidates: SignalCandidate[] = [];
+  if (contractorEnabled) {
+    const [settingsResult, assignmentsResult, matchesResult, linksResult] = await Promise.all([
+      admin.from("contractor_financial_settings").select("target_gross_margin").eq("organization_id", organizationId).maybeSingle(),
+      admin.from("contractor_job_cost_assignments").select("jobber_job_id,amount,source_record_id").eq("organization_id", organizationId),
+      admin.from("contractor_financial_matches").select("id,source_record_id").eq("organization_id", organizationId).eq("requires_confirmation", true).eq("status", "suggested"),
+      admin.from("contractor_source_links").select("right_record_id").eq("organization_id", organizationId).eq("right_record_type", "transaction").eq("status", "confirmed"),
+    ]);
+    const contractorError = settingsResult.error ?? assignmentsResult.error ?? matchesResult.error ?? linksResult.error;
+    if (contractorError) throw contractorError;
+    const assignmentsByJob = new Map<string, { total: number; count: number }>();
+    for (const row of assignmentsResult.data ?? []) {
+      const jobId = String(row.jobber_job_id); const existing = assignmentsByJob.get(jobId) ?? { total: 0, count: 0 };
+      existing.total += Number(row.amount ?? 0); existing.count++; assignmentsByJob.set(jobId, existing);
+    }
+    const confirmedReceiptTransactionIds = new Set((linksResult.data ?? []).map(row => String(row.right_record_id)));
+    const assignedTransactionIds = new Set((assignmentsResult.data ?? []).map(row => String(row.source_record_id)));
+    const receiptReviewTransactionIds = transactions.filter(transaction => transaction.amount < 0
+      && Math.abs(transaction.amount) >= 500 && !confirmedReceiptTransactionIds.has(String(transaction.id))).map(transaction => String(transaction.id));
+    const currentExpenseTransactionIds = currentExpenses.map(transaction => String(transaction.id));
+    const unassignedExpenseTransactionIds = currentExpenseTransactionIds.filter(id => !assignedTransactionIds.has(id));
+    contractorCandidates = evaluateContractorSignals({
+      targetGrossMargin: settingsResult.data?.target_gross_margin == null ? null : Number(settingsResult.data.target_gross_margin),
+      jobs: normalizedJobberRows.filter(row => row.object_type === "jobs" && !row.is_archived).map(row => ({ id: row.external_id,
+        title: row.title, status: row.status, invoiced: Number(row.payload.invoicedTotal ?? 0), trackedCosts: assignmentsByJob.get(row.external_id)?.total ?? 0,
+        costCount: assignmentsByJob.get(row.external_id)?.count ?? 0 })),
+      invoices: normalizedJobberRows.filter(row => row.object_type === "invoices" && !row.is_archived).map(row => ({ id: row.external_id,
+        number: row.record_number, balance: Number((row.payload.amounts as Record<string, unknown> | undefined)?.invoiceBalance ?? row.amount ?? 0),
+        dueDate: typeof row.payload.dueDate === "string" ? row.payload.dueDate : null,
+        jobId: typeof (row.payload.job as Record<string, unknown> | undefined)?.id === "string" ? String((row.payload.job as Record<string, unknown>).id) : typeof row.payload.jobId === "string" ? row.payload.jobId : null,
+        clientId: typeof (row.payload.client as Record<string, unknown> | undefined)?.id === "string" ? String((row.payload.client as Record<string, unknown>).id) : typeof row.payload.clientId === "string" ? row.payload.clientId : null })),
+      confirmationMatches: (matchesResult.data ?? []).map(row => ({ id: String(row.id), sourceId: String(row.source_record_id) })),
+      receiptReviewTransactionIds,
+      unassignedExpenseTransactionIds,
+    });
+  }
+  const candidates = [...financialCandidates, ...jobberCandidates, ...contractorCandidates];
   let created = 0, updated = 0, tasks = 0, notificationEvents = 0;
   const trace: EvaluationTrace = {
     periodStart: currentStart.toISOString(), periodEnd: new Date().toISOString(),
@@ -190,7 +274,7 @@ async function evaluateOrganization(admin: SupabaseClient, organizationId: numbe
   const { data: openSignals, error: openError } = await admin.from("business_signals").select("id,signal_key,signal_type")
     .eq("organization_id", organizationId).eq("status", "active");
   if (openError) throw openError;
-  const openManaged = (openSignals ?? []).filter(signal => managedKeys.includes(String(signal.signal_key)) || String(signal.signal_key).startsWith("category-spike:") || String(signal.signal_key).startsWith("large-transaction:") || signal.signal_type === "connection" || (jobberEnabled && String(signal.signal_key).startsWith("jobber:")));
+  const openManaged = (openSignals ?? []).filter(signal => managedKeys.includes(String(signal.signal_key)) || String(signal.signal_key).startsWith("category-spike:") || String(signal.signal_key).startsWith("large-transaction:") || signal.signal_type === "connection" || (jobberEnabled && isJobberLifecycleKey(String(signal.signal_key))) || (contractorEnabled && isContractorLifecycleKey(String(signal.signal_key))));
   const staleIds = (openManaged ?? []).filter(signal => !presentKeys.has(String(signal.signal_key))).map(signal => signal.id);
   const staleSignalIds = staleIds.map(String);
   const recoveredConnectionIds = openManaged
@@ -210,7 +294,7 @@ async function evaluateOrganization(admin: SupabaseClient, organizationId: numbe
   if (awaitingClearError) throw awaitingClearError;
   const clearedResolvedIds = (awaitingClear ?? []).filter(signal => {
     const key = String(signal.signal_key);
-    const managed = managedKeys.includes(key) || key.startsWith("category-spike:") || key.startsWith("large-transaction:") || signal.signal_type === "connection" || (jobberEnabled && key.startsWith("jobber:"));
+    const managed = managedKeys.includes(key) || key.startsWith("category-spike:") || key.startsWith("large-transaction:") || signal.signal_type === "connection" || (jobberEnabled && isJobberLifecycleKey(key)) || (contractorEnabled && isContractorLifecycleKey(key));
     return managed && !presentKeys.has(key);
   }).map(signal => signal.id);
   if (clearedResolvedIds.length) {
@@ -254,21 +338,25 @@ async function evaluateOrganization(admin: SupabaseClient, organizationId: numbe
   return { created, updated, resolved: resolvedCount, tasks, notificationEvents };
 }
 
-export async function runMonitoring(admin: SupabaseClient, trigger: Trigger, organizationId?: number, options: { idempotencyKey?: string } = {}) {
+export async function runMonitoring(admin: SupabaseClient, trigger: Trigger, organizationId?: number, options: {
+  idempotencyKey?: string;
+  beforeEvaluateOrganization?: (organizationId: number) => Promise<unknown>;
+} = {}) {
   if (options.idempotencyKey) {
     const { data: existingRun, error: existingRunError } = await admin.from("monitoring_runs").select("*").eq("idempotency_key", options.idempotencyKey).maybeSingle();
     if (existingRunError) throw existingRunError;
     if (existingRun) return existingRun;
   }
   const staleBefore = new Date(Date.now() - 30 * 60_000).toISOString();
-  await admin.from("monitoring_runs").update({
+  const { error: staleRunError } = await admin.from("monitoring_runs").update({
     status: "failed", completed_at: new Date().toISOString(), error_count: 1,
     errors: [{ message: "Monitoring run exceeded the 30-minute execution lease." }],
   }).eq("status", "running").lt("started_at", staleBefore);
+  if (staleRunError) throw staleRunError;
   const { data: run, error: runError } = await admin.from("monitoring_runs").insert({
     organization_id: organizationId ?? null, trigger_type: trigger, status: "running",
     idempotency_key: options.idempotencyKey ?? null,
-    calculation_version: "financial-summary-v1", metadata: { notifications_enabled: false, transaction_writes_enabled: false },
+    calculation_version: CANONICAL_FINANCIAL_SUMMARY_VERSION, metadata: { notifications_enabled: false, transaction_writes_enabled: false },
   }).select("id").single();
   if (runError?.code === "23505" && options.idempotencyKey) {
     const { data: existingRun, error: retryError } = await admin.from("monitoring_runs").select("*").eq("idempotency_key", options.idempotencyKey).maybeSingle();
@@ -287,7 +375,9 @@ export async function runMonitoring(admin: SupabaseClient, trigger: Trigger, org
   if (organizationsError || categoryError || subCategoryError) throw organizationsError ?? categoryError ?? subCategoryError;
   for (const organization of organizations ?? []) {
     try {
-      const result = await evaluateOrganization(admin, Number(organization.id), runId, (categoryRows ?? []) as FinancialCategory[], (subCategoryRows ?? []) as FinancialSubCategory[]);
+      const currentOrganizationId = Number(organization.id);
+      if (options.beforeEvaluateOrganization) await options.beforeEvaluateOrganization(currentOrganizationId);
+      const result = await evaluateOrganization(admin, currentOrganizationId, runId, (categoryRows ?? []) as FinancialCategory[], (subCategoryRows ?? []) as FinancialSubCategory[]);
       counters.organizations_evaluated++; counters.signals_created += result.created; counters.signals_updated += result.updated;
       counters.signals_resolved += result.resolved; counters.tasks_created += result.tasks;
       counters.notification_events_created += result.notificationEvents;

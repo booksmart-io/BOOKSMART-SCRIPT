@@ -73,6 +73,23 @@ export async function updateTask(organizationId: number, taskId: number, status:
   return response.json();
 }
 
+export async function createTask(organizationId: number, input: { requestId: string; title: string; description: string; priority: string; dueDate: string | null }) {
+  const response = await authenticatedApi("/api/monitoring/tasks", { method: "POST", body: JSON.stringify({
+    organization_id: organizationId, request_id: input.requestId, title: input.title,
+    description: input.description, priority: input.priority, due_date: input.dueDate,
+  }) });
+  if (!response.ok) throw new Error(await apiErrorMessage(response, "Could not create task."));
+  return response.json();
+}
+
+export async function manageTask(organizationId: number, taskId: number, input: { priority: string; dueDate: string | null; assignmentRole: MonitoringTask["assignment_role"] }) {
+  const response = await authenticatedApi(`/api/monitoring/tasks/${taskId}/manage`, { method: "PATCH", body: JSON.stringify({
+    organization_id: organizationId, priority: input.priority, due_date: input.dueDate, assignment_role: input.assignmentRole,
+  }) });
+  if (!response.ok) throw new Error(await apiErrorMessage(response, "Could not update task details."));
+  return response.json();
+}
+
 export async function updateSignal(organizationId: number, signalId: number, action: "dismiss" | "resolve" | "reopen") {
   const response = await authenticatedApi(`/api/monitoring/signals/${signalId}`, { method: "PATCH", body: JSON.stringify({ organization_id: organizationId, action }) });
   if (!response.ok) throw new Error(await apiErrorMessage(response, "Could not update insight."));

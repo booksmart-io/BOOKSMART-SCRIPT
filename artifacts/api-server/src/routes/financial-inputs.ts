@@ -1,8 +1,8 @@
 import { Router } from "express";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { requireAuth } from "../middlewares/require-auth";
-import { calculateSafeToSpend, calculateThirtyDayForecast, taxReserveAvailability } from "../../../booksmart/src/lib/future-financial-services";
-import { verifiedCashBalance, type BalanceSnapshot } from "../lib/verified-cash-balance";
+import { buildFinancialPlanningSummary, type PlanningItem, type PlanningSettings } from "../lib/financial-planning-summary";
+import type { BalanceSnapshot } from "../lib/verified-cash-balance";
 
 const router = Router();
 const SUPABASE_URL = process.env.SUPABASE_URL ?? "https://pvppwmkswnluidlwnnck.supabase.co";
@@ -28,22 +28,12 @@ router.get("/financial-inputs", requireAuth, async (req, res) => {
       admin.from("plaid_items").select("status,last_sync_status").eq("org_id", orgId),
     ]);
     if (settingsResult.error || itemsResult.error || snapshotsResult.error || plaidResult.error) throw settingsResult.error ?? itemsResult.error ?? snapshotsResult.error ?? plaidResult.error;
-    const settings = settingsResult.data ?? {}; const active = (itemsResult.data ?? []).filter(row => row.status === "active");
-    const obligations = active.filter(row => row.item_type === "obligation"); const receivables = active.filter(row => row.item_type === "receivable"); const filings = active.filter(row => row.item_type === "filing_schedule");
-    const knownObligations = obligations.reduce((sum, row) => sum + Number(row.amount ?? 0), 0);
-    const taxReserveRequirement = settings.tax_effective_rate == null || settings.projected_taxable_income == null || settings.tax_amount_set_aside == null ? undefined : Math.max(0, Number(settings.projected_taxable_income) * Number(settings.tax_effective_rate) / 100 - Number(settings.tax_amount_set_aside));
-    const cash = verifiedCashBalance({ snapshots: (snapshotsResult.data ?? []) as BalanceSnapshot[], hasHealthyPlaidConnection: (plaidResult.data ?? []).some(row => row.status === "active" && row.last_sync_status !== "failed") });
-    const readiness = {
-      safe_to_spend: calculateSafeToSpend({ cashAvailable: cash.cashAvailable, balanceFresh: cash.balanceFresh, knownObligations: obligations.length ? knownObligations : undefined, payrollRequirement: settings.payroll_amount == null ? undefined : Number(settings.payroll_amount), taxReserveRequirement, operatingBuffer: settings.operating_buffer == null ? undefined : Number(settings.operating_buffer) }),
-      tax_reserve: taxReserveAvailability({ taxStrategyConfigured: filings.length > 0, effectiveRate: settings.tax_effective_rate == null ? undefined : Number(settings.tax_effective_rate), projectedTaxableIncome: settings.projected_taxable_income == null ? undefined : Number(settings.projected_taxable_income), amountSetAside: settings.tax_amount_set_aside == null ? undefined : Number(settings.tax_amount_set_aside) }),
-      forecast: calculateThirtyDayForecast({
-        openingCash: cash.cashAvailable, balanceFresh: cash.balanceFresh,
-        payrollAmount: settings.payroll_amount == null ? undefined : Number(settings.payroll_amount),
-        payrollCadence: settings.payroll_cadence ?? undefined, nextPayrollDate: settings.next_payroll_date ?? undefined,
-        items: active.map(row => ({ id: Number(row.id), itemType: row.item_type, name: row.name, amount: Number(row.amount ?? 0), dueDate: row.due_date, recurrence: row.recurrence })),
-      }),
-    };
-    res.json({ organization_id: orgId, settings: settingsResult.data, items: itemsResult.data ?? [], verified_cash: { available: cash.available, amount: cash.cashAvailable ?? null, account_count: cash.accountCount, refreshed_at: cash.latestBalanceAt, freshness_hours: 24 }, readiness });
+    const summary = buildFinancialPlanningSummary({
+      settings: settingsResult.data as PlanningSettings | null,
+      items: (itemsResult.data ?? []) as PlanningItem[], snapshots: (snapshotsResult.data ?? []) as BalanceSnapshot[],
+      connections: plaidResult.data ?? [],
+    });
+    res.json({ organization_id: orgId, ...summary });
   } catch (error) { res.status(503).json({ error: "financial_inputs_unavailable", message: error instanceof Error ? error.message : "Could not load planning inputs." }); }
 });
 

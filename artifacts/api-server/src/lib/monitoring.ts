@@ -1,5 +1,7 @@
 export type MonitoringSignalStatus = "active" | "resolved" | "dismissed" | "expired";
 export type MonitoringTaskStatus = "open" | "in_progress" | "waiting" | "completed" | "dismissed";
+export type MonitoringTaskPriority = "low" | "medium" | "high" | "critical";
+export type MonitoringTaskAssignmentRole = "owner" | "cpa" | "booksmart";
 
 export const FINANCIAL_DATA_CHANGE_EVENTS = [
   "transaction_categorized",
@@ -14,6 +16,32 @@ export type FinancialDataChangeEvent = typeof FINANCIAL_DATA_CHANGE_EVENTS[numbe
 
 export function isFinancialDataChangeEvent(value: unknown): value is FinancialDataChangeEvent {
   return typeof value === "string" && (FINANCIAL_DATA_CHANGE_EVENTS as readonly string[]).includes(value);
+}
+
+const SIGNAL_ACTIONS: Record<MonitoringSignalStatus, readonly ("dismiss" | "resolve" | "reopen")[]> = {
+  active: ["dismiss", "resolve"],
+  resolved: ["reopen"],
+  dismissed: ["reopen"],
+  expired: ["reopen"],
+};
+
+export function canTransitionSignal(status: MonitoringSignalStatus, action: "dismiss" | "resolve" | "reopen") {
+  return SIGNAL_ACTIONS[status].includes(action);
+}
+
+export function validTaskDueDate(value: unknown) {
+  if (value === null) return true;
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+}
+
+export function validTaskPriority(value: unknown): value is MonitoringTaskPriority {
+  return ["low", "medium", "high", "critical"].includes(String(value));
+}
+
+export function validTaskAssignmentRole(value: unknown): value is MonitoringTaskAssignmentRole {
+  return ["owner", "cpa", "booksmart"].includes(String(value));
 }
 
 export type MonitoringSummary = {
@@ -51,7 +79,7 @@ export type SignalCandidate = {
   sourceIds?: Array<number | string>;
   exclusions?: string[];
   confidence?: number;
-  provider?: "jobber";
+  provider?: "jobber" | "contractor_intelligence";
   directUrl?: string | null;
   sourceRecordType?: string;
   calculationVersion?: string;

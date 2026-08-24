@@ -1,7 +1,8 @@
 import { Router } from "express";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { requireAuth } from "../middlewares/require-auth";
-import { canTransitionTask, isFinancialDataChangeEvent, taskEventForStatus, type MonitoringTaskStatus } from "../lib/monitoring";
+import { canTransitionSignal, canTransitionTask, isFinancialDataChangeEvent, taskEventForStatus, validTaskAssignmentRole, validTaskDueDate, validTaskPriority, type MonitoringSignalStatus, type MonitoringTaskStatus } from "../lib/monitoring";
+import { CPA_MONITORING_ENGAGEMENT_STATUSES } from "../lib/cpa-monitoring-access";
 import { scheduleMonitoringEvaluation } from "../lib/monitoring-runner";
 
 const router = Router();
@@ -85,6 +86,9 @@ router.patch("/monitoring/signals/:id", requireAuth, async (req, res) => {
     const { data: existing } = await admin.from("business_signals").select("id,status")
       .eq("id", id).eq("organization_id", orgId).maybeSingle();
     if (!existing) { res.status(404).json({ error: "signal_not_found" }); return; }
+    if (!canTransitionSignal(existing.status as MonitoringSignalStatus, action as "dismiss" | "resolve" | "reopen")) {
+      res.status(409).json({ error: "invalid_signal_transition", from_status: existing.status, action }); return;
+    }
     const now = new Date().toISOString();
     const status = action === "dismiss" ? "dismissed" : action === "resolve" ? "resolved" : "active";
     const changes = {
@@ -134,6 +138,90 @@ router.patch("/monitoring/tasks/:id", requireAuth, async (req, res) => {
     res.json({ task: data });
   } catch (error) {
     res.status(503).json({ error: "monitoring_unavailable", message: error instanceof Error ? error.message : "Monitoring unavailable." });
+  }
+});
+
+router.post("/monitoring/tasks", requireAuth, async (req, res) => {
+  const orgId = organizationId(req.body?.organization_id);
+  const title = typeof req.body?.title === "string" ? req.body.title.trim() : "";
+  const description = typeof req.body?.description === "string" ? req.body.description.trim() : "";
+  const requestId = typeof req.body?.request_id === "string" ? req.body.request_id.trim() : "";
+  const priority = req.body?.priority ?? "medium";
+  const dueDate = req.body?.due_date ?? null;
+  if (!orgId || !title || title.length > 160 || description.length > 2000 || !/^[a-zA-Z0-9_-]{8,100}$/.test(requestId)
+    || !validTaskPriority(priority) || !validTaskDueDate(dueDate)) {
+    res.status(400).json({ error: "invalid_task" }); return;
+  }
+  try {
+    const admin = adminClient();
+    const owner = await ownership(admin, req.supabaseUserId!, orgId);
+    if (!owner) { res.status(403).json({ error: "forbidden" }); return; }
+    const sourceId = `user:${requestId}`;
+    const { data: existing } = await admin.from("financial_tasks").select("*").eq("organization_id", orgId)
+      .eq("source", "user").eq("source_id", sourceId).maybeSingle();
+    if (existing) { res.status(200).json({ task: existing, idempotent: true }); return; }
+    const now = new Date().toISOString();
+    const { data, error } = await admin.from("financial_tasks").insert({
+      organization_id: orgId, source: "user", source_id: sourceId, category: "general", priority,
+      title, description: description || title, due_date: dueDate, status: "open", requires_cpa: false,
+      assigned_user_id: owner.userId, assignment_role: "owner", metadata: { created_by: "owner" },
+    }).select("*").single();
+    if (error) throw error;
+    const { error: eventError } = await admin.from("financial_task_events").insert({
+      organization_id: orgId, task_id: data.id, actor_user_id: owner.userId, event_type: "created",
+      from_status: null, to_status: "open", metadata: { source: "owner" }, created_at: now,
+    });
+    if (eventError) throw eventError;
+    res.status(201).json({ task: data, idempotent: false });
+  } catch (error) {
+    res.status(503).json({ error: "task_creation_unavailable", message: error instanceof Error ? error.message : "Could not create task." });
+  }
+});
+
+router.patch("/monitoring/tasks/:id/manage", requireAuth, async (req, res) => {
+  const id = Number(req.params.id);
+  const orgId = organizationId(req.body?.organization_id);
+  const priority = req.body?.priority;
+  const dueDate = req.body?.due_date;
+  const assignmentRole = req.body?.assignment_role;
+  if (!Number.isSafeInteger(id) || id <= 0 || !orgId || !validTaskPriority(priority)
+    || !validTaskDueDate(dueDate) || !validTaskAssignmentRole(assignmentRole)) {
+    res.status(400).json({ error: "invalid_task_management" }); return;
+  }
+  try {
+    const admin = adminClient();
+    const owner = await ownership(admin, req.supabaseUserId!, orgId);
+    if (!owner) { res.status(403).json({ error: "forbidden" }); return; }
+    const { data: existing } = await admin.from("financial_tasks").select("id,status,priority,due_date,assignment_role,assigned_user_id,metadata")
+      .eq("id", id).eq("organization_id", orgId).maybeSingle();
+    if (!existing) { res.status(404).json({ error: "task_not_found" }); return; }
+    let assignedUserId: number | null = assignmentRole === "owner" ? owner.userId : null;
+    let engagementId: number | null = null;
+    if (assignmentRole === "cpa") {
+      const { data: engagement, error: engagementError } = await admin.from("orders").select("id,cpa_id")
+        .eq("user_id", owner.userId).in("status", [...CPA_MONITORING_ENGAGEMENT_STATUSES])
+        .order("created_at", { ascending: false }).limit(1).maybeSingle();
+      if (engagementError) throw engagementError;
+      if (!engagement?.cpa_id) { res.status(409).json({ error: "active_cpa_required" }); return; }
+      assignedUserId = Number(engagement.cpa_id); engagementId = Number(engagement.id);
+    }
+    const now = new Date().toISOString();
+    const metadata = { ...(existing.metadata && typeof existing.metadata === "object" ? existing.metadata : {}), managed_by: "owner", engagement_id: engagementId };
+    const { data, error } = await admin.from("financial_tasks").update({
+      priority, due_date: dueDate, assignment_role: assignmentRole, assigned_user_id: assignedUserId,
+      requires_cpa: assignmentRole === "cpa" ? true : undefined, metadata, updated_at: now,
+    }).eq("id", id).eq("organization_id", orgId).select("*").single();
+    if (error) throw error;
+    const { error: eventError } = await admin.from("financial_task_events").insert({
+      organization_id: orgId, task_id: id, actor_user_id: owner.userId, event_type: "updated",
+      from_status: existing.status, to_status: existing.status,
+      note: typeof req.body?.note === "string" ? req.body.note.trim().slice(0, 1000) : null,
+      metadata: { changes: { priority: [existing.priority, priority], due_date: [existing.due_date, dueDate], assignment_role: [existing.assignment_role, assignmentRole] } },
+    });
+    if (eventError) throw eventError;
+    res.json({ task: data });
+  } catch (error) {
+    res.status(503).json({ error: "task_management_unavailable", message: error instanceof Error ? error.message : "Could not manage task." });
   }
 });
 

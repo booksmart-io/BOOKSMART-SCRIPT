@@ -1,5 +1,8 @@
 import type { SignalCandidate } from "./monitoring";
 
+export const JOBBER_UNINVOICED_HIGH_THRESHOLD = 5_000;
+export const JOBBER_UNSCHEDULED_HIGH_COUNT = 5;
+
 export type JobberMonitoringRecord = {
   external_id: string;
   object_type: "jobs" | "scheduled_items" | "quotes" | "invoices";
@@ -16,8 +19,28 @@ export type JobberMonitoringRecord = {
   payload: Record<string, unknown>;
 };
 
-export function jobberMonitoringEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
-  return env.NODE_ENV !== "production" && env.JOBBER_MONITORING_ENABLED === "true";
+export function jobberMonitoringOrganizationIds(env: NodeJS.ProcessEnv = process.env): Set<number> {
+  return new Set(String(env.JOBBER_MONITORING_ORGANIZATION_IDS ?? "")
+    .split(",")
+    .map(value => Number(value.trim()))
+    .filter(value => Number.isSafeInteger(value) && value > 0));
+}
+
+export function jobberMonitoringPreviewOrganizationIds(env: NodeJS.ProcessEnv = process.env): Set<number> {
+  return new Set(String(env.JOBBER_MONITORING_PREVIEW_ORGANIZATION_IDS ?? "")
+    .split(",")
+    .map(value => Number(value.trim()))
+    .filter(value => Number.isSafeInteger(value) && value > 0));
+}
+
+export function jobberMonitoringPreviewEnabled(organizationId: number, env: NodeJS.ProcessEnv = process.env): boolean {
+  return env.JOBBER_MONITORING_ENABLED === "true" && jobberMonitoringPreviewOrganizationIds(env).has(organizationId);
+}
+
+export function jobberMonitoringEnabled(organizationId: number, env: NodeJS.ProcessEnv = process.env): boolean {
+  if (env.JOBBER_MONITORING_ENABLED !== "true" || !Number.isSafeInteger(organizationId) || organizationId <= 0) return false;
+  if (env.JOBBER_MONITORING_ROLLOUT === "all") return true;
+  return jobberMonitoringOrganizationIds(env).has(organizationId);
 }
 
 const daysSince = (value: unknown, now: Date) => {
@@ -46,13 +69,13 @@ export function evaluateJobberOperationalRecords(records: JobberMonitoringRecord
   for (const record of records) {
     if (record.is_archived) continue;
     if (record.object_type === "jobs" && record.status === "requires_invoicing") {
-      const uninvoiced = Number(record.payload.uninvoicedTotal ?? record.amount ?? 0);
+      const uninvoiced = Number(record.payload.uninvoicedTotal);
       if (Number.isFinite(uninvoiced) && uninvoiced > 0) signals.push({
-        ...base(record), signalKey: `jobber:completed-uninvoiced:${record.external_id}`,
-        signalType: "bookkeeping", category: "bookkeeping", severity: uninvoiced >= 5_000 ? "high" : "medium",
+        ...base(record), signalKey: `jobber:requires-invoicing:${record.external_id}`,
+        signalType: "bookkeeping", category: "bookkeeping", severity: uninvoiced >= JOBBER_UNINVOICED_HIGH_THRESHOLD ? "high" : "medium",
         title: `Job ${record.record_number ? `#${record.record_number}` : record.title || ""} needs invoicing`.trim(),
         description: `Jobber reports ${uninvoiced.toLocaleString("en-US", { style: "currency", currency: "USD" })} as uninvoiced operational work. This is not counted as BookSmart revenue.`,
-        currentValue: uninvoiced, recommendedAction: "Review the completed work in Jobber and create or confirm the appropriate invoice.",
+        currentValue: uninvoiced, recommendedAction: "Review the job in Jobber and create or confirm the appropriate invoice.",
       });
     }
     if (record.object_type === "invoices" && ["awaiting_payment", "past_due", "sent_not_due"].includes(record.status ?? "")) {
@@ -107,7 +130,7 @@ export function evaluateJobberOperationalPlanning(records: JobberMonitoringRecor
   const unscheduled = active.filter(record => record.object_type === "jobs" && record.status === "unscheduled");
   if (unscheduled.length > 0) signals.push({
     signalKey: "jobber:unscheduled-active-jobs", signalType: "bookkeeping", category: "bookkeeping",
-    severity: unscheduled.length >= 5 ? "high" : "medium",
+    severity: unscheduled.length >= JOBBER_UNSCHEDULED_HIGH_COUNT ? "high" : "medium",
     title: `${unscheduled.length} active Jobber job${unscheduled.length === 1 ? " is" : "s are"} unscheduled`,
     description: "These operational jobs do not currently have scheduled work in Jobber.",
     currentValue: unscheduled.length, comparisonValue: null, percentage: null,
@@ -137,4 +160,23 @@ export function evaluateJobberOperationalPlanning(records: JobberMonitoringRecor
     }
   }
   return signals;
+}
+
+export function evaluateJobberMonitoringPreview(records: JobberMonitoringRecord[], now = new Date()): SignalCandidate[] {
+  return [...evaluateJobberOperationalRecords(records, now), ...evaluateJobberOperationalPlanning(records, now)];
+}
+
+export function isApprovedJobberSignalKey(signalKey: string): boolean {
+  return signalKey.startsWith("jobber:requires-invoicing:") || signalKey === "jobber:unscheduled-active-jobs";
+}
+
+export function isJobberLifecycleKey(signalKey: string): boolean {
+  // Previously persisted Jobber preview keys remain
+  // lifecycle-managed only so they can resolve cleanly. They are never emitted
+  // by evaluateApprovedJobberCandidates.
+  return signalKey.startsWith("jobber:");
+}
+
+export function evaluateApprovedJobberCandidates(records: JobberMonitoringRecord[], now = new Date()): SignalCandidate[] {
+  return evaluateJobberMonitoringPreview(records, now).filter(candidate => isApprovedJobberSignalKey(candidate.signalKey));
 }

@@ -3,7 +3,8 @@ import { createClient } from "@supabase/supabase-js";
 import { requireAuth } from "../middlewares/require-auth";
 import { requireAdmin } from "../middlewares/require-admin";
 import { runMonitoring } from "../lib/monitoring-runner";
-import { monitoringIntervalMinutes, scheduledRunKey, validMonitoringSecret } from "../lib/monitoring-scheduler";
+import { monitoringIntervalMinutes, scheduledMonitoringHealth, scheduledRunKey, validMonitoringSecret } from "../lib/monitoring-scheduler";
+import { reconcileScheduledJobberOrganization } from "../lib/jobber-reconciliation";
 
 const router = Router();
 
@@ -43,12 +44,20 @@ router.get("/admin/monitoring/runs", requireAuth, requireAdmin, async (_req, res
 });
 
 router.get("/admin/monitoring/config", requireAuth, requireAdmin, async (_req, res) => {
-  res.json({
-    interval_minutes: monitoringIntervalMinutes(process.env.MONITORING_INTERVAL_MINUTES),
-    execution_lease_minutes: 30,
-    notifications_enabled: false,
-    transaction_writes_enabled: false,
-  });
+  const intervalMinutes = monitoringIntervalMinutes(process.env.MONITORING_INTERVAL_MINUTES);
+  const leaseMinutes = 30;
+  try {
+    const { data: latest, error } = await adminClient().from("monitoring_runs").select("status,started_at,completed_at")
+      .eq("trigger_type", "scheduled").order("started_at", { ascending: false }).limit(1).maybeSingle();
+    if (error) throw error;
+    res.json({
+      interval_minutes: intervalMinutes, execution_lease_minutes: leaseMinutes,
+      scheduler_health: scheduledMonitoringHealth({ secretConfigured: Boolean(process.env.MONITORING_CRON_SECRET?.trim()), intervalMinutes, leaseMinutes, latest }),
+      notifications_enabled: false, transaction_writes_enabled: false,
+    });
+  } catch (error) {
+    res.status(500).json({ error: "monitoring_config_load_failed", message: error instanceof Error ? error.message : "Could not load monitoring configuration." });
+  }
 });
 
 router.get("/admin/monitoring/financial-summary-comparisons", requireAuth, requireAdmin, async (req, res) => {
@@ -85,7 +94,11 @@ router.post("/monitoring/scheduled-run", async (req, res) => {
     const intervalMinutes = monitoringIntervalMinutes(process.env.MONITORING_INTERVAL_MINUTES);
     const requestedKey = typeof req.headers["x-monitoring-run-id"] === "string" ? req.headers["x-monitoring-run-id"] : null;
     const idempotencyKey = scheduledRunKey(intervalMinutes, Date.now(), requestedKey);
-    const run = await runMonitoring(adminClient(), "scheduled", undefined, { idempotencyKey });
+    const admin = adminClient();
+    const run = await runMonitoring(admin, "scheduled", undefined, {
+      idempotencyKey,
+      beforeEvaluateOrganization: (organizationId) => reconcileScheduledJobberOrganization(admin, organizationId),
+    });
     res.json({ run, interval_minutes: intervalMinutes });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Monitoring run failed.";

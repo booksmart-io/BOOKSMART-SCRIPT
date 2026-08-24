@@ -13,4 +13,5 @@ test("pending, staged, rejected, and duplicate sources cannot enter the trusted 
   for (const source of ["pending_transactions", "quickbooks_staged_entities", "rejected", "duplicate"] as const) {
     assert.deepEqual(trustedTransactions(source as never, rows), []);
   }
+  assert.deepEqual(trustedTransactions("transactions", [{ ...rows[0], pending: true }]), []);
 });

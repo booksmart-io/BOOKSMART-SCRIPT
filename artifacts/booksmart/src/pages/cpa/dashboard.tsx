@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQueries, useQuery } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -13,8 +13,8 @@ import { useAuth } from "@/hooks/use-auth";
 import { isActiveCpaEngagement } from "@/lib/route-access";
 import { toast } from "sonner";
 import { formatDistanceToNow } from "date-fns";
-import { calculateBusinessHealthFromActivity } from "@/lib/financial-summary";
 import { trustedTransactions } from "@/lib/trusted-transactions";
+import { authenticatedApi, apiErrorMessage } from "@/lib/authenticated-api";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -24,6 +24,7 @@ interface OrgRow   { id: number; owner_id: number; name: string | null }
 interface TxRow    { id: number; org_id: number; amount: number; title: string; date_time: string; deductible?: boolean | null }
 interface DocRow   { user_id: number }
 interface StratRow { user_id: number }
+interface PortfolioFinancialSummary { current_month: { revenue: number }; health: { score: number; status: string } | null }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -61,11 +62,6 @@ function calcTaxReadiness(docCount: number, stratCount: number, hasCompleted: bo
   if (hasCompleted) s += 15;
   return Math.min(100, s);
 }
-function startOfMonth() {
-  const d = new Date();
-  return new Date(d.getFullYear(), d.getMonth(), 1).toISOString();
-}
-
 // ─── Health ring ──────────────────────────────────────────────────────────────
 
 function HealthRing({ score, label }: { score: number | null; label: string }) {
@@ -166,38 +162,30 @@ export default function CpaDashboard() {
   });
 
   const orgIds = useMemo(() => orgs.map(o => o.id), [orgs]);
+  const organizationsByOwner = useMemo(() => {
+    const byOwner: Record<number, OrgRow[]> = {};
+    for (const organization of [...orgs].sort((a, b) => a.id - b.id)) {
+      (byOwner[organization.owner_id] ??= []).push(organization);
+    }
+    return byOwner;
+  }, [orgs]);
+  const portfolioFinancialQueries = useQueries({
+    queries: clientUsers.map(client => {
+      const organizations = organizationsByOwner[client.id] ?? [];
+      return {
+        queryKey: ["cpa-dashboard-canonical-summary", client.id, "all", organizations.map(item => item.id)],
+        enabled: organizations.length > 0, staleTime: 60_000, retry: false,
+        queryFn: async () => {
+          const response = await authenticatedApi(`/api/cpa/clients/${client.id}/financial-summary?org_id=all`);
+          if (!response.ok) throw new Error(await apiErrorMessage(response, "Client financial summary is unavailable."));
+          return response.json() as Promise<PortfolioFinancialSummary>;
+        },
+      };
+    }),
+  });
 
   // ── 4. This-month transactions ────────────────────────────────────────────
-  const { data: monthTxs = [] } = useQuery<TxRow[]>({
-    queryKey: ["cpa_dash_txs", orgIds],
-    enabled: orgIds.length > 0,
-    staleTime: 30_000,
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from("transactions")
-        .select("id, org_id, amount, title, date_time")
-        .in("org_id", orgIds)
-        .gte("date_time", startOfMonth());
-      if (error) throw error;
-      return trustedTransactions("transactions", data ?? []);
-    },
-  });
-
   // ── 5. All-time tx counts per org (for health score) ─────────────────────
-  const { data: allTimeTxs = [] } = useQuery<Array<{ id: number; org_id: number; amount: number; deductible: boolean | null; date_time: string }>>({
-    queryKey: ["cpa_dash_txcount", orgIds],
-    enabled: orgIds.length > 0,
-    staleTime: 60_000,
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from("transactions")
-        .select("id, org_id, amount, deductible, date_time")
-        .in("org_id", orgIds);
-      if (error) throw error;
-      return trustedTransactions("transactions", data ?? []);
-    },
-  });
-
   // ── 6. Document counts per user ───────────────────────────────────────────
   const { data: docRows = [] } = useQuery<DocRow[]>({
     queryKey: ["cpa_dash_docs", clientUserIds],
@@ -248,15 +236,6 @@ export default function CpaDashboard() {
   // ── Derived data ──────────────────────────────────────────────────────────
 
   const clientRows = useMemo(() => {
-    const orgByOwner: Record<number, OrgRow> = {};
-    for (const o of orgs) orgByOwner[o.owner_id] = o;
-
-    const txByOrg: Record<number, TxRow[]> = {};
-    for (const t of monthTxs) { if (!txByOrg[t.org_id]) txByOrg[t.org_id] = []; txByOrg[t.org_id].push(t); }
-
-    const allTxByOrg: Record<number, Array<{ amount: number; deductible: boolean | null }>> = {};
-    for (const t of allTimeTxs) { if (!allTxByOrg[t.org_id]) allTxByOrg[t.org_id] = []; allTxByOrg[t.org_id].push(t); }
-
     const docCountByUser: Record<number, number> = {};
     for (const d of docRows) docCountByUser[d.user_id] = (docCountByUser[d.user_id] ?? 0) + 1;
 
@@ -267,15 +246,15 @@ export default function CpaDashboard() {
     for (const o of allOrders) { if (!ordersByUser[o.user_id]) ordersByUser[o.user_id] = []; ordersByUser[o.user_id].push(o); }
 
     return clientUsers.map((u, i) => {
-      const org = orgByOwner[u.id];
-      const orgTxs = org ? (txByOrg[org.id] ?? []) : [];
+      const clientOrganizations = organizationsByOwner[u.id] ?? [];
+      const financialQuery = portfolioFinancialQueries[i];
+      const financial = financialQuery?.data;
       const docCount = docCountByUser[u.id] ?? 0;
       const stratCount = stratCountByUser[u.id] ?? 0;
       const userOrders = ordersByUser[u.id] ?? [];
 
-      const health = org ? calculateBusinessHealthFromActivity(allTxByOrg[org.id] ?? []) : null;
       const taxR = calcTaxReadiness(docCount, stratCount, userOrders.some(o => o.status === "completed"));
-      const thisMonth = orgTxs.filter(t => t.amount > 0).reduce((s, t) => s + t.amount, 0);
+      const thisMonth = financial?.current_month.revenue ?? 0;
 
       const name = fullName(u);
       return {
@@ -284,14 +263,16 @@ export default function CpaDashboard() {
         email: u.email,
         initials: name.slice(0, 2).toUpperCase(),
         color: AVATAR_COLORS[i % AVATAR_COLORS.length],
-        business: org?.name ?? "—",
-        healthScore: health?.score ?? null,
-        healthLabel: health?.status ?? "More data needed",
+        business: clientOrganizations.length === 0 ? "—" : clientOrganizations.length === 1 ? clientOrganizations[0]!.name ?? "Organization" : `${clientOrganizations.length} organizations`,
+        healthScore: financial?.health?.score ?? null,
+        healthLabel: financial?.health?.status ?? "More data needed",
         thisMonth,
+        financialState: clientOrganizations.length === 0 ? "missing_organization" : financialQuery?.isPending ? "loading" : financialQuery?.isError ? "error" : financial?.health ? "ready" : "insufficient_data",
+        retryFinancial: () => { void financialQuery?.refetch(); },
         taxReadiness: taxR,
       };
     });
-  }, [clientUsers, orgs, monthTxs, allTimeTxs, docRows, stratRows, allOrders]);
+  }, [clientUsers, organizationsByOwner, portfolioFinancialQueries, docRows, stratRows, allOrders]);
 
   const scoredClients = clientRows.filter((client): client is typeof client & { healthScore: number } => client.healthScore !== null);
   const avgHealth = scoredClients.length
@@ -490,11 +471,19 @@ export default function CpaDashboard() {
                       <p className="text-xs font-medium text-foreground truncate">{client.business}</p>
                     </div>
                     {/* Health */}
-                    <HealthRing score={client.healthScore} label={client.healthLabel} />
+                    {client.financialState === "loading" ? (
+                      <div className="flex items-center gap-2 text-[10px] text-muted-foreground"><Loader2 className="h-3.5 w-3.5 animate-spin" />Loading summary…</div>
+                    ) : client.financialState === "error" ? (
+                      <button type="button" className="text-left text-[10px] text-amber-400 hover:underline" onClick={client.retryFinancial}>Summary unavailable · Retry</button>
+                    ) : client.financialState === "missing_organization" ? (
+                      <span className="text-[10px] text-muted-foreground">No organization</span>
+                    ) : (
+                      <HealthRing score={client.healthScore} label={client.healthLabel} />
+                    )}
                     {/* This Month */}
                     <div>
-                      <p className="text-xs font-semibold text-foreground">{fmtMoney(client.thisMonth)}</p>
-                      <p className="text-[10px] text-muted-foreground">income</p>
+                      <p className="text-xs font-semibold text-foreground">{client.financialState === "ready" || client.financialState === "insufficient_data" ? fmtMoney(client.thisMonth) : "—"}</p>
+                      <p className="text-[10px] text-muted-foreground">{client.financialState === "error" ? "unavailable" : "income"}</p>
                     </div>
                     {/* Tax Readiness */}
                     <div>

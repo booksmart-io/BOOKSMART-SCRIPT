@@ -1,5 +1,6 @@
 import { useState, useCallback, useMemo } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { Link } from "wouter";
 import { useAuth } from "@/hooks/use-auth";
 import { supabase } from "@/lib/supabase";
 import { useToast } from "@/hooks/use-toast";
@@ -8,12 +9,13 @@ import { summarizeDeductions, type OrgRow } from "@/lib/deduction-calculation";
 import { normalizeStateId } from "@/lib/state-id";
 import { pickActiveOrganization, useActiveOrganizationId } from "@/lib/active-organization";
 import { liabilityBalanceEntries } from "@/lib/survey-liabilities";
+import { authenticatedApi, apiErrorMessage } from "@/lib/authenticated-api";
+import { trustedTransactions } from "@/lib/trusted-transactions";
 import {
   resolveBusinessProfileSources,
   resolvedFactsForPrompt,
   type FinancialActuals,
 } from "@/lib/business-profile-source-resolver";
-import { normalizeStatementDoc, type StatementPeriod } from "@/lib/financial-statements";
 import {
   Card, CardContent, CardHeader, CardTitle, CardFooter,
 } from "@/components/ui/card";
@@ -75,6 +77,7 @@ type Transaction = {
 
 type Category = { id: number; name: string };
 type SubCategory = { id: number; name: string; category_id: number };
+type CanonicalStrategySummary = { revenue: number; accountingExpenses: number; netIncome: number; completeness: { approvedTransactionCount: number } };
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -390,7 +393,7 @@ export default function AiStrategy() {
     enabled:  orgId != null,
     queryFn:  async () => {
       const { data } = await supabase.from("transactions")
-        .select("id,title,amount,type,date_time,description,deductible")
+        .select("id,title,amount,type,date_time,description,deductible,pending")
         .eq("org_id", orgId!).gte("date_time", startOfMonth())
         .order("date_time", { ascending: false });
       return data ?? [];
@@ -403,26 +406,22 @@ export default function AiStrategy() {
     staleTime: 2 * 60 * 1000,
     queryFn:  async () => {
       const { data } = await supabase.from("transactions")
-        .select("id,title,amount,type,date_time,description,deductible")
+        .select("id,title,amount,type,date_time,description,deductible,pending")
         .eq("org_id", orgId!).order("date_time", { ascending: false });
-      return data ?? [];
+      return trustedTransactions("transactions", (data ?? []).filter(row => row.pending !== true)) as Transaction[];
     },
   });
 
-  const { data: statementPeriods = [] } = useQuery<StatementPeriod[]>({
-    queryKey: ["statement_docs_ai_strategy", numericId, orgId],
-    enabled: numericId !== null && orgId !== null,
-    staleTime: 30_000,
+  const strategyPeriodStart = useMemo(() => new Date(new Date().getFullYear(), new Date().getMonth(), 1), []);
+  const strategyPeriodEnd = useMemo(() => new Date(), []);
+  const canonicalStrategy = useQuery<CanonicalStrategySummary>({
+    queryKey: ["canonical-ai-strategy-summary", orgId, strategyPeriodStart.toISOString(), strategyPeriodEnd.toISOString()],
+    enabled: orgId !== null, retry: false,
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from("user_documents")
-        .select("id, name, category, tax_year, parsed_data")
-        .eq("user_id", numericId!)
-        .in("category", ["Profit & Loss", "Income Statement"]);
-      if (error) throw error;
-      return (data ?? [])
-        .flatMap((row) => normalizeStatementDoc(row as never))
-        .filter((period) => period.docType === "pnl" && period.organizationId === orgId);
+      const query = new URLSearchParams({ startInstant: strategyPeriodStart.toISOString(), endInstant: strategyPeriodEnd.toISOString() });
+      const response = await authenticatedApi(`/api/organizations/${orgId}/financial-summary?${query}`);
+      if (!response.ok) throw new Error(await apiErrorMessage(response, "Trusted financial summary is unavailable."));
+      return response.json();
     },
   });
 
@@ -433,7 +432,7 @@ export default function AiStrategy() {
     staleTime: 60_000,
     queryFn:  async () => {
       let query = supabase.from("transactions")
-        .select("id,title,amount,type,date_time,description,deductible,category_id,sub_category_id")
+        .select("id,title,amount,type,date_time,description,deductible,category_id,sub_category_id,pending")
         .eq("org_id", orgId!);
 
       if (dedPeriod === "year") {
@@ -443,7 +442,7 @@ export default function AiStrategy() {
       }
 
       const { data } = await query.order("date_time", { ascending: false });
-      return data ?? [];
+      return trustedTransactions("transactions", (data ?? []).filter(row => row.pending !== true)) as Transaction[];
     },
   });
 
@@ -504,33 +503,20 @@ export default function AiStrategy() {
   );
 
   // ── AI Strategy derived ────────────────────────────────────────────────────
-  const income         = monthTxs.filter(t => t.amount > 0).reduce((s, t) => s + t.amount, 0);
-  const expenses       = Math.abs(monthTxs.filter(t => t.amount < 0).reduce((s, t) => s + t.amount, 0));
-  const netProfit      = income - expenses;
   const totalSavings   = strategies.reduce((s, st) => s + (st.savings ?? 0), 0);
   const totalAdditionalDeductions = strategies.reduce((s, st) => s + (st.deduction_amount ?? 0), 0);
 
   // ── Business Survey summary for AI prompt ──────────────────────────────────
   const surveyProfile = useMemo(() => buildSurveyProfile(org), [org]);
-  const statementActuals = useMemo<FinancialActuals | null>(() => {
-    const latest = [...statementPeriods]
-      .filter((period) => period.pnl)
-      .sort((a, b) => (b.periodEnd?.getTime() ?? b.year ?? 0) - (a.periodEnd?.getTime() ?? a.year ?? 0))[0];
-    if (!latest?.pnl) return null;
-    const expenses = latest.pnl.cogs + latest.pnl.opex;
-    const periodLabel = latest.periodStart && latest.periodEnd
-      ? `${latest.periodStart.toISOString().slice(0, 10)} to ${latest.periodEnd.toISOString().slice(0, 10)}`
-      : latest.year ? String(latest.year) : latest.docName;
-    return {
-      revenue: latest.pnl.revenue,
-      expenses,
-      netIncome: latest.pnl.netIncome,
-      periodLabel,
-    };
-  }, [statementPeriods]);
+  const canonicalActuals = useMemo<FinancialActuals | null>(() => canonicalStrategy.data ? ({
+    revenue: canonicalStrategy.data.revenue,
+    expenses: canonicalStrategy.data.accountingExpenses,
+    netIncome: canonicalStrategy.data.netIncome,
+    periodLabel: `${strategyPeriodStart.toISOString().slice(0, 10)} to ${strategyPeriodEnd.toISOString().slice(0, 10)}`,
+  }) : null, [canonicalStrategy.data, strategyPeriodEnd, strategyPeriodStart]);
   const resolvedProfileFacts = useMemo(
-    () => resolveBusinessProfileSources({ organization: org, transactions: allTxs, statementActuals }),
-    [org, allTxs, statementActuals],
+    () => resolveBusinessProfileSources({ organization: org, transactions: [], statementActuals: canonicalActuals }),
+    [org, canonicalActuals],
   );
   const groundedProfileEntries = useMemo(
     () => resolvedFactsForPrompt(resolvedProfileFacts),
@@ -545,6 +531,14 @@ export default function AiStrategy() {
         toast({
           title: "More information needed",
           description: "Complete the business survey or add transactions before generating a personalized strategy.",
+          variant: "destructive",
+        });
+        return;
+      }
+      if (allTxs.length > 0 && !canonicalStrategy.data) {
+        toast({
+          title: "Trusted financial summary unavailable",
+          description: "AI Strategy will not calculate from a separate browser total. Try again after the accounting service is available.",
           variant: "destructive",
         });
         return;
@@ -710,7 +704,8 @@ Rules:
         tags: [],
         ai_context: JSON.stringify({
           generated_from_transactions: allTxs.length,
-          monthly_net_profit: netProfit,
+          canonical_period_net_income: canonicalStrategy.data?.netIncome ?? null,
+          canonical_calculation_version: "financial-summary-v2",
           source_facts: s.source_facts?.map(sourceId => ({
             source_id: sourceId,
             fact: sourceById.get(sourceId) ?? "",
@@ -734,7 +729,7 @@ Rules:
     } finally {
       setGenerating(false);
     }
-  }, [allTxs, groundedProfileEntries, surveyProfile, toast, orgId, authUid, queryClient, strategiesQueryKey]);
+  }, [allTxs, canonicalStrategy.data, groundedProfileEntries, surveyProfile, toast, orgId, authUid, queryClient, strategiesQueryKey]);
 
   // ── Derived: deduction optimization score ────────────────────────────────
   const monthExpenseAmount = monthTxs
@@ -814,13 +809,15 @@ Rules:
 
           {/* ── Tax Strategies & Insights ── */}
           <div className="px-6 pt-5 pb-4 space-y-5">
-            <h2 className="text-base font-semibold text-foreground">Tax Strategies &amp; Insights</h2>
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between"><div><h2 className="text-base font-semibold text-foreground">Tax Strategies &amp; Insights</h2><p className="mt-1 text-xs text-muted-foreground">Planning guidance based on the canonical accounting summary and approved records. Estimates are not tax advice.</p></div><div className="flex gap-2"><Button asChild size="sm" variant="outline"><Link href="/user/tasks">Tasks</Link></Button><Button asChild size="sm" variant="outline"><Link href="/user/my-cpa">My CPA</Link></Button></div></div>
+
+            {canonicalStrategy.isError && allTxs.length > 0 && <div className="flex gap-3 rounded-lg border border-amber-500/30 bg-amber-500/10 p-4"><AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-amber-500" /><div><p className="font-medium">Trusted financial summary is unavailable</p><p className="text-sm text-muted-foreground">Existing strategies remain visible, but BookSmart will not generate new financial recommendations from a separate browser calculation.</p></div></div>}
 
             {/* Generate button — centered */}
             <div className="flex justify-center">
               <button
                 onClick={generate}
-                disabled={generating}
+                disabled={generating || (allTxs.length > 0 && !canonicalStrategy.data)}
                 className="flex items-center gap-2 px-8 py-2.5 rounded-lg font-semibold text-sm transition-all"
                 style={{ background: "#FFC72B", color: "#020E2C" }}
               >

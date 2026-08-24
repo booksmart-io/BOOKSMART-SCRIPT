@@ -51,6 +51,13 @@ test("canonical transaction summary matches the existing accounting-engine total
   assert.equal(summary.netCashMovement, 5_000);
   assert.equal(summary.deductibleAmount, 2_000);
   assert.equal(summary.calculationVersion, "financial-summary-v2");
+  assert.deepEqual(summary.visuals.cashFlowBars, {
+    mode: "daily",
+    points: [{ key: "2026-07-15", label: "Jul 15", value: 5_000, moneyIn: 10_000, moneyOut: 5_000 }],
+  });
+  assert.deepEqual(summary.visuals.spendingBreakdown, [
+    { key: "operating", label: "Operating", value: 2_000 },
+  ]);
 });
 
 test("confirmed uploaded P&L and cash flow preserve Reports source precedence without double counting", () => {
@@ -71,6 +78,18 @@ test("confirmed uploaded P&L and cash flow preserve Reports source precedence wi
   assert.equal(summary.moneyIn, 18_000);
   assert.equal(summary.moneyOut, 3_000);
   assert.equal(summary.netCashMovement, 15_000);
+  assert.deepEqual(summary.visuals.cashFlowBars, {
+    mode: "statement_sections",
+    points: [
+      { key: "operating", label: "Operating", value: 18_000 },
+      { key: "investing", label: "Investing", value: -2_500 },
+      { key: "financing", label: "Financing", value: -500 },
+    ],
+  });
+  assert.deepEqual(summary.visuals.spendingBreakdown, [
+    { key: "cost_of_sales", label: "Cost of sales", value: 4_000 },
+    { key: "operating", label: "Operating", value: 6_000 },
+  ]);
 });
 
 test("canonical health uses the same configured federal deduction rule as Reports", () => {
@@ -130,4 +149,36 @@ test("combined Home pair equals two independently filtered canonical summaries",
   const independentPrevious = buildCanonicalFinancialSummary({ ...shared, start: previousStart, end: previousEnd, transactions: transactions.slice(0, 2) });
   assert.deepEqual({ revenue: pair.current.revenue, expenses: pair.current.accountingExpenses, cash: pair.current.netCashMovement }, { revenue: independentCurrent.revenue, expenses: independentCurrent.accountingExpenses, cash: independentCurrent.netCashMovement });
   assert.deepEqual({ revenue: pair.previous.revenue, expenses: pair.previous.accountingExpenses, cash: pair.previous.netCashMovement }, { revenue: independentPrevious.revenue, expenses: independentPrevious.accountingExpenses, cash: independentPrevious.netCashMovement });
+});
+
+test("canonical v2 response keeps its required versioned contract and equations", () => {
+  const summary = buildCanonicalFinancialSummary({
+    organizationId: 7, start, end, categories: [], subCategories: [],
+    transactions: [transaction(1, 12_000, "[Revenue] Sales"), transaction(2, -3_000, "[OPEX] Rent")],
+  });
+  assert.deepEqual(Object.keys(summary), [
+    "organizationId", "period", "calculationVersion", "source", "sources", "revenue", "accountingExpenses",
+    "netIncome", "moneyIn", "moneyOut", "netCashMovement", "profitMarginPct", "deductibleAmount", "health", "visuals",
+    "completeness", "warnings",
+  ]);
+  assert.deepEqual(summary.period, {
+    start: "2026-07-01T00:00:00.000Z", end: "2026-07-31T23:59:59.999Z", semantics: "inclusive_custom_range",
+  });
+  assert.equal(summary.calculationVersion, "financial-summary-v2");
+  assert.equal(summary.netIncome, summary.revenue - summary.accountingExpenses);
+  assert.equal(summary.netCashMovement, summary.moneyIn - summary.moneyOut);
+  assert.equal(summary.completeness.complete, summary.warnings.length === 0);
+  for (const value of [summary.revenue, summary.accountingExpenses, summary.netIncome, summary.moneyIn, summary.moneyOut, summary.netCashMovement, summary.deductibleAmount]) {
+    assert.equal(Number.isFinite(value), true);
+  }
+});
+
+test("canonical v2 never treats pending rows as approved completeness", () => {
+  const pending = { ...transaction(2, -500, "[OPEX] Pending"), pending: true };
+  const summary = buildCanonicalFinancialSummary({
+    organizationId: 7, start, end, categories: [], subCategories: [],
+    transactions: [transaction(1, 2_000, "[Revenue] Approved"), pending],
+  });
+  assert.equal(summary.completeness.approvedTransactionCount, 1);
+  assert.equal(summary.accountingExpenses, 0);
 });

@@ -93,10 +93,41 @@ disconnect each test connection first, then drop only `jobber_oauth_states` and
 reports, tax calculations, QuickBooks, or Plaid. The optional local monitoring
 preview reads only the isolated normalized projection.
 
-## Local operational monitoring preview
+## Organization-scoped operational monitoring preview
 
-Set `JOBBER_MONITORING_ENABLED=true` only in the local API environment to
-preview three owner-facing rules after a successful Jobber sync:
+Jobber monitoring remains disabled unless both controls are configured:
+
+- `JOBBER_MONITORING_ENABLED=true`
+- `JOBBER_MONITORING_PREVIEW_ORGANIZATION_IDS=<comma-separated BookSmart organization IDs>` enables only the read-only preview endpoint for those organizations.
+- `JOBBER_MONITORING_ROLLOUT=all` enables the approved owner-only rules for every valid BookSmart organization; organizations without an active Jobber connection produce no Jobber candidates.
+- `JOBBER_MONITORING_ORGANIZATION_IDS=<comma-separated BookSmart organization IDs>` remains available as a limited-rollout fallback when `JOBBER_MONITORING_ROLLOUT` is not `all`.
+
+The preview and persistence allowlists are intentionally separate. Adding an organization to the preview allowlist does not enable stored signals, tasks, or notifications.
+
+The Settings preview panel is hidden by default. Internal builds may set
+`VITE_JOBBER_MONITORING_PREVIEW_UI=true` to display it. This frontend flag is
+visibility-only and must never be treated as authorization; the API continues
+to require authentication, organization ownership, and the server-side preview
+allowlist. Do not place secrets in this or any other `VITE_*` variable.
+
+## Scheduled reconciliation
+
+The existing authenticated daily monitoring endpoint now performs an
+incremental Jobber reconciliation for each active connection before evaluating
+that organization. The existing `monitoring_runs` scheduled-run lock and
+idempotency key prevent overlapping scheduled executions. A concurrent manual
+Jobber sync is detected through `jobber_sync_state`; that organization is not
+evaluated until a later successful refresh. Failed refreshes preserve the last
+complete normalized dataset and record a safe connection error.
+
+An empty or invalid allowlist enables no organization. The same allowlist gates
+the authenticated owner-only dry-run endpoint:
+
+- `GET /api/integrations/jobber/monitoring-preview?organization_id=<id>`
+
+The endpoint returns proposed candidates with `dry_run: true` and
+`persisted: false`. It never creates signals, tasks, notifications, or audit
+events. It evaluates these owner-facing rules after a successful Jobber sync:
 
 - jobs explicitly marked by Jobber as `requires_invoicing` with a positive
   `uninvoicedTotal`;
@@ -108,8 +139,7 @@ preview three owner-facing rules after a successful Jobber sync:
 - thirty-day job-volume changes only after at least sixty days and ten jobs of
   source history are available.
 
-The flag is disabled by default and forcibly disabled when
-`NODE_ENV=production`. These signals are labeled with provider `jobber`, retain
+The controls are disabled by default. These signals are labeled with provider `jobber`, retain
 the supporting Jobber ID and direct URL, never request CPA review, and never
 write to transactions or financial calculations. Removing the flag stops new
 Jobber evaluations without removing synchronized read-only records.

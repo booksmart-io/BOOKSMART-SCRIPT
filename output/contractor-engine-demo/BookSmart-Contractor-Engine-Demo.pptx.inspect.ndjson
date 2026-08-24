@@ -1,0 +1,51 @@
+{"kind":"deck","id":"pr/d548mn","name":"Deck"}
+{"kind":"layout","layoutId":"be9f547b-8728-4f94-9ce4-f42fbd4ada73","name":"Master","type":"master"}
+{"kind":"layout","layoutId":"181512da-02e8-41f3-915e-802696bd9279","name":"Title Slide","type":"title"}
+{"kind":"slide","id":"sl/iczxrx","slide":1,"title":"BOOKSMART PRODUCT DEMO","textShapes":4}
+{"kind":"textbox","id":"sh/65cbyl4z","slide":1,"name":"cover-eyebrow","text":"BOOKSMART PRODUCT DEMO","textPreview":"BOOKSMART PRODUCT DEMO","textChars":22,"textLines":1,"bbox":[72,72,500,30]}
+{"kind":"textbox","id":"sh/t8nut03q","slide":1,"name":"cover-title","text":"The contractor engine turns financial activity into action","textPreview":"The contractor engine turns financial activity into action","textChars":58,"textLines":1,"bbox":[72,158,1010,178]}
+{"kind":"textbox","id":"sh/s7et0vm5","slide":1,"name":"cover-subtitle","text":"A live walkthrough of trusted financial intelligence, job monitoring, owner tasks, and CPA escalation.","textPreview":"A live walkthrough of trusted financial intelligence, job monitoring, owner tasks, and CPA escalation.","textChars":102,"textLines":1,"bbox":[72,370,900,100]}
+{"kind":"shape","id":"sh/fa5cvqlw","slide":1,"name":"gold-rule","bbox":[72,540,190,8]}
+{"kind":"textbox","id":"sh/e9wb2l4b","slide":1,"name":"cover-close","text":"Jobber knows the work. Accounting knows the books. BookSmart explains what needs attention.","textPreview":"Jobber knows the work. Accounting knows the books. BookSmart explains what needs attention.","textChars":91,"textLines":1,"bbox":[72,570,1060,54]}
+{"kind":"notes","id":"nt/iczxrx","slide":1,"text":""}
+{"kind":"slide","id":"sl/woudgg","slide":2,"title":"BOOKSMART CONTRACTOR ENGINE  /  01","textShapes":3}
+{"kind":"textbox","id":"sh/587ydgni","slide":2,"name":"eyebrow-1","text":"BOOKSMART CONTRACTOR ENGINE  /  01","textPreview":"BOOKSMART CONTRACTOR ENGINE  /  01","textChars":34,"textLines":1,"bbox":[56,28,500,24]}
+{"kind":"textbox","id":"sh/i5wfi1or","slide":2,"name":"title-1","text":"The morning brief starts with trusted numbers","textPreview":"The morning brief starts with trusted numbers","textChars":45,"textLines":1,"bbox":[56,62,1168,52]}
+{"kind":"textbox","id":"sh/365gb65c","slide":2,"name":"subtitle-1","text":"BookSmart summarizes what changed, highlights risk, and labels missing inputs instead of guessing.","textPreview":"BookSmart summarizes what changed, highlights risk, and labels missing inputs instead of guessing.","textChars":98,"textLines":1,"bbox":[56,116,1168,32]}
+{"kind":"shape","id":"sh/svyxob69","slide":2,"name":"frame-1","bbox":[56,165,1168,510]}
+{"kind":"image","id":"im/kj29g7yh","slide":2,"name":"","alt":"BookSmart contractor home showing financial summary, connection alerts, tasks, insights, and health score.","bbox":[64,173,1152,494]}
+{"kind":"notes","id":"nt/woudgg","slide":2,"text":""}
+{"kind":"slide","id":"sl/4btzzc","slide":3,"title":"BOOKSMART CONTRACTOR ENGINE  /  02","textShapes":3}
+{"kind":"textbox","id":"sh/7u98b2p0","slide":3,"name":"eyebrow-2","text":"BOOKSMART CONTRACTOR ENGINE  /  02","textPreview":"BOOKSMART CONTRACTOR ENGINE  /  02","textChars":34,"textLines":1,"bbox":[56,28,500,24]}
+{"kind":"textbox","id":"sh/svi9k7ql","slide":3,"name":"title-2","text":"One accounting truth prevents double counting","textPreview":"One accounting truth prevents double counting","textChars":45,"textLines":1,"bbox":[56,62,1168,52]}
+{"kind":"textbox","id":"sh/twrqdc76","slide":3,"name":"subtitle-2","text":"Canonical approved activity drives revenue, expenses, net income, and cash movement; connected sources add context.","textPreview":"Canonical approved activity drives revenue, expenses, net income, and cash movement; connected sources add context.","textChars":115,"textLines":1,"bbox":[56,116,1168,32]}
+{"kind":"shape","id":"sh/ux0rmh8r","slide":3,"name":"frame-2","bbox":[56,165,1168,510]}
+{"kind":"image","id":"im/i1orad4z","slide":3,"name":"","alt":"BookSmart Money view showing canonical cash flow, spending, balances, and accounting summary.","bbox":[64,173,1152,494]}
+{"kind":"notes","id":"nt/4btzzc","slide":3,"text":""}
+{"kind":"slide","id":"sl/eer9p3","slide":4,"title":"BOOKSMART CONTRACTOR ENGINE  /  03","textShapes":3}
+{"kind":"textbox","id":"sh/on6xcni5","slide":4,"name":"eyebrow-3","text":"BOOKSMART CONTRACTOR ENGINE  /  03","textPreview":"BOOKSMART CONTRACTOR ENGINE  /  03","textChars":34,"textLines":1,"bbox":[56,28,500,24]}
+{"kind":"textbox","id":"sh/3mdwjihk","slide":4,"name":"title-3","text":"Signals become concrete, owned work","textPreview":"Signals become concrete, owned work","textChars":35,"textLines":1,"bbox":[56,62,1168,52]}
+{"kind":"textbox","id":"sh/2l4vad0z","slide":4,"name":"subtitle-3","text":"Every supported issue creates a persistent task with an owner, priority, due date, and deterministic lifecycle.","textPreview":"Every supported issue creates a persistent task with an owner, priority, due date, and deterministic lifecycle.","textChars":111,"textLines":1,"bbox":[56,116,1168,32]}
+{"kind":"shape","id":"sh/1kveh8ze","slide":4,"name":"frame-3","bbox":[56,165,1168,510]}
+{"kind":"image","id":"im/xo361gfm","slide":4,"name":"","alt":"BookSmart Tasks view showing connection, Jobber, cash-flow, and expense tasks.","bbox":[64,173,1152,494]}
+{"kind":"notes","id":"nt/eer9p3","slide":4,"text":""}
+{"kind":"slide","id":"sl/5xrj2p","slide":5,"title":"BOOKSMART CONTRACTOR ENGINE  /  04","textShapes":3}
+{"kind":"textbox","id":"sh/b2tobqhk","slide":5,"name":"eyebrow-4","text":"BOOKSMART CONTRACTOR ENGINE  /  04","textPreview":"BOOKSMART CONTRACTOR ENGINE  /  04","textChars":34,"textLines":1,"bbox":[56,28,500,24]}
+{"kind":"textbox","id":"sh/c325kvyp","slide":5,"name":"title-4","text":"Every insight is explainable and reviewable","textPreview":"Every insight is explainable and reviewable","textChars":43,"textLines":1,"bbox":[56,62,1168,52]}
+{"kind":"textbox","id":"sh/x4b6dgza","slide":5,"name":"subtitle-4","text":"The engine shows the condition, evidence, recommendation, source path, and whether CPA review is appropriate.","textPreview":"The engine shows the condition, evidence, recommendation, source path, and whether CPA review is appropriate.","textChars":109,"textLines":1,"bbox":[56,116,1168,32]}
+{"kind":"shape","id":"sh/y54nmlgv","slide":5,"name":"frame-4","bbox":[56,165,1168,510]}
+{"kind":"image","id":"im/6lsze9gf","slide":5,"name":"","alt":"BookSmart Insights view showing connection, income, expense, cash-flow, and Jobber signals.","bbox":[64,173,1152,494]}
+{"kind":"notes","id":"nt/5xrj2p","slide":5,"text":""}
+{"kind":"slide","id":"sl/k8ah4y","slide":6,"title":"BOOKSMART CONTRACTOR ENGINE  /  05","textShapes":3}
+{"kind":"textbox","id":"sh/do7etcry","slide":6,"name":"eyebrow-5","text":"BOOKSMART CONTRACTOR ENGINE  /  05","textPreview":"BOOKSMART CONTRACTOR ENGINE  /  05","textChars":34,"textLines":1,"bbox":[56,28,500,24]}
+{"kind":"textbox","id":"sh/qlgvixs7","slide":6,"name":"title-5","text":"The CPA sees only what the owner authorizes","textPreview":"The CPA sees only what the owner authorizes","textChars":43,"textLines":1,"bbox":[56,62,1168,52]}
+{"kind":"textbox","id":"sh/rmpwr29s","slide":6,"name":"subtitle-5","text":"Status-controlled access and supported escalation keep professional review useful without creating another ledger.","textPreview":"Status-controlled access and supported escalation keep professional review useful without creating another ledger.","textChars":114,"textLines":1,"bbox":[56,116,1168,32]}
+{"kind":"shape","id":"sh/4jydg7a1","slide":6,"name":"frame-5","bbox":[56,165,1168,510]}
+{"kind":"image","id":"im/0b25ojyx","slide":6,"name":"","alt":"BookSmart My CPA view showing engagement access, CPA attention items, and assigned tasks.","bbox":[64,173,1152,494]}
+{"kind":"notes","id":"nt/k8ah4y","slide":6,"text":""}
+{"kind":"slide","id":"sl/mn5vmb","slide":7,"title":"THE BOOKSMART MAGIC","textShapes":4}
+{"kind":"textbox","id":"sh/3ax4v6tg","slide":7,"name":"close-eyebrow","text":"THE BOOKSMART MAGIC","textPreview":"THE BOOKSMART MAGIC","textChars":19,"textLines":1,"bbox":[72,72,500,28]}
+{"kind":"textbox","id":"sh/4b6loba1","slide":7,"name":"close-title","text":"Here’s what happened. Here’s what needs attention next.","textPreview":"Here’s what happened. Here’s what needs attention next.","textChars":55,"textLines":1,"bbox":[72,150,1080,150]}
+{"kind":"textbox","id":"sh/5cfmxgbm","slide":7,"name":"close-body","text":"The first contractor engine already connects trusted accounting activity, operational Jobber context, monitoring signals, persistent tasks, and CPA review. The remaining work is production validation and deeper provider coverage.","textPreview":"The first contractor engine already connects trusted accounting activity, operational Jobber context, monitoring signals, persistent task...","textChars":229,"textLines":1,"bbox":[72,350,1030,130]}
+{"kind":"textbox","id":"sh/u543i1cz","slide":7,"name":"close-status","text":"Core implementation: 90%  •  Overall readiness: 82%","textPreview":"Core implementation: 90%  •  Overall readiness: 82%","textChars":51,"textLines":1,"bbox":[72,560,900,48]}
+{"kind":"notes","id":"nt/mn5vmb","slide":7,"text":""}

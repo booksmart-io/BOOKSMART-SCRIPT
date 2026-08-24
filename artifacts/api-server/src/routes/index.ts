@@ -30,6 +30,10 @@ import connectionStatusRouter from "./connection-status";
 import jobberRouter from "./jobber";
 import financialInputsRouter from "./financial-inputs";
 import financialSummaryRouter from "./financial-summary";
+import contractorFinancialIntelligenceRouter from "./contractor-financial-intelligence";
+import contractorReceiptsRouter from "./contractor-receipts";
+import contractorDiagnosticsRouter from "./contractor-diagnostics";
+import contractorGmailRouter from "./contractor-gmail";
 
 const router: IRouter = Router();
 
@@ -64,5 +68,9 @@ router.use(connectionStatusRouter);
 router.use(jobberRouter);
 router.use(financialInputsRouter);
 router.use(financialSummaryRouter);
+router.use(contractorFinancialIntelligenceRouter);
+router.use(contractorReceiptsRouter);
+router.use(contractorDiagnosticsRouter);
+router.use(contractorGmailRouter);
 
 export default router;

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { evaluateJobberOperationalPlanning, evaluateJobberOperationalRecords, jobberMonitoringEnabled, type JobberMonitoringRecord } from "./jobber-monitoring";
+import { evaluateApprovedJobberCandidates, evaluateJobberMonitoringPreview, evaluateJobberOperationalPlanning, evaluateJobberOperationalRecords, isApprovedJobberSignalKey, isJobberLifecycleKey, JOBBER_UNINVOICED_HIGH_THRESHOLD, JOBBER_UNSCHEDULED_HIGH_COUNT, jobberMonitoringEnabled, jobberMonitoringOrganizationIds, jobberMonitoringPreviewEnabled, jobberMonitoringPreviewOrganizationIds, type JobberMonitoringRecord } from "./jobber-monitoring";
 
 const record = (values: Partial<JobberMonitoringRecord>): JobberMonitoringRecord => ({
   external_id: "jobber-1", object_type: "jobs", record_number: "101", status: null, title: "Test record",
@@ -9,21 +9,80 @@ const record = (values: Partial<JobberMonitoringRecord>): JobberMonitoringRecord
 });
 const now = new Date("2026-08-11T12:00:00.000Z");
 
-test("Jobber monitoring is local-only and disabled by default", () => {
-  assert.equal(jobberMonitoringEnabled({ NODE_ENV: "development" }), false);
-  assert.equal(jobberMonitoringEnabled({ NODE_ENV: "development", JOBBER_MONITORING_ENABLED: "true" }), true);
-  assert.equal(jobberMonitoringEnabled({ NODE_ENV: "production", JOBBER_MONITORING_ENABLED: "true" }), false);
+test("Jobber monitoring requires the feature flag plus either global rollout or an explicit allowlist", () => {
+  assert.equal(jobberMonitoringEnabled(7, {}), false);
+  assert.equal(jobberMonitoringEnabled(7, { JOBBER_MONITORING_ENABLED: "true" }), false);
+  assert.equal(jobberMonitoringEnabled(7, { JOBBER_MONITORING_ENABLED: "true", JOBBER_MONITORING_ORGANIZATION_IDS: "8,9" }), false);
+  assert.equal(jobberMonitoringEnabled(7, { NODE_ENV: "production", JOBBER_MONITORING_ENABLED: "true", JOBBER_MONITORING_ORGANIZATION_IDS: "7, 9" }), true);
+  assert.equal(jobberMonitoringEnabled(7, { JOBBER_MONITORING_ENABLED: "true", JOBBER_MONITORING_ROLLOUT: "all" }), true);
+  assert.equal(jobberMonitoringEnabled(8, { JOBBER_MONITORING_ENABLED: "true", JOBBER_MONITORING_ROLLOUT: "all" }), true);
+  assert.equal(jobberMonitoringEnabled(0, { JOBBER_MONITORING_ENABLED: "true", JOBBER_MONITORING_ROLLOUT: "all" }), false);
+  assert.deepEqual([...jobberMonitoringOrganizationIds({ JOBBER_MONITORING_ORGANIZATION_IDS: "7,invalid,-1,7,9" })], [7, 9]);
+});
+
+test("Jobber preview uses a separate allowlist that cannot enable persistent monitoring", () => {
+  const env = { JOBBER_MONITORING_ENABLED: "true", JOBBER_MONITORING_PREVIEW_ORGANIZATION_IDS: "63" };
+  assert.equal(jobberMonitoringPreviewEnabled(63, env), true);
+  assert.equal(jobberMonitoringEnabled(63, env), false);
+  assert.deepEqual([...jobberMonitoringPreviewOrganizationIds(env)], [63]);
+  assert.equal(jobberMonitoringPreviewEnabled(64, env), false);
+});
+
+test("monitoring preview is deterministic, owner-only in content, and does not mutate source records", () => {
+  const records = [record({ status: "requires_invoicing", payload: { uninvoicedTotal: 750 } })];
+  const before = structuredClone(records);
+  const preview = evaluateJobberMonitoringPreview(records, now);
+  assert.equal(preview.length, 1);
+  assert.equal(preview[0]?.requiresCpaReview, false);
+  assert.equal(preview[0]?.provider, "jobber");
+  assert.deepEqual(records, before);
+  assert.deepEqual(evaluateJobberMonitoringPreview(records, now), preview);
+});
+
+test("persistent evaluation for all connected organizations permits only the two approved signal families", () => {
+  const candidates = evaluateApprovedJobberCandidates([
+    record({ external_id: "invoice-job", status: "requires_invoicing", payload: { uninvoicedTotal: 400 } }),
+    record({ external_id: "unscheduled-job", status: "unscheduled" }),
+    record({ external_id: "past-due", object_type: "invoices", status: "past_due", payload: { amounts: { invoiceBalance: 900 } } }),
+    record({ external_id: "old-quote", object_type: "quotes", status: "awaiting_response", payload: { transitionedAt: "2026-07-01T00:00:00.000Z" } }),
+    record({ external_id: "visit", object_type: "scheduled_items", status: "scheduled", starts_at: "2026-08-13T12:00:00.000Z" }),
+  ], now);
+  assert.deepEqual(candidates.map(candidate => candidate.signalKey).sort(), [
+    "jobber:requires-invoicing:invoice-job",
+    "jobber:unscheduled-active-jobs",
+  ]);
+  assert.equal(candidates.every(candidate => candidate.requiresCpaReview === false), true);
+  assert.equal(isApprovedJobberSignalKey("jobber:outstanding-invoice:past-due"), false);
+  assert.equal(isJobberLifecycleKey("jobber:outstanding-invoice:past-due"), true);
+  assert.equal(isJobberLifecycleKey("revenue-trend"), false);
 });
 
 test("explicit requires-invoicing jobs create traceable operational signals", () => {
   const signals = evaluateJobberOperationalRecords([record({ status: "requires_invoicing", payload: { uninvoicedTotal: 750 } })], now);
   assert.equal(signals.length, 1);
-  assert.equal(signals[0]?.signalKey, "jobber:completed-uninvoiced:jobber-1");
+  assert.equal(signals[0]?.signalKey, "jobber:requires-invoicing:jobber-1");
   assert.equal(signals[0]?.currentValue, 750);
   assert.equal(signals[0]?.provider, "jobber");
   assert.equal(signals[0]?.requiresCpaReview, false);
   assert.deepEqual(signals[0]?.sourceIds, ["jobber-1"]);
   assert.match(signals[0]?.description ?? "", /not counted as BookSmart revenue/i);
+});
+
+test("requires-invoicing severity changes exactly at the proposed high threshold", () => {
+  const below = evaluateJobberOperationalRecords([record({ status: "requires_invoicing", payload: { uninvoicedTotal: JOBBER_UNINVOICED_HIGH_THRESHOLD - 0.01 } })], now);
+  const boundary = evaluateJobberOperationalRecords([record({ status: "requires_invoicing", payload: { uninvoicedTotal: JOBBER_UNINVOICED_HIGH_THRESHOLD } })], now);
+  assert.equal(below[0]?.severity, "medium");
+  assert.equal(boundary[0]?.severity, "high");
+});
+
+test("requires-invoicing candidate resolves when Jobber no longer reports that state", () => {
+  assert.equal(evaluateJobberOperationalRecords([record({ status: "requires_invoicing", payload: { uninvoicedTotal: 400 } })], now).length, 1);
+  assert.deepEqual(evaluateJobberOperationalRecords([record({ status: "active", payload: { uninvoicedTotal: 400 } })], now), []);
+});
+
+test("requires-invoicing rule does not infer uninvoiced value from a generic job amount", () => {
+  const signals = evaluateJobberOperationalRecords([record({ status: "requires_invoicing", amount: 8_000, payload: {} })], now);
+  assert.deepEqual(signals, []);
 });
 
 test("invoice rules use Jobber invoiceBalance and due status without recognizing revenue", () => {
@@ -81,6 +140,17 @@ test("unscheduled jobs create one deterministic owner signal with traceable sour
   assert.equal(gap?.currentValue, 2);
   assert.equal(gap?.signalType, "bookkeeping");
   assert.deepEqual(gap?.sourceIds, ["job-a", "job-b"]);
+});
+
+test("unscheduled-job severity changes exactly at the proposed count threshold", () => {
+  const jobs = Array.from({ length: JOBBER_UNSCHEDULED_HIGH_COUNT }, (_, index) => record({ external_id: `unscheduled-${index}`, status: "unscheduled" }));
+  const below = evaluateJobberOperationalPlanning(jobs.slice(0, JOBBER_UNSCHEDULED_HIGH_COUNT - 1), now)
+    .find(signal => signal.signalKey === "jobber:unscheduled-active-jobs");
+  const boundary = evaluateJobberOperationalPlanning(jobs, now)
+    .find(signal => signal.signalKey === "jobber:unscheduled-active-jobs");
+  assert.equal(below?.severity, "medium");
+  assert.equal(boundary?.severity, "high");
+  assert.equal(boundary?.requiresCpaReview, false);
 });
 
 test("job-volume trends require sixty days and ten jobs of history", () => {

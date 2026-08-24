@@ -9,12 +9,50 @@ import {
   resolveFinancialStatements,
   type StatementPeriod,
 } from "../../../booksmart/src/lib/financial-statements";
-import { createFinancialSummary } from "../../../booksmart/src/lib/financial-summary";
+import { createFinancialSummary, type BusinessHealthScore, type FinancialSummarySource } from "../../../booksmart/src/lib/financial-summary";
 import { trustedTransactions } from "../../../booksmart/src/lib/trusted-transactions";
 import { summarizeDeductions, type DeductionRule, type DeductionRuleGroup, type OrgRow } from "../../../booksmart/src/lib/deduction-calculation";
 import { normalizeStateId } from "../../../booksmart/src/lib/state-id";
 
 export const CANONICAL_FINANCIAL_SUMMARY_VERSION = "financial-summary-v2" as const;
+export type CanonicalFinancialSummaryVersion = typeof CANONICAL_FINANCIAL_SUMMARY_VERSION;
+export type CanonicalStatementSource = "transactions" | "uploaded";
+export type CanonicalPeriodSemantics = "inclusive_custom_range";
+export type CanonicalFinancialWarning = "uncategorized_transactions_excluded" | "pending_statements_excluded" | "mixed_financial_sources";
+
+export type CanonicalFinancialVisuals = {
+  cashFlowBars: {
+    mode: "daily" | "statement_sections";
+    points: Array<{ key: string; label: string; value: number; moneyIn?: number; moneyOut?: number }>;
+  };
+  spendingBreakdown: Array<{ key: "cost_of_sales" | "operating" | "other" | "taxes"; label: string; value: number }>;
+};
+
+export type CanonicalFinancialSummary = {
+  organizationId: number;
+  period: { start: string; end: string; semantics: CanonicalPeriodSemantics };
+  calculationVersion: CanonicalFinancialSummaryVersion;
+  source: FinancialSummarySource;
+  sources: { pnl: CanonicalStatementSource; balanceSheet: CanonicalStatementSource; cashFlow: CanonicalStatementSource };
+  revenue: number;
+  accountingExpenses: number;
+  netIncome: number;
+  moneyIn: number;
+  moneyOut: number;
+  netCashMovement: number;
+  profitMarginPct: number | null;
+  deductibleAmount: number;
+  health: BusinessHealthScore;
+  visuals: CanonicalFinancialVisuals;
+  completeness: {
+    approvedTransactionCount: number;
+    uncategorizedTransactionCount: number;
+    confirmedStatementCount: number;
+    pendingStatementCount: number;
+    complete: boolean;
+  };
+  warnings: CanonicalFinancialWarning[];
+};
 
 export type CanonicalStatementDocument = {
   id: number;
@@ -68,7 +106,56 @@ function transactionFallback(report: ReturnType<typeof calculateFinancialReport>
   };
 }
 
-export function buildCanonicalFinancialSummary(input: CanonicalFinancialSummaryInput) {
+const roundMoney = (value: number) => Math.round((value + Number.EPSILON) * 100) / 100;
+
+function buildCashFlowBars(
+  classified: ReturnType<typeof calculateFinancialReport>["classifiedTransactions"],
+  source: CanonicalStatementSource,
+  resolvedCashFlow: { operating: number; investing: number; financing: number },
+): CanonicalFinancialVisuals["cashFlowBars"] {
+  if (source === "uploaded") {
+    return {
+      mode: "statement_sections",
+      points: [
+        { key: "operating", label: "Operating", value: resolvedCashFlow.operating },
+        { key: "investing", label: "Investing", value: resolvedCashFlow.investing },
+        { key: "financing", label: "Financing", value: resolvedCashFlow.financing },
+      ],
+    };
+  }
+  const daily = new Map<string, { moneyIn: number; moneyOut: number }>();
+  for (const transaction of classified) {
+    if (transaction.isTransfer) continue;
+    const timestamp = new Date(transaction.date_time);
+    if (Number.isNaN(timestamp.getTime())) continue;
+    const key = timestamp.toISOString().slice(0, 10);
+    const totals = daily.get(key) ?? { moneyIn: 0, moneyOut: 0 };
+    if (transaction.amount > 0) totals.moneyIn += transaction.amount;
+    else if (transaction.amount < 0) totals.moneyOut += Math.abs(transaction.amount);
+    daily.set(key, totals);
+  }
+  return {
+    mode: "daily",
+    points: [...daily.entries()].sort(([left], [right]) => left.localeCompare(right)).map(([key, totals]) => ({
+      key,
+      label: new Date(`${key}T00:00:00.000Z`).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" }),
+      value: roundMoney(totals.moneyIn - totals.moneyOut),
+      moneyIn: roundMoney(totals.moneyIn),
+      moneyOut: roundMoney(totals.moneyOut),
+    })),
+  };
+}
+
+function buildSpendingBreakdown(pnl: { totalCogs: number; totalOpex: number; totalExpenses: number }): CanonicalFinancialVisuals["spendingBreakdown"] {
+  const otherAndTaxes = Math.max(0, pnl.totalExpenses - pnl.totalCogs - pnl.totalOpex);
+  return [
+    { key: "cost_of_sales", label: "Cost of sales", value: roundMoney(Math.max(0, pnl.totalCogs)) },
+    { key: "operating", label: "Operating", value: roundMoney(Math.max(0, pnl.totalOpex)) },
+    { key: "other", label: "Other & taxes", value: roundMoney(otherAndTaxes) },
+  ].filter(item => item.value > 0) as CanonicalFinancialVisuals["spendingBreakdown"];
+}
+
+export function buildCanonicalFinancialSummary(input: CanonicalFinancialSummaryInput): CanonicalFinancialSummary {
   const transactions = trustedTransactions("transactions", input.transactions);
   const report = calculateFinancialReport({
     transactions,
@@ -113,7 +200,7 @@ export function buildCanonicalFinancialSummary(input: CanonicalFinancialSummaryI
     const workflow = document.parsed_data?.statement_workflow;
     return workflow && typeof workflow === "object" && ["uploaded", "extracting", "needs_review"].includes(String((workflow as Record<string, unknown>).lifecycle_status));
   }).length;
-  const warnings: string[] = [];
+  const warnings: CanonicalFinancialWarning[] = [];
   if (summary.unclassifiedTransactionCount > 0) warnings.push("uncategorized_transactions_excluded");
   if (pendingStatements > 0) warnings.push("pending_statements_excluded");
   if (resolved.sources.pnl !== resolved.sources.cashFlow) warnings.push("mixed_financial_sources");
@@ -132,6 +219,10 @@ export function buildCanonicalFinancialSummary(input: CanonicalFinancialSummaryI
     profitMarginPct: summary.profitMarginPct,
     deductibleAmount: summary.deductibleAmount,
     health: summary.health,
+    visuals: {
+      cashFlowBars: buildCashFlowBars(classified, resolved.sources.cashFlow, resolved.cashFlow),
+      spendingBreakdown: buildSpendingBreakdown(resolved.pnl),
+    },
     completeness: {
       approvedTransactionCount: summary.transactionCount,
       uncategorizedTransactionCount: summary.unclassifiedTransactionCount,

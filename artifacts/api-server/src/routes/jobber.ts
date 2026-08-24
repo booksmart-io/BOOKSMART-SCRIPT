@@ -10,11 +10,14 @@ import {
   verifyJobberOAuthState,
 } from "../lib/jobber-oauth";
 import { syncJobberReadOnly } from "../lib/jobber-sync";
-import { jobberMonitoringEnabled } from "../lib/jobber-monitoring";
+import { evaluateJobberMonitoringPreview, jobberMonitoringEnabled, jobberMonitoringPreviewEnabled, type JobberMonitoringRecord } from "../lib/jobber-monitoring";
 import { scheduleMonitoringEvaluation } from "../lib/monitoring-runner";
 import { JobberConnectionError } from "../lib/jobber-client";
 import { requireOwnedJobberOrganization, scopeJobberAudit, scopeJobberConnection, scopeJobberRecords } from "../lib/jobber-access";
 import { writeJobberAuditEvent, type JobberAuditErrorCategory } from "../lib/jobber-audit";
+import { evaluateJobberCpaEscalationPreview, jobberCpaSharingEligibility } from "../lib/jobber-cpa-escalation";
+import { isApprovedCpa } from "../lib/cpa-access";
+import { CPA_MONITORING_ENGAGEMENT_STATUSES } from "../lib/cpa-monitoring-access";
 
 const router = Router();
 type AdminClient = SupabaseClient<any, any, any>;
@@ -369,15 +372,198 @@ router.get("/integrations/jobber/records", requireAuth, async (req, res) => {
     const page = Math.max(1, Number.parseInt(String(req.query.page ?? "1"), 10) || 1);
     const pageSize = Math.min(100, Math.max(10, Number.parseInt(String(req.query.page_size ?? "50"), 10) || 50));
     const from = (page - 1) * pageSize;
-    const { data, count, error } = await scopeJobberRecords((admin as any).from("jobber_records")
+    const recordId = typeof req.query.record_id === "string" ? req.query.record_id.trim().slice(0, 300) : "";
+    let recordsQuery = scopeJobberRecords((admin as any).from("jobber_records")
       .select("external_id,object_type,related_client_id,parent_id,record_number,status,title,starts_at,ends_at,source_created_at,source_updated_at,direct_url,amount,is_archived,archived_at,last_seen_at", { count: "exact" })
-      , organization.id, objectType)
+      , organization.id, objectType);
+    if (recordId) recordsQuery = recordsQuery.eq("external_id", recordId);
+    const { data, count, error } = await recordsQuery
       .order("source_updated_at", { ascending: false, nullsFirst: false }).range(from, from + pageSize - 1);
     if (error) throw error;
     res.json({ records: data ?? [], page, page_size: pageSize, total: count ?? 0, object_type: objectType });
   } catch (error) {
     req.log?.error({ err: error }, "Jobber records load failed");
     res.status(500).json({ error: "jobber_records_load_failed", message: "Could not load Jobber records" });
+  }
+});
+
+router.get("/integrations/jobber/monitoring-preview", requireAuth, async (req, res) => {
+  try {
+    const admin = adminClient();
+    const organization = await requireOwnedJobberOrganization(admin, req.supabaseUserId!, req.query.organization_id);
+    if (!jobberMonitoringPreviewEnabled(Number(organization.id))) {
+      res.status(403).json({ error: "jobber_monitoring_not_enabled", message: "Jobber monitoring is not enabled for this organization." });
+      return;
+    }
+    const { data: connection, error: connectionError } = await scopeJobberConnection((admin as any)
+      .from("jobber_connections").select("id,status,last_successful_sync_at"), organization.id).eq("status", "active").maybeSingle();
+    if (connectionError) throw connectionError;
+    if (!connection) { res.status(404).json({ error: "jobber_connection_not_found" }); return; }
+    const { data, error } = await admin.from("jobber_records")
+      .select("external_id,object_type,record_number,status,title,amount,starts_at,ends_at,source_created_at,source_updated_at,direct_url,is_archived,payload")
+      .eq("organization_id", organization.id)
+      .eq("connection_id", connection.id)
+      .in("object_type", ["jobs", "scheduled_items", "quotes", "invoices"]);
+    if (error) throw error;
+    const candidates = evaluateJobberMonitoringPreview((data ?? []) as JobberMonitoringRecord[]);
+    res.json({
+      dry_run: true,
+      persisted: false,
+      organization_id: Number(organization.id),
+      last_successful_sync_at: connection.last_successful_sync_at,
+      calculation_version: "jobber-operational-v1",
+      candidate_count: candidates.length,
+      candidates,
+    });
+  } catch (error) {
+    req.log?.error({ err: error }, "Jobber monitoring preview failed");
+    const message = error instanceof Error ? error.message : "Could not preview Jobber monitoring";
+    const status = /organization|profile/i.test(message) ? 403 : 500;
+    res.status(status).json({ error: "jobber_monitoring_preview_failed", message });
+  }
+});
+
+router.get("/integrations/jobber/cpa-sharing", requireAuth, async (req, res) => {
+  try {
+    const admin = adminClient();
+    const organization = await requireOwnedJobberOrganization(admin, req.supabaseUserId!, req.query.organization_id);
+    const { data, error } = await admin.from("jobber_cpa_sharing_settings").select("enabled,consented_at,updated_at")
+      .eq("organization_id", organization.id).maybeSingle();
+    if (error) throw error;
+    res.json({ organization_id: Number(organization.id), enabled: data?.enabled === true, consented_at: data?.consented_at ?? null, updated_at: data?.updated_at ?? null });
+  } catch (error) {
+    req.log?.error({ err: error }, "Jobber CPA sharing settings load failed");
+    const status = /organization|profile/i.test(error instanceof Error ? error.message : "") ? 403 : 500;
+    res.status(status).json({ error: "jobber_cpa_sharing_load_failed", message: "Could not load Jobber CPA sharing settings." });
+  }
+});
+
+router.put("/integrations/jobber/cpa-sharing", requireAuth, async (req, res) => {
+  try {
+    if (typeof req.body?.enabled !== "boolean") { res.status(400).json({ error: "enabled_boolean_required" }); return; }
+    const admin = adminClient();
+    const organization = await requireOwnedJobberOrganization(admin, req.supabaseUserId!, req.body?.organization_id);
+    const now = new Date().toISOString();
+    const { data, error } = await admin.from("jobber_cpa_sharing_settings").upsert({
+      organization_id: organization.id,
+      enabled: req.body.enabled,
+      consented_by_user_id: req.body.enabled ? organization.owner_id : null,
+      consented_at: req.body.enabled ? now : null,
+      updated_at: now,
+    }, { onConflict: "organization_id" }).select("enabled,consented_at,updated_at").single();
+    if (error) throw error;
+    res.json({ organization_id: Number(organization.id), ...data, cpa_visibility_changed: false, persisted_escalations_created: 0 });
+  } catch (error) {
+    req.log?.error({ err: error }, "Jobber CPA sharing settings update failed");
+    const status = /organization|profile/i.test(error instanceof Error ? error.message : "") ? 403 : 500;
+    res.status(status).json({ error: "jobber_cpa_sharing_update_failed", message: "Could not update Jobber CPA sharing settings." });
+  }
+});
+
+router.get("/integrations/jobber/cpa-escalation-preview", requireAuth, async (req, res) => {
+  try {
+    const admin = adminClient();
+    const organization = await requireOwnedJobberOrganization(admin, req.supabaseUserId!, req.query.organization_id);
+    const [{ data: connection, error: connectionError }, { data: setting, error: settingError }, { data: engagements, error: engagementError }] = await Promise.all([
+      admin.from("jobber_connections").select("id,last_successful_sync_at").eq("organization_id", organization.id).eq("status", "active").maybeSingle(),
+      admin.from("jobber_cpa_sharing_settings").select("enabled").eq("organization_id", organization.id).maybeSingle(),
+      admin.from("orders").select("id,cpa_id,status").eq("user_id", organization.owner_id).in("status", [...CPA_MONITORING_ENGAGEMENT_STATUSES]),
+    ]);
+    if (connectionError || settingError || engagementError) throw connectionError ?? settingError ?? engagementError;
+    if (!connection) { res.status(404).json({ error: "jobber_connection_not_found" }); return; }
+    const cpaIds = [...new Set((engagements ?? []).map(row => Number(row.cpa_id)).filter(value => Number.isSafeInteger(value) && value > 0))];
+    const { data: cpas, error: cpaError } = cpaIds.length
+      ? await admin.from("users").select("id,role,verification_status").in("id", cpaIds)
+      : { data: [], error: null };
+    if (cpaError) throw cpaError;
+    const approvedCpaIds = new Set((cpas ?? []).filter(isApprovedCpa).map(row => Number(row.id)));
+    const activeApprovedCpaEngagement = (engagements ?? []).some(row => approvedCpaIds.has(Number(row.cpa_id)));
+    const { data: records, error: recordError } = await admin.from("jobber_records")
+      .select("external_id,object_type,record_number,status,title,amount,starts_at,ends_at,source_created_at,source_updated_at,direct_url,is_archived,payload")
+      .eq("organization_id", organization.id).eq("connection_id", connection.id).eq("object_type", "jobs");
+    if (recordError) throw recordError;
+    const candidates = evaluateJobberCpaEscalationPreview((records ?? []) as JobberMonitoringRecord[]);
+    const eligibility = jobberCpaSharingEligibility({ consentEnabled: setting?.enabled === true, activeApprovedCpaEngagement });
+    const candidateKeys = candidates.map(candidate => candidate.candidateKey);
+    const { data: sharedTasks, error: sharedTaskError } = candidateKeys.length
+      ? await admin.from("financial_tasks").select("source_id").eq("organization_id", organization.id)
+        .eq("source", "signal").in("source_id", candidateKeys).in("status", ["open", "in_progress", "waiting"])
+      : { data: [], error: null };
+    if (sharedTaskError) throw sharedTaskError;
+    const sharedKeys = new Set((sharedTasks ?? []).map(task => String(task.source_id)));
+    res.json({
+      dry_run: true, persisted: false, cpa_visibility_changed: false,
+      organization_id: Number(organization.id), last_successful_sync_at: connection.last_successful_sync_at,
+      consent_enabled: setting?.enabled === true, active_approved_cpa_engagement: activeApprovedCpaEngagement,
+      eligible_for_future_escalation: eligibility.eligible, eligibility_reasons: eligibility.reasons,
+      candidate_count: candidates.length, candidates: candidates.map(candidate => ({ ...candidate, shared: sharedKeys.has(candidate.candidateKey) })),
+    });
+  } catch (error) {
+    req.log?.error({ err: error }, "Jobber CPA escalation preview failed");
+    const status = /organization|profile/i.test(error instanceof Error ? error.message : "") ? 403 : 500;
+    res.status(status).json({ error: "jobber_cpa_escalation_preview_failed", message: "Could not preview Jobber CPA escalation." });
+  }
+});
+
+router.post("/integrations/jobber/cpa-escalations", requireAuth, async (req, res) => {
+  try {
+    const candidateKey = typeof req.body?.candidate_key === "string" ? req.body.candidate_key.trim() : "";
+    if (!candidateKey || candidateKey.length > 300) { res.status(400).json({ error: "candidate_key_required" }); return; }
+    const admin = adminClient();
+    const organization = await requireOwnedJobberOrganization(admin, req.supabaseUserId!, req.body?.organization_id);
+    const [{ data: connection, error: connectionError }, { data: setting, error: settingError }, { data: engagements, error: engagementError }] = await Promise.all([
+      admin.from("jobber_connections").select("id").eq("organization_id", organization.id).eq("status", "active").maybeSingle(),
+      admin.from("jobber_cpa_sharing_settings").select("enabled").eq("organization_id", organization.id).maybeSingle(),
+      admin.from("orders").select("id,cpa_id,status").eq("user_id", organization.owner_id)
+        .in("status", [...CPA_MONITORING_ENGAGEMENT_STATUSES]).order("id", { ascending: false }),
+    ]);
+    if (connectionError || settingError || engagementError) throw connectionError ?? settingError ?? engagementError;
+    if (!connection) { res.status(409).json({ error: "jobber_connection_required", message: "Connect Jobber before sharing an item." }); return; }
+    const cpaIds = [...new Set((engagements ?? []).map(row => Number(row.cpa_id)).filter(value => Number.isSafeInteger(value) && value > 0))];
+    const { data: cpas, error: cpaError } = cpaIds.length ? await admin.from("users").select("id,role,verification_status").in("id", cpaIds) : { data: [], error: null };
+    if (cpaError) throw cpaError;
+    const approvedCpaIds = new Set((cpas ?? []).filter(isApprovedCpa).map(row => Number(row.id)));
+    const engagement = (engagements ?? []).find(row => approvedCpaIds.has(Number(row.cpa_id)));
+    const eligibility = jobberCpaSharingEligibility({ consentEnabled: setting?.enabled === true, activeApprovedCpaEngagement: Boolean(engagement) });
+    if (!eligibility.eligible || !engagement) { res.status(409).json({ error: "cpa_escalation_not_eligible", reasons: eligibility.reasons }); return; }
+
+    const { data: records, error: recordError } = await admin.from("jobber_records")
+      .select("external_id,object_type,record_number,status,title,amount,starts_at,ends_at,source_created_at,source_updated_at,direct_url,is_archived,payload")
+      .eq("organization_id", organization.id).eq("connection_id", connection.id).eq("object_type", "jobs");
+    if (recordError) throw recordError;
+    const candidate = evaluateJobberCpaEscalationPreview((records ?? []) as JobberMonitoringRecord[]).find(item => item.candidateKey === candidateKey);
+    if (!candidate) { res.status(409).json({ error: "candidate_no_longer_qualifies", message: "This Jobber item no longer meets the CPA review requirements." }); return; }
+    const { data: existing, error: existingError } = await admin.from("financial_tasks").select("id,status")
+      .eq("organization_id", organization.id).eq("source", "signal").eq("source_id", candidate.candidateKey)
+      .in("status", ["open", "in_progress", "waiting"]).limit(1).maybeSingle();
+    if (existingError) throw existingError;
+    if (existing) { res.json({ task_id: Number(existing.id), already_shared: true, shared_with_cpa_id: Number(engagement.cpa_id) }); return; }
+
+    const due = new Date(); due.setUTCDate(due.getUTCDate() + 3);
+    const { data: task, error: taskError } = await admin.from("financial_tasks").insert({
+      organization_id: organization.id, source: "signal", source_id: candidate.candidateKey, category: "jobber",
+      priority: "high", title: candidate.title, description: candidate.description, due_date: due.toISOString().slice(0, 10),
+      status: "open", cta_label: "Open in Jobber", cta_route: candidate.directUrl, requires_cpa: false,
+      assigned_user_id: Number(engagement.cpa_id), assignment_role: "cpa",
+      metadata: { provider: "jobber", candidate_key: candidate.candidateKey, source_ids: candidate.sourceIds, direct_url: candidate.directUrl, amount: candidate.amount, age_days: candidate.ageDays, accounting_effect: "none", shared_manually: true, engagement_id: engagement.id },
+    }).select("id").single();
+    if (taskError?.code === "23505") {
+      const { data: concurrent } = await admin.from("financial_tasks").select("id").eq("organization_id", organization.id)
+        .eq("source", "signal").eq("source_id", candidate.candidateKey).in("status", ["open", "in_progress", "waiting"]).limit(1).maybeSingle();
+      if (concurrent) { res.json({ task_id: Number(concurrent.id), already_shared: true, shared_with_cpa_id: Number(engagement.cpa_id) }); return; }
+    }
+    if (taskError) throw taskError;
+    const { error: eventError } = await admin.from("financial_task_events").insert({
+      organization_id: organization.id, task_id: task.id, actor_user_id: organization.owner_id,
+      event_type: "created", from_status: null, to_status: "open",
+      metadata: { source: "jobber_cpa_manual_share", candidate_key: candidate.candidateKey, engagement_id: engagement.id, accounting_effect: "none" },
+    });
+    if (eventError) throw eventError;
+    res.status(201).json({ task_id: Number(task.id), already_shared: false, shared_with_cpa_id: Number(engagement.cpa_id) });
+  } catch (error) {
+    req.log?.error({ err: error }, "Jobber CPA escalation share failed");
+    const status = /organization|profile/i.test(error instanceof Error ? error.message : "") ? 403 : 500;
+    res.status(status).json({ error: "jobber_cpa_escalation_share_failed", message: "Could not share this Jobber item with the CPA." });
   }
 });
 
@@ -426,7 +612,7 @@ router.post("/integrations/jobber/sync", requireAuth, async (req, res) => {
         object_counts: result.counts,
       },
     });
-    if (jobberMonitoringEnabled()) scheduleMonitoringEvaluation(admin, organization.id, "jobber_sync_completed");
+    if (jobberMonitoringEnabled(Number(organization.id))) scheduleMonitoringEvaluation(admin, organization.id, "jobber_sync_completed");
     res.json({ ok: true, ...result, completed_at: now });
   } catch (error) {
     req.log?.error({ err: error }, "Jobber sync failed");
@@ -498,24 +684,11 @@ router.post("/integrations/jobber/disconnect", requireAuth, async (req, res) => 
       );
     }
 
-    const { error: updateError } = await admin.from("jobber_connections").update({
-      access_token_encrypted: null,
-      refresh_token_encrypted: null,
-      access_token_expires_at: null,
-      status: "disconnected",
-      disconnected_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    }).eq("organization_id", organization.id);
-    if (updateError) throw updateError;
-    await writeJobberAuditEvent(admin, {
-      organizationId: organization.id,
-      connectionId: data.id,
-      actorUserId: organization.owner_id,
-      eventType: "disconnected",
-      outcome: "succeeded",
-      metadata: { remote_revocation_confirmed: revoked },
+    const { data: purgeResult, error: purgeError } = await admin.rpc("purge_jobber_organization_data", {
+      requested_organization_id: organization.id,
     });
-    res.json({ ok: true, connected: false, revoked, warning });
+    if (purgeError) throw purgeError;
+    res.json({ ok: true, connected: false, revoked, warning, deleted: purgeResult });
   } catch (error) {
     req.log?.error({ err: error }, "Jobber disconnect failed");
     res.status(500).json({ error: "jobber_disconnect_failed", message: "Could not disconnect Jobber" });
