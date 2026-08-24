@@ -8,7 +8,7 @@
     "build": "vite build --config vite.config.ts",
     "serve": "vite preview --config vite.config.ts --host 0.0.0.0",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "tsx --test src/lib/financial-engine.test.ts src/lib/financial-summary.test.ts src/lib/financial-statements.test.ts src/lib/future-financial-services.test.ts src/lib/home-readiness.test.ts src/lib/monitoring-task-presentation.test.ts src/lib/my-cpa-access.test.ts src/lib/statement-export.test.ts src/lib/route-access.test.ts src/lib/state-id.test.ts src/lib/trusted-transactions.test.ts"
+    "test": "tsx --test src/lib/manual-transaction-date.test.ts src/lib/financial-engine.test.ts src/lib/financial-summary.test.ts src/lib/financial-statements.test.ts src/lib/future-financial-services.test.ts src/lib/home-readiness.test.ts src/lib/monitoring-task-presentation.test.ts src/lib/my-cpa-access.test.ts src/lib/statement-export.test.ts src/lib/route-access.test.ts src/lib/state-id.test.ts src/lib/trusted-transactions.test.ts"
   },
   "devDependencies": {
     "@hookform/resolvers": "^3.10.0",

@@ -54,6 +54,59 @@ export type ContractorReceipt = {
   confirmed: boolean;
 };
 
+export type ContractorTransactionJobSuggestion = {
+  transaction: {
+    id: number; title: string | null; description: string | null;
+    receipt_number: string | null; amount: number; date_time: string;
+  };
+  job: { external_id: string; record_number?: string | null; title?: string | null };
+  sourceProvider: "booksmart" | "quickbooks" | "plaid";
+  confidence: string; score: number; reasons: string[];
+  requiresConfirmation: boolean; updatedAt: string;
+};
+
+export type ApprovedContractorJobCost = {
+  assignmentId: number;
+  transaction: {
+    id: number; title: string | null; description: string | null;
+    amount: number; date_time: string;
+  };
+  job: { external_id: string; record_number?: string | null; title?: string | null };
+  sourceProvider: "booksmart" | "quickbooks" | "plaid";
+  amount: number; confidence: string; confirmedAt: string; receiptLinked: boolean;
+};
+
+export async function loadContractorTransactionJobQueue(organizationId: number) {
+  const response = await authenticatedApi(`/api/organizations/${organizationId}/contractor-job-costs/review-queue`);
+  if (!response.ok) throw new Error(await apiErrorMessage(response, "Transaction job suggestions are unavailable."));
+  return response.json() as Promise<{ suggestions: ContractorTransactionJobSuggestion[]; approved: ApprovedContractorJobCost[] }>;
+}
+
+export async function confirmContractorTransactionJob(organizationId: number, suggestion: ContractorTransactionJobSuggestion) {
+  const response = await authenticatedApi(`/api/organizations/${organizationId}/contractor-job-costs/confirm`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ transactionId: suggestion.transaction.id, jobberJobId: suggestion.job.external_id }),
+  });
+  if (!response.ok) throw new Error(await apiErrorMessage(response, "The job cost could not be confirmed."));
+  return response.json();
+}
+
+export async function rejectContractorTransactionJob(organizationId: number, transactionId: number) {
+  const response = await authenticatedApi(`/api/organizations/${organizationId}/contractor-job-costs/reject`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ transactionId }),
+  });
+  if (!response.ok) throw new Error(await apiErrorMessage(response, "The suggestion could not be dismissed."));
+  return response.json();
+}
+
+export async function removeContractorTransactionJobCost(organizationId: number, assignmentId: number) {
+  const response = await authenticatedApi(`/api/organizations/${organizationId}/contractor-job-costs/remove`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ assignmentId }),
+  });
+  if (!response.ok) throw new Error(await apiErrorMessage(response, "The job assignment could not be removed."));
+  return response.json() as Promise<{ removed: true; accountingEffect: "none"; receiptEffect: "none" }>;
+}
+
 export async function loadContractorMatchQueue(organizationId: number) {
   const response = await authenticatedApi(
     `/api/organizations/${organizationId}/contractor-receipts/review-queue`,

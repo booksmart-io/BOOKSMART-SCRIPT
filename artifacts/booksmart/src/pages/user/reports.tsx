@@ -40,6 +40,7 @@ import {
 import { useDeductionRuleSet } from "@/lib/deduction-engine";
 import { summarizeDeductions, type OrgRow } from "@/lib/deduction-calculation";
 import { normalizeStateId } from "@/lib/state-id";
+import { inclusiveLocalDayEnd, manualTransactionDate } from "@/lib/manual-transaction-date";
 import {
   PnLCard,
   BSCard,
@@ -622,7 +623,7 @@ function estimateBalanceSheetFromTransactions(
 }
 
 function getPeriodRange(period: Period): { start: Date; end: Date } {
-  const end = new Date();
+  const end = inclusiveLocalDayEnd();
   const start = new Date();
   if (period === "7d") {
     start.setDate(end.getDate() - 6);
@@ -9820,8 +9821,8 @@ async function handleConnectBank() {
                       });
                       return;
                     }
-                    const transactionDate = newDate ? new Date(`${newDate}T12:00:00`) : new Date();
-                    if (Number.isNaN(transactionDate.getTime())) {
+                    const transactionDate = newDate ? manualTransactionDate(newDate) : new Date();
+                    if (!transactionDate) {
                       toast({
                         title: "Enter a valid transaction date",
                         variant: "destructive",

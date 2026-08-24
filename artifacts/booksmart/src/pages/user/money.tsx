@@ -7,6 +7,7 @@ import { SpendingDonut } from "@/components/monitoring/monitoring-visuals";
 import { authenticatedApi, apiErrorMessage } from "@/lib/authenticated-api";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { inclusiveLocalDayEnd } from "@/lib/manual-transaction-date";
 import { ContractorMoneySummary } from "@/components/monitoring/contractor-money-summary";
 
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
@@ -22,7 +23,7 @@ export default function Money() {
   const { start, end } = useMemo(() => {
     const periodEnd = new Date();
     const periodStart = new Date(); periodStart.setDate(periodStart.getDate() - 29); periodStart.setHours(0, 0, 0, 0);
-    return { start: periodStart, end: periodEnd };
+    return { start: periodStart, end: inclusiveLocalDayEnd(periodEnd) };
   }, []);
   const summary = useQuery<CanonicalMoneySummary>({
     queryKey: ["canonical-money-overview", orgId, start.toISOString(), end.toISOString()], enabled: orgId !== null, retry: false,
