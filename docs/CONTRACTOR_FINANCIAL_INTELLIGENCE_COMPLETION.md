@@ -1,6 +1,6 @@
 # Contractor Financial Intelligence Completion Tracker
 
-Updated: August 21, 2026
+Updated: August 25, 2026
 
 This is the execution checklist for the contractor financial intelligence instruction. A checked item means the implementation exists and has automated verification; it does not imply that an unapplied migration or external provider has been validated in production.
 
@@ -55,11 +55,11 @@ Gmail is explicitly deferred from the first production release. The metadata fou
 
 ## Verification and release
 
-- [x] API unit/regression suite passes (128 tests on August 21, 2026).
-- [x] Web unit/regression suite passes (52 tests on August 21, 2026).
-- [x] Workspace typecheck passes before the Gmail foundation; API typecheck passes after it.
-- [x] API production build passes.
-- [x] Web production build passes with documented `PORT=24254` and `BASE_PATH=/` values.
+- [x] API unit/regression suite passes (131 tests on August 25, 2026).
+- [x] Web unit/regression suite passes (55 tests on August 25, 2026).
+- [x] Full workspace typecheck passes (August 25, 2026).
+- [x] API production build passes (August 25, 2026).
+- [x] Web production build passes with documented `PORT=24254` and `BASE_PATH=/` values (August 25, 2026; existing source-map and bundle-size warnings remain non-blocking).
 - [x] Admin contractor diagnostics render real organization data without requiring the deferred Gmail table.
 - [x] Document the current lint gate: the workspace has no ESLint/Biome configuration; `git diff --check`, TypeScript typechecking, tests, and production builds are the release gates until a repository-wide formatter/linter baseline is adopted.
 - [ ] Configure `REPLIT_INTERNAL_APP_DOMAIN`, `REPLIT_DEV_DOMAIN`, or `EXPO_PUBLIC_DOMAIN` when the separate mobile deployment is included; the API and web builds do not require it.
@@ -68,3 +68,17 @@ Gmail is explicitly deferred from the first production release. The metadata fou
 - [x] Add a read-only database audit for contractor table presence, RLS, direct grants, duplicates, and cross-organization contamination.
 - [ ] Complete non-production real-organization acceptance test.
 - [ ] Complete deployment scheduler, secrets, callback, scopes, and rollback checks.
+
+## August 25 release baseline
+
+- Contractor intelligence tests and the full workspace typecheck pass against the current working tree.
+- The read-only deployment audit confirms all five required contractor tables are exposed through Supabase HTTPS.
+- Direct RLS, grant, duplicate, and organization-isolation verification remains blocked because `DATABASE_URL` is an HTTPS project URL rather than a PostgreSQL connection string.
+- Organization 63 currently passes the focused Jobber pilot audit, including evidence, task ownership, suppressed delivery, and duplicate-key checks.
+- Organization 63 does not currently pass the full contractor acceptance audit: it is operating in Jobber-only mode, has no healthy Plaid or QuickBooks accounting/cash source, and has no current confirmed receipt chain.
+- Local provider callback URLs still point to localhost. Production Jobber and QuickBooks callback registration remains a deployment gate.
+- `BOOKSMART_API_BASE_URL` and `MONITORING_CRON_SECRET` are not configured locally, so the daily scheduler cannot run from this environment; no production secret was generated or changed during the audit.
+- Contractor monitoring remains disabled outside the explicitly configured Jobber preview organization.
+- The in-progress account-activity notification feature remains uncommitted and separate from contractor release validation.
+- Its API ownership boundary and referenced schema columns have been reviewed, but its future-dated migrations and transaction-update notification volume must be resolved before deployment.
+- Google/Gmail remains the final implementation phase after non-Gmail deployment validation, real-provider acceptance, analytics completion, and release verification.

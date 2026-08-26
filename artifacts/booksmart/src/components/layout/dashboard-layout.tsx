@@ -9,6 +9,7 @@ import { useAuth } from "@/hooks/use-auth";
 import { useTheme } from "@/components/theme-provider";
 import { useUnreadCount } from "@/hooks/use-unread-count";
 import { SubscriptionUpgradePrompt } from "@/components/subscription-upgrade-prompt";
+import { AccountNotificationBell } from "@/components/layout/account-notification-bell";
 import { supabase } from "@/lib/supabase";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -76,7 +77,6 @@ export function DashboardLayout({ children, role }: DashboardLayoutProps) {
         { title: "Tasks",               url: "/user/tasks",              icon: ClipboardList },
         { title: "My CPA",              url: "/user/my-cpa",             icon: Briefcase },
         { title: "Insights",            url: "/user/insights",           icon: Lightbulb },
-        { title: "Switch Organization", url: "/user/organizations", icon: ArrowLeftRight },
         { title: "AI Strategy",         url: "/user/ai-strategy",   icon: Gem },
         { title: "Document Repository", url: "/user/tax",           icon: Scissors },
         { title: "CPA Network",         url: "/user/cpa-network",   icon: MapPin },
@@ -148,6 +148,29 @@ export function DashboardLayout({ children, role }: DashboardLayoutProps) {
             <div className="flex items-center justify-center py-4 px-3">
               <img src="/logo.png" alt="BookSmart" className="h-[56px] w-auto object-contain" />
             </div>
+
+            {/* Keep organization switching prominent and separate from page navigation. */}
+            {role === "user" && (
+              <div className="px-3 pb-3">
+                <Link
+                  href="/user/organizations"
+                  onClick={(event) => {
+                    if (!allowNavigation("/user/organizations")) event.preventDefault();
+                  }}
+                  aria-current={isActive("/user/organizations") ? "page" : undefined}
+                  className="group flex min-h-14 w-full items-center gap-3 rounded-xl border border-primary/35 bg-primary/10 px-3 py-2.5 shadow-sm transition-all hover:border-primary/60 hover:bg-primary/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-sidebar"
+                >
+                  <span className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground shadow-sm">
+                    <ArrowLeftRight className="h-[18px] w-[18px]" strokeWidth={2.25} />
+                  </span>
+                  <span className="min-w-0 flex-1 text-left">
+                    <span className="block text-[13px] font-semibold leading-tight text-sidebar-foreground">
+                      Switch<br />organization
+                    </span>
+                  </span>
+                </Link>
+              </div>
+            )}
 
             {/* Main nav */}
             <div className="flex-1 overflow-y-auto py-1">
@@ -332,10 +355,10 @@ export function DashboardLayout({ children, role }: DashboardLayoutProps) {
               )}
 
               {/* Bell */}
-              <Link
-                href={role === "user" ? "/user/chat" : role === "cpa" ? "/cpa/chat" : "/admin/chat"}
+              {role === "user" ? <AccountNotificationBell allowNavigation={allowNavigation} /> : <Link
+                href={role === "cpa" ? "/cpa/chat" : "/admin/chat"}
                 onClick={(event) => {
-                  const target = role === "user" ? "/user/chat" : role === "cpa" ? "/cpa/chat" : "/admin/chat";
+                  const target = role === "cpa" ? "/cpa/chat" : "/admin/chat";
                   if (!allowNavigation(target)) event.preventDefault();
                 }}
               >
@@ -347,7 +370,7 @@ export function DashboardLayout({ children, role }: DashboardLayoutProps) {
                     </span>
                   )}
                 </Button>
-              </Link>
+              </Link>}
 
               {/* Theme toggle */}
               <Button

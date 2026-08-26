@@ -9,19 +9,20 @@
     "start": "node --env-file-if-exists=../../.env --enable-source-maps ./dist/index.mjs",
     "monitoring:trigger": "tsx src/scripts/trigger-scheduled-monitoring.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "tsx --test src/lib/contractor-transaction-job-matching.test.ts src/lib/financial-statements.test.ts src/lib/canonical-financial-summary.test.ts src/lib/financial-planning-summary.test.ts src/lib/financial-summary-shadow.test.ts src/lib/cpa-access.test.ts src/lib/cpa-monitoring-access.test.ts src/lib/quickbooks-oauth.test.ts src/lib/jobber-oauth.test.ts src/lib/jobber-access.test.ts src/lib/jobber-audit.test.ts src/lib/jobber-sync.test.ts src/lib/jobber-monitoring.test.ts src/lib/jobber-cpa-escalation.test.ts src/lib/monitoring.test.ts src/lib/monitoring-scheduler.test.ts src/lib/connection-status.test.ts src/lib/verified-cash-balance.test.ts src/lib/contractor-job-matcher.test.ts src/lib/contractor-financial-intelligence.test.ts src/lib/contractor-receipt.test.ts src/lib/contractor-receipt-transaction-matcher.test.ts src/lib/contractor-cost-confirmation.test.ts src/lib/contractor-cash-position.test.ts src/lib/contractor-monitoring.test.ts src/lib/contractor-diagnostics.test.ts src/lib/contractor-gmail.test.ts src/lib/contractor-settings.test.ts"
+    "test": "tsx --test src/lib/gmail-oauth.test.ts src/lib/gmail-client.test.ts src/lib/gmail-message-parser.test.ts src/lib/gmail-scan.test.ts src/lib/receipt-extraction-service.test.ts src/middlewares/api-compression.test.ts src/middlewares/api-timing.test.ts src/middlewares/require-auth.test.ts src/lib/contractor-transaction-job-matching.test.ts src/lib/financial-statements.test.ts src/lib/canonical-financial-summary.test.ts src/lib/financial-planning-summary.test.ts src/lib/financial-summary-shadow.test.ts src/lib/cpa-access.test.ts src/lib/cpa-monitoring-access.test.ts src/lib/quickbooks-oauth.test.ts src/lib/jobber-oauth.test.ts src/lib/jobber-access.test.ts src/lib/jobber-audit.test.ts src/lib/jobber-sync.test.ts src/lib/jobber-monitoring.test.ts src/lib/jobber-cpa-escalation.test.ts src/lib/monitoring.test.ts src/lib/monitoring-scheduler.test.ts src/lib/connection-status.test.ts src/lib/verified-cash-balance.test.ts src/lib/contractor-job-matcher.test.ts src/lib/contractor-financial-intelligence.test.ts src/lib/contractor-receipt.test.ts src/lib/contractor-receipt-transaction-matcher.test.ts src/lib/contractor-cost-confirmation.test.ts src/lib/contractor-cash-position.test.ts src/lib/contractor-monitoring.test.ts src/lib/contractor-diagnostics.test.ts src/lib/contractor-gmail.test.ts src/lib/contractor-settings.test.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.108.2",
     "@types/multer": "^2.1.0",
     "@workspace/api-zod": "workspace:*",
     "@workspace/db": "workspace:*",
+    "compression": "^1.8.1",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.6",
     "drizzle-orm": "catalog:",
     "express": "^5.2.1",
-    "multer": "^2.2.0",
     "mammoth": "^1.11.0",
+    "multer": "^2.2.0",
     "pdf-parse": "^1.1.4",
     "pdfjs-dist": "^5.4.530",
     "pino": "^9.14.0",
@@ -30,6 +31,7 @@
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
+    "@types/compression": "^1.8.1",
     "@types/cookie-parser": "^1.4.10",
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",

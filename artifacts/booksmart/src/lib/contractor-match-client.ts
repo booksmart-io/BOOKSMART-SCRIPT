@@ -50,8 +50,20 @@ export type ContractorReceipt = {
   created_at: string;
   updated_at: string;
   status: "unmatched" | "awaiting_review" | "processed";
+  source: "gmail" | "upload";
   removable: boolean;
   confirmed: boolean;
+  linked_transaction: ContractorTransactionOption | null;
+};
+
+export type ContractorTransactionOption = {
+  id: number;
+  title: string | null;
+  description: string | null;
+  amount: number;
+  date_time: string;
+  plaid_transaction_id: string | null;
+  quickbooks_external_id: string | null;
 };
 
 export type ContractorTransactionJobSuggestion = {
@@ -75,6 +87,26 @@ export type ApprovedContractorJobCost = {
   sourceProvider: "booksmart" | "quickbooks" | "plaid";
   amount: number; confidence: string; confirmedAt: string; receiptLinked: boolean;
 };
+
+export type JobberExpensePreview = {
+  enabled: boolean; alreadySent: boolean;
+  prior: { status: "pending" | "succeeded" | "failed"; external_expense_id?: string | null; created_at: string } | null;
+  expense: { title: string; description: string; date: string; total: number; linkedJobId: string };
+  job: { external_id: string; record_number?: string | null; title?: string | null };
+  warning: string;
+};
+
+export async function loadJobberExpensePreview(organizationId: number, assignmentId: number) {
+  const response = await authenticatedApi(`/api/organizations/${organizationId}/contractor-job-costs/${assignmentId}/jobber-expense-preview`);
+  if (!response.ok) throw new Error(await apiErrorMessage(response, "The Jobber expense preview is unavailable."));
+  return response.json() as Promise<JobberExpensePreview>;
+}
+
+export async function sendJobCostToJobber(organizationId: number, assignmentId: number) {
+  const response = await authenticatedApi(`/api/organizations/${organizationId}/contractor-job-costs/${assignmentId}/send-to-jobber`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ confirmed: true }) });
+  if (!response.ok) throw new Error(await apiErrorMessage(response, "The expense could not be sent to Jobber."));
+  return response.json() as Promise<{ sent: true; expense: { id: string; title?: string; total?: number }; accountingEffect: "none" }>;
+}
 
 export async function loadContractorTransactionJobQueue(organizationId: number) {
   const response = await authenticatedApi(`/api/organizations/${organizationId}/contractor-job-costs/review-queue`);
@@ -119,6 +151,20 @@ export async function loadContractorMatchQueue(organizationId: number) {
     suggestions: ContractorMatchSuggestion[];
     receipts: ContractorReceipt[];
   }>;
+}
+
+export async function loadContractorReceiptTransactionOptions(organizationId: number) {
+  const response = await authenticatedApi(`/api/organizations/${organizationId}/contractor-receipts/transaction-options`);
+  if (!response.ok) throw new Error(await apiErrorMessage(response, "Approved transactions are unavailable."));
+  return response.json() as Promise<{ transactions: ContractorTransactionOption[] }>;
+}
+
+export async function linkContractorReceiptTransaction(organizationId: number, sourceId: string, transactionId: number) {
+  const response = await authenticatedApi(`/api/organizations/${organizationId}/contractor-receipts/link-transaction`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sourceId, transactionId }),
+  });
+  if (!response.ok) throw new Error(await apiErrorMessage(response, "The receipt could not be linked."));
+  return response.json() as Promise<{ linked: true; accountingEffect: "none"; transactionId: number }>;
 }
 
 export async function extractContractorReceipt(

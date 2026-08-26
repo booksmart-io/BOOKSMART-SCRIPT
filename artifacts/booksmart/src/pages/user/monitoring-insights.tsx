@@ -27,11 +27,10 @@ function belongsToTab(signal: MonitoringSignal, tab: InsightTab) {
 }
 
 function visualFor(signal: MonitoringSignal) {
-  const text = `${signal.category} ${signal.title}`.toLowerCase();
-  if (signal.severity === "positive" || text.includes("revenue") && !text.includes("decreas")) return { color: "#22c55e", border: "border-emerald-400/35", bg: "bg-emerald-500/15", Icon: TrendingUp };
-  if (text.includes("tax")) return { color: "#facc15", border: "border-amber-400/35", bg: "bg-amber-400/15", Icon: Clock3 };
-  if (["high", "critical"].includes(signal.severity) || text.includes("cash")) return { color: "#ef4444", border: "border-red-400/35", bg: "bg-red-500/15", Icon: CircleAlert };
-  return { color: "#3b82f6", border: "border-blue-400/35", bg: "bg-blue-500/15", Icon: PieChart };
+  if (signal.severity === "positive") return { color: "#22c55e", border: "border-emerald-400/60", bg: "bg-emerald-500/20", badge: "border-emerald-400/50 bg-emerald-500/15 text-emerald-700 dark:text-emerald-300", label: "Positive", Icon: TrendingUp };
+  if (["high", "critical"].includes(signal.severity)) return { color: "#f43f5e", border: "border-rose-400/60", bg: "bg-rose-500/20", badge: "border-rose-400/50 bg-rose-500/15 text-rose-700 dark:text-rose-300", label: signal.severity, Icon: CircleAlert };
+  if (signal.severity === "medium") return { color: "#f59e0b", border: "border-amber-400/55", bg: "bg-amber-500/20", badge: "border-amber-400/50 bg-amber-500/15 text-amber-700 dark:text-amber-300", label: "Caution", Icon: Clock3 };
+  return { color: "#3b82f6", border: "border-blue-400/40", bg: "bg-blue-500/15", badge: "border-blue-400/40 bg-blue-500/10 text-blue-700 dark:text-blue-300", label: signal.severity, Icon: PieChart };
 }
 
 const currency = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
@@ -87,7 +86,7 @@ export default function MonitoringInsights() {
             <div className="flex items-start gap-3">
               <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full ${visual.bg}`}><visual.Icon className="h-5 w-5" style={{ color: visual.color }} /></div>
               <div className="min-w-0 flex-1"><h2 className="text-sm font-semibold sm:text-base">{signal.title}</h2><p className="mt-1 text-xs leading-5 text-muted-foreground sm:text-sm">{signal.description}</p></div>
-              <Badge variant="outline" className="shrink-0 capitalize">{signal.severity}</Badge>
+              <Badge variant="outline" className={`shrink-0 capitalize ${visual.badge}`}>{visual.label}</Badge>
             </div>
             <div className="mt-4 flex items-end justify-between gap-3 pl-[52px]">
               <div className="min-w-0">{signal.current_value != null && <p className="text-xl font-semibold sm:text-2xl" style={{ color: visual.color }}>{metricValue}</p>}<p className="text-[10px] text-muted-foreground sm:text-xs">{metricLabel}</p></div>

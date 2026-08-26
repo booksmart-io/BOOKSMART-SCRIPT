@@ -23,6 +23,7 @@ import { supabase } from "@/lib/supabase";
 import type { BusinessHealthScore } from "@/lib/financial-summary";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { HealthGauge } from "@/components/monitoring/monitoring-visuals";
 import {
   loadConnectionStatus,
@@ -84,8 +85,6 @@ const money = new Intl.NumberFormat("en-US", {
   currency: "USD",
   maximumFractionDigits: 0,
 });
-const signedMoney = (value: number) =>
-  value < 0 ? `−${money.format(Math.abs(value))}` : money.format(value);
 const startOfDay = (date: Date) =>
   new Date(date.getFullYear(), date.getMonth(), date.getDate());
 
@@ -315,22 +314,6 @@ export default function MonitoringHome() {
         .filter(Boolean)
         .join(" ") || "Your CPA"
     : null;
-  const metricCards = [
-    ["Revenue", current.revenue, previous.revenue, false],
-    [
-      "Accounting expenses",
-      current.accountingExpenses,
-      previous.accountingExpenses,
-      false,
-    ],
-    ["Net income", current.netIncome, previous.netIncome, true],
-    [
-      "Net cash movement",
-      current.netCashMovement,
-      previous.netCashMovement,
-      true,
-    ],
-  ] as const;
   const firstName =
     profile?.full_name?.trim().split(/\s+/)[0] ||
     profile?.email?.split("@")[0] ||
@@ -338,19 +321,27 @@ export default function MonitoringHome() {
 
   return (
     <div className="monitoring-page w-full max-w-none space-y-4 lg:space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold md:text-3xl">
-          Good morning, {firstName} 👋
-        </h1>
-        <p className="text-muted-foreground">
-          Here’s what changed in your business.
-        </p>
-        {monitoring?.generated_at && (
-          <p className="mt-1 text-xs text-muted-foreground">
-            BookSmart last checked your business at{" "}
-            {new Date(monitoring.generated_at).toLocaleString()}.
+      <div className="flex items-start gap-3 sm:items-center">
+        <Link href="/user/profile" aria-label="Open your profile" className="shrink-0 rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2">
+          <Avatar className="h-16 w-16 border border-primary/30 sm:h-20 sm:w-20">
+            {profile?.img_url && <AvatarImage src={profile.img_url} alt={`${firstName} profile picture`} className="object-cover" />}
+            <AvatarFallback className="bg-primary/15 text-sm font-semibold text-primary">{firstName.slice(0, 2).toUpperCase()}</AvatarFallback>
+          </Avatar>
+        </Link>
+        <div className="min-w-0">
+          <h1 className="text-2xl font-bold leading-tight md:text-3xl">
+            Good morning, {firstName} 👋
+          </h1>
+          <p className="text-muted-foreground">
+            Here’s what changed in your business.
           </p>
-        )}
+          {monitoring?.generated_at && (
+            <p className="mt-1 text-xs text-muted-foreground">
+              BookSmart last checked your business at{" "}
+              {new Date(monitoring.generated_at).toLocaleString()}.
+            </p>
+          )}
+        </div>
       </div>
       {!hasFinancialHistory ? (
         <Card>
@@ -370,46 +361,7 @@ export default function MonitoringHome() {
             </Button>
           </CardContent>
         </Card>
-      ) : (
-        <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
-          {metricCards.map(([label, value, prior, signed]) => {
-            const change =
-              prior === 0
-                ? null
-                : Math.round(((value - prior) / Math.abs(prior)) * 1000) / 10;
-            const direction =
-              label === "Net cash movement"
-                ? value < 0
-                  ? "Outflow"
-                  : value > 0
-                    ? "Inflow"
-                    : "No change"
-                : null;
-            return (
-              <Card key={label} className="h-full">
-                <CardHeader className="min-h-12 p-4 pb-2">
-                  <CardTitle className="text-xs font-medium text-muted-foreground sm:text-sm">
-                    {label}
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="flex min-h-16 flex-col justify-end p-4 pt-0">
-                  <div
-                    className={`text-xl font-bold sm:text-2xl ${signed && value < 0 ? "text-rose-400" : ""}`}
-                  >
-                    {signed ? signedMoney(value) : money.format(value)}
-                  </div>
-                  <p className="mt-1 text-[10px] text-muted-foreground sm:text-xs">
-                    {direction ? `${direction} • ` : ""}
-                    {change === null
-                      ? "No comparable baseline"
-                      : `${change >= 0 ? "+" : ""}${change}% vs prior 30 days`}
-                  </p>
-                </CardContent>
-              </Card>
-            );
-          })}
-        </div>
-      )}
+      ) : null}
       <ContractorHomeSummary
         organizationId={orgId}
         start={currentStart}
@@ -699,7 +651,7 @@ export default function MonitoringHome() {
               prioritySignals.map((signal) => (
                 <div
                   key={signal.id}
-                  className="flex items-start justify-between gap-4 rounded-lg border p-4"
+                  className="flex flex-col items-start gap-4 rounded-lg border p-4 sm:flex-row sm:justify-between"
                 >
                   <div className="flex gap-3">
                     <CircleAlert className="mt-0.5 h-5 w-5 text-amber-400" />
@@ -711,7 +663,7 @@ export default function MonitoringHome() {
                     </div>
                   </div>
                   {signal.cta_route && (
-                    <Button asChild size="sm" variant="ghost">
+                    <Button asChild size="sm" variant="ghost" className="w-full justify-between sm:w-auto sm:justify-center">
                       <Link href={signal.cta_route}>
                         {signal.cta_label ?? "Review"}
                         <ArrowRight className="ml-1 h-4 w-4" />

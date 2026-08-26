@@ -265,18 +265,21 @@ export function ContractorInsightsSummary({
       <div className="grid items-start gap-4 xl:grid-cols-3">
         <InsightList
           title="Top financial risks"
+          tone="risk"
           empty="No supported high-priority financial risk was detected."
           icon={AlertTriangle}
           items={items.risks}
         />
         <InsightList
           title="Positive trends"
+          tone="positive"
           empty="More comparison history is needed to identify a reliable positive trend."
           icon={CheckCircle2}
           items={items.positives}
         />
         <InsightList
           title="Actions to take next"
+          tone="action"
           empty="No supported action is available."
           icon={ListChecks}
           items={items.actions}
@@ -340,12 +343,14 @@ function Metric({
   change: TrustedMetric;
 }) {
   const rising = Number(change.value ?? 0) >= 0;
+  const favorable = change.value == null ? null : title.toLowerCase().includes("expense") ? !rising : rising;
+  const changeTone = favorable == null ? "text-muted-foreground" : favorable ? "text-emerald-700 dark:text-emerald-300" : "text-rose-700 dark:text-rose-300";
   return (
     <Card className="h-full">
       <CardContent className="flex h-full flex-col p-5">
         <p className="text-sm text-muted-foreground">{title}</p>
         <p className="mt-1 text-2xl font-semibold">{metric(value)}</p>
-        <p className="mt-auto flex items-start gap-1 pt-2 text-xs text-muted-foreground">
+        <p className={`mt-auto flex items-start gap-1 pt-2 text-xs font-medium ${changeTone}`}>
           {change.value == null ? (
             <CircleHelp className="mt-0.5 h-3.5 w-3.5 shrink-0" />
           ) : rising ? (
@@ -362,20 +367,22 @@ function Metric({
 }
 function InsightList({
   title,
+  tone,
   empty,
   icon: Icon,
   items,
 }: {
   title: string;
+  tone: InsightItem["tone"];
   empty: string;
   icon: typeof Lightbulb;
   items: InsightItem[];
 }) {
   return (
-    <Card className="h-full">
+    <Card className={`h-full ${tone === "risk" ? "border-rose-400/45" : tone === "positive" ? "border-emerald-400/45" : "border-amber-400/35"}`}>
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
-          <Icon className="h-5 w-5 text-primary" />
+          <Icon className={`h-5 w-5 ${tone === "risk" ? "text-rose-500" : tone === "positive" ? "text-emerald-500" : "text-amber-500"}`} />
           {title}
         </CardTitle>
       </CardHeader>
@@ -384,7 +391,7 @@ function InsightList({
           items.map((item, index) => (
             <div
               key={`${item.title}:${index}`}
-              className="border-b pb-3 last:border-0 last:pb-0"
+              className={`rounded-lg border px-3 py-2.5 ${item.tone === "risk" ? "border-rose-400/35 bg-rose-500/10" : item.tone === "positive" ? "border-emerald-400/35 bg-emerald-500/10" : "border-amber-400/30 bg-amber-500/10"}`}
             >
               <p className="font-medium">
                 {index + 1}. {item.title}

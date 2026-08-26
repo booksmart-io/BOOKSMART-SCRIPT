@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Loader2, Building2, MapPin, Landmark, ChevronLeft, ChevronRight } from "lucide-react";
+import { Loader2, Building2, MapPin, Landmark, ChevronLeft, ChevronRight, FileUp, PenLine } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -25,6 +25,11 @@ import {
   type BusinessInformationFormData,
 } from "@/lib/business-information-schema";
 import { buildBusinessInformationPayload } from "@/lib/business-information-payload";
+import BusinessDocumentUpload, { type ExtractedBusinessDocument } from "@/components/business-document-upload";
+import {
+  buildBusinessDocumentPrefill,
+  preserveEnteredBusinessDocumentFields,
+} from "@/lib/business-document-prefill";
 
 type StateRow = { id: number; name: string; code: string };
 
@@ -127,6 +132,13 @@ export default function BusinessSetupDialog({
   const [step, setStep] = useState(0);
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState<FormState>({ ...INITIAL_FORM, businessEmail: defaultEmail });
+  const [setupMethod, setSetupMethod] = useState<"upload" | "manual" | null>(null);
+  const [extractionNotice, setExtractionNotice] = useState("");
+  const [extractionContext, setExtractionContext] = useState<{
+    registeredAgent: string | null;
+    organizers: string[];
+    warnings: string[];
+  } | null>(null);
 
   const progress = ((step + 1) / STEPS.length) * 100;
   const CurrentIcon = STEPS[step].icon;
@@ -135,6 +147,9 @@ export default function BusinessSetupDialog({
   useEffect(() => {
     if (!open) return;
     setStep(0);
+    setSetupMethod(null);
+    setExtractionNotice("");
+    setExtractionContext(null);
     setForm((current) => ({ ...current, businessEmail: current.businessEmail || defaultEmail }));
   }, [open, defaultEmail]);
 
@@ -145,6 +160,49 @@ export default function BusinessSetupDialog({
 
   function update<K extends keyof FormState>(key: K, value: FormState[K]) {
     setForm((current) => ({ ...current, [key]: value }));
+  }
+
+  function applyExtractedBusiness(extracted: ExtractedBusinessDocument) {
+    const extractedPrefill = buildBusinessDocumentPrefill(extracted, states);
+    setForm((current) => {
+      const prefill = preserveEnteredBusinessDocumentFields({
+        businessName: current.legalName,
+        orgType: current.entityType,
+        stateId: current.state,
+        stateIncorporation: current.stateIncorporation,
+        yearEstablished: current.yearEstablished,
+        startDate: current.startDate,
+        street: current.street,
+        suite: current.suite,
+        city: current.city,
+        zip: current.zip,
+        country: current.country,
+        stateRegistrationNumber: current.stateRegistrationNumber,
+      }, extractedPrefill);
+      return {
+        ...current,
+        legalName: prefill.businessName ?? "",
+        entityType: prefill.orgType ?? "",
+        state: prefill.stateId ?? "",
+        stateIncorporation: prefill.stateIncorporation ?? "",
+        yearEstablished: prefill.yearEstablished ?? "",
+        startDate: prefill.startDate ?? "",
+        street: prefill.street ?? "",
+        suite: prefill.suite ?? "",
+        city: prefill.city ?? "",
+        zip: prefill.zip ?? "",
+        country: prefill.country ?? "",
+        stateRegistrationNumber: prefill.stateRegistrationNumber ?? "",
+      };
+    });
+    setExtractionContext({
+      registeredAgent: extracted.registeredAgent?.name ?? null,
+      organizers: extracted.organizers.map((organizer) => organizer.name).filter((name): name is string => !!name),
+      warnings: extracted.warnings ?? [],
+    });
+    setExtractionNotice("We found information in your business document. Please review it before continuing.");
+    setSetupMethod("manual");
+    setStep(0);
   }
 
   function validateStep() {
@@ -214,7 +272,7 @@ export default function BusinessSetupDialog({
         <DialogHeader className="shrink-0 border-b border-border/60 px-4 py-4 sm:px-6 sm:py-5">
           <DialogTitle>Add Business</DialogTitle>
           <DialogDescription>Set up the business profile first. After this, BookSmart will start the survey.</DialogDescription>
-          <div className="pt-4">
+          {setupMethod === "manual" && <div className="pt-4">
             <div className="flex gap-2 text-xs font-medium text-muted-foreground">
               {STEPS.map((item, index) => (
                 <button
@@ -231,10 +289,41 @@ export default function BusinessSetupDialog({
             <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-secondary">
               <div className="h-full rounded-full bg-primary transition-all" style={{ width: `${progress}%` }} />
             </div>
-          </div>
+          </div>}
         </DialogHeader>
 
         <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-6 sm:py-5">
+          {setupMethod === null ? (
+            <div className="space-y-6">
+              <div>
+                <h2 className="text-xl font-bold">How would you like to add this business?</h2>
+                <p className="mt-1 text-sm text-muted-foreground">Upload an official document to prefill business details, or enter them yourself.</p>
+              </div>
+              <div className="grid min-w-0 gap-4 sm:grid-cols-2">
+                <button
+                  type="button"
+                  onClick={() => setSetupMethod("upload")}
+                  className="relative min-w-0 rounded-xl border border-primary bg-primary/5 p-4 pt-14 text-left transition-colors hover:bg-primary/10 sm:p-5 sm:pt-5"
+                >
+                  <span className="absolute right-4 top-4 rounded-full bg-primary px-2.5 py-1 text-xs font-semibold text-primary-foreground">Recommended</span>
+                  <FileUp className="mb-4 h-7 w-7 text-primary" />
+                  <h3 className="font-semibold">Upload Business Document</h3>
+                  <p className="mt-2 text-sm text-muted-foreground">Upload Articles of Organization, a Certificate of Formation, Articles of Incorporation, or a similar official registration PDF. BookSmart will prefill what it can find.</p>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSetupMethod("manual")}
+                  className="min-w-0 rounded-xl border border-border/70 bg-card/35 p-4 text-left transition-colors hover:border-primary/60 sm:p-5"
+                >
+                  <PenLine className="mb-4 h-7 w-7 text-primary" />
+                  <h3 className="font-semibold">Enter Details Manually</h3>
+                  <p className="mt-2 text-sm text-muted-foreground">Continue with the business setup form and enter the information yourself.</p>
+                </button>
+              </div>
+            </div>
+          ) : setupMethod === "upload" ? (
+            <BusinessDocumentUpload onExtracted={applyExtractedBusiness} onManual={() => setSetupMethod("manual")} />
+          ) : <>
           <div className="mb-5 flex items-center gap-3">
             <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10 text-primary">
               <CurrentIcon className="h-5 w-5" />
@@ -247,6 +336,18 @@ export default function BusinessSetupDialog({
 
           {step === 0 && (
             <div className="grid min-w-0 gap-4 lg:grid-cols-2">
+              {extractionNotice && (
+                <div className="rounded-lg border border-primary/40 bg-primary/10 p-4 lg:col-span-2">
+                  <p className="font-medium text-foreground">{extractionNotice}</p>
+                  <p className="mt-1 text-sm text-muted-foreground">Extracted values are editable and will not be saved until you finish adding the business.</p>
+                  {extractionContext && <div className="mt-3 space-y-1 text-xs text-muted-foreground">
+                    {extractionContext.registeredAgent && <p>Registered agent found: {extractionContext.registeredAgent}</p>}
+                    {extractionContext.organizers.length > 0 && <p>Organizers found: {extractionContext.organizers.join(", ")}</p>}
+                    {extractionContext.warnings.map((warning) => <p key={warning}>Note: {warning}</p>)}
+                  </div>}
+                  <Button type="button" variant="link" className="mt-2 h-auto p-0" onClick={() => setSetupMethod("upload")}>Try Another Document</Button>
+                </div>
+              )}
               <p className="text-sm text-muted-foreground lg:col-span-2">Identify the registered business and provide contact details used for its BookSmart profile.</p>
               <Field label="Legal business name *"><Input value={form.legalName} onChange={(e) => update("legalName", e.target.value)} placeholder="Acme LLC" /></Field>
               <Field label="Entity type *"><SelectField value={form.entityType} onChange={(v) => update("entityType", v)} options={ENTITY_TYPES} placeholder="Select entity" preserveOrder /></Field>
@@ -324,10 +425,10 @@ export default function BusinessSetupDialog({
               </div>
             </div>
           )}
-
+          </>}
         </div>
 
-        <DialogFooter className="shrink-0 flex-col-reverse gap-2 border-t border-border/60 px-4 py-3 sm:flex-row sm:px-6 sm:py-4">
+        {setupMethod === "manual" && <DialogFooter className="shrink-0 flex-col-reverse gap-2 border-t border-border/60 px-4 py-3 sm:flex-row sm:px-6 sm:py-4">
           <Button variant="outline" onClick={() => (step === 0 ? onOpenChange(false) : setStep((current) => current - 1))} disabled={saving} className="w-full sm:w-auto">
             {step === 0 ? "Cancel" : <><ChevronLeft className="mr-2 h-4 w-4" /> Back</>}
           </Button>
@@ -339,7 +440,7 @@ export default function BusinessSetupDialog({
               Save Business & Start Survey
             </Button>
           )}
-        </DialogFooter>
+        </DialogFooter>}
       </DialogContent>
     </Dialog>
   );

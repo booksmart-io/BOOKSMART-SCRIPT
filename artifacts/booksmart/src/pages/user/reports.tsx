@@ -2535,6 +2535,7 @@ export default function Reports() {
   const [cfShowPaid, setCfShowPaid] = useState(true);
   const searchStr = useSearch();
   const setupActionHandled = useRef<string | null>(null);
+  const notificationTransactionHandled = useRef<number | null>(null);
   const [tab, setTab] = useState<Tab>(() => {
     const p = new URLSearchParams(searchStr);
     const t = p.get("tab");
@@ -3887,6 +3888,20 @@ async function handleConnectBank() {
       return data ?? [];
     },
   });
+
+  useEffect(() => {
+    if (allTxsLoading) return;
+    const requestedId = Number(new URLSearchParams(searchStr).get("transaction_id"));
+    if (!Number.isSafeInteger(requestedId) || requestedId <= 0 || notificationTransactionHandled.current === requestedId) return;
+    notificationTransactionHandled.current = requestedId;
+    const transaction = allTxsFull.find(row => row.id === requestedId);
+    if (transaction) {
+      setTab("transactions");
+      openDetailTx(transaction);
+    } else {
+      toast({ title: "Transaction no longer available", description: "It may have been deleted after this notification was created." });
+    }
+  }, [allTxsFull, allTxsLoading, searchStr, toast]);
 
   // ── Uploaded/manually-entered P&L, Balance Sheet, Cash Flow statements ──────
   // Kept fully separate from the transaction-based pl/bs/cf tabs above — this

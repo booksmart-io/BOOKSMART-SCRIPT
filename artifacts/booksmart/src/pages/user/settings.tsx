@@ -4,19 +4,22 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/lib/supabase";
 import { pickActiveOrganization, useActiveOrganizationId } from "@/lib/active-organization";
 import { openPlaidLink } from "@/lib/plaid-link";
-import { loadConnectionStatus, type ConnectionProviderStatus } from "@/lib/monitoring-client";
+import { categorizeUncategorizedTransactions } from "@/lib/ai-categorization";
+import { loadConnectionStatus, notifyFinancialDataChanged, type ConnectionProviderStatus } from "@/lib/monitoring-client";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
-import { Separator } from "@/components/ui/separator";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { useLocation } from "wouter";
-import { Building2, CheckCircle2, ChevronRight, ExternalLink, Eye, Landmark, Link2, Loader2, RefreshCw, ShieldCheck, Unplug } from "lucide-react";
+import { AlertTriangle, Building2, CheckCircle2, ChevronRight, ExternalLink, Eye, Landmark, Link2, Loader2, Mail, RefreshCw, ShieldCheck, Unplug } from "lucide-react";
+import { SiChase, SiQuickbooks } from "react-icons/si";
 import { toast } from "sonner";
 
 type Organization = { id: number; name: string };
+type GmailStatus = { enabled: boolean; configured: boolean; connected: boolean; connection: null | { google_account_email: string | null; status: string; last_scan_at: string | null; last_scan_status: string | null; last_scan_error: string | null; connected_at: string; updated_at: string } };
+type GmailScanSummary = { emails_reviewed: number; possible_receipts: number; processed_receipts: number; matched: number; needs_review: number; unmatched: number; duplicates_skipped: number; failures: number; status: "completed" | "partial"; accountingEffect: "none" };
 type QuickBooksConnection = {
   realm_id: string;
   company_name: string | null;
@@ -118,6 +121,8 @@ const previewSeverityClass: Record<JobberMonitoringCandidate["severity"], string
   critical: "bg-rose-500/10 text-rose-700 dark:text-rose-400",
 };
 
+const PLAID_CATEGORIZATION_BATCH_LIMIT = 100;
+
 const jobberPreviewUiEnabled = import.meta.env.VITE_JOBBER_MONITORING_PREVIEW_UI === "true";
 
 type PlaidBalanceAccount = {
@@ -185,16 +190,22 @@ export default function Settings() {
   const queryClient = useQueryClient();
   const [, navigate] = useLocation();
   const [disconnectOpen, setDisconnectOpen] = useState(false);
+  const [gmailDisconnectOpen, setGmailDisconnectOpen] = useState(false);
+  const [gmailScanDays, setGmailScanDays] = useState<30 | 60 | 90>(90);
+  const [gmailScanSummary, setGmailScanSummary] = useState<GmailScanSummary | null>(null);
   const [jobberDisconnectOpen, setJobberDisconnectOpen] = useState(false);
   const [bankDisconnectTarget, setBankDisconnectTarget] = useState<ConnectionProviderStatus | null>(null);
   const [targetMarginPercent, setTargetMarginPercent] = useState("");
+  const [plaidSyncStage, setPlaidSyncStage] = useState<"idle" | "connecting" | "syncing" | "categorizing" | "refreshing" | "complete" | "error">("idle");
+  const [plaidSyncMessage, setPlaidSyncMessage] = useState("");
 
-  const firstName = (profile as { first_name?: string })?.first_name ?? "";
-  const lastName  = (profile as { last_name?: string  })?.last_name  ?? "";
-  const imgUrl    = (profile as { img_url?: string | null })?.img_url;
-  const email     = profile?.email ?? "";
-  const fullName  = [firstName, lastName].filter(Boolean).join(" ") || "User";
-  const initials  = (firstName[0] ?? "") + (lastName[0] ?? "") || fullName.slice(0, 2).toUpperCase();
+  const imgUrl = profile?.img_url;
+  const email = profile?.email ?? "";
+  const fullName = profile?.full_name?.trim() || email.split("@")[0] || "User";
+  const nameParts = fullName.split(/\s+/).filter(Boolean);
+  const initials = nameParts.length > 1
+    ? `${nameParts[0][0]}${nameParts[nameParts.length - 1][0]}`.toUpperCase()
+    : fullName.slice(0, 2).toUpperCase();
 
   const [autoReview, setAutoReview] = useState(true);
   const [proTips,    setProTips]    = useState(true);
@@ -225,6 +236,54 @@ export default function Settings() {
   });
   const activeOrganization = pickActiveOrganization(organizations, activeOrgId);
   const organizationId = activeOrganization?.id ?? null;
+
+  async function finishPlaidSynchronization(result: { added?: number; modified?: number; removed?: number }) {
+    if (organizationId == null) return 0;
+    const changed = (result.added ?? 0) + (result.modified ?? 0);
+    const passes = Math.max(1, Math.ceil(Math.max(changed, 1) / PLAID_CATEGORIZATION_BATCH_LIMIT));
+    let categorized = 0;
+    setPlaidSyncStage("categorizing");
+    setPlaidSyncMessage(changed > 0
+      ? `${changed} transaction${changed === 1 ? "" : "s"} received. Categorizing transactions...`
+      : "Transaction import complete. Checking categories...");
+    for (let index = 0; index < passes; index += 1) {
+      setPlaidSyncMessage(passes > 1
+        ? `Categorizing transactions — batch ${index + 1} of ${passes}...`
+        : "Categorizing imported transactions...");
+      const categorization = await categorizeUncategorizedTransactions(
+        Math.min(Math.max(changed, 30), PLAID_CATEGORIZATION_BATCH_LIMIT),
+        organizationId,
+      );
+      categorized += categorization.updated;
+      if (categorization.updated === 0) break;
+    }
+    if (categorized > 0) {
+      void notifyFinancialDataChanged(organizationId, "bulk_categorization_completed").catch((error) => {
+        console.warn("[monitoring/financial-data-changed]", error instanceof Error ? error.message : error);
+      });
+    }
+    setPlaidSyncStage("refreshing");
+    setPlaidSyncMessage("Updating your dashboard and financial reports...");
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ["tx_period"] }),
+      queryClient.invalidateQueries({ queryKey: ["tx_prev_period"] }),
+      queryClient.invalidateQueries({ queryKey: ["tx_all_balance"] }),
+      queryClient.invalidateQueries({ queryKey: ["tx_all_full"] }),
+      queryClient.invalidateQueries({ queryKey: ["tx_month"] }),
+      queryClient.invalidateQueries({ queryKey: ["tx_recent"] }),
+      queryClient.invalidateQueries({ queryKey: ["tx_count"] }),
+      queryClient.invalidateQueries({ queryKey: ["tx_deductions"] }),
+      queryClient.invalidateQueries({ queryKey: ["plaid_accounts"] }),
+      queryClient.invalidateQueries({ queryKey: ["dashboard_connected_banks", organizationId] }),
+      queryClient.invalidateQueries({ queryKey: ["normalized-connection-status", organizationId] }),
+      queryClient.invalidateQueries({ queryKey: ["monitoring-projection", organizationId] }),
+      queryClient.invalidateQueries({ queryKey: ["contractor-home-intelligence", organizationId] }),
+      queryClient.invalidateQueries({ queryKey: ["contractor-money-intelligence", organizationId] }),
+      queryClient.invalidateQueries({ queryKey: ["contractor-insights", organizationId] }),
+      queryClient.invalidateQueries({ queryKey: ["contractor-transaction-job-queue", organizationId] }),
+    ]);
+    return categorized;
+  }
 
   const contractorSettings = useQuery<ContractorFinancialSettings>({
     queryKey: ["contractor-financial-settings", organizationId],
@@ -298,6 +357,73 @@ export default function Settings() {
       if (!response.ok) throw await readApiError(response, "Could not check QuickBooks status.");
       return response.json() as Promise<QuickBooksStatus>;
     },
+  });
+
+  const gmailStatus = useQuery<GmailStatus>({
+    queryKey: ["gmail-status", organizationId],
+    enabled: organizationId != null,
+    retry: false,
+    queryFn: async () => {
+      const token = await accessToken();
+      const response = await fetch(`/api/integrations/gmail/status?organization_id=${organizationId}`, { headers: { Authorization: `Bearer ${token}` } });
+      if (!response.ok) throw await readApiError(response, "Could not check Gmail status.");
+      return response.json() as Promise<GmailStatus>;
+    },
+  });
+
+  const gmailConnectMutation = useMutation({
+    mutationFn: async () => {
+      if (organizationId == null) throw new Error("Add an organization before connecting Gmail.");
+      const token = await accessToken();
+      const response = await fetch(`/api/integrations/gmail/connect?organization_id=${organizationId}`, { headers: { Authorization: `Bearer ${token}` } });
+      if (!response.ok) throw await readApiError(response, "Could not start Gmail connection.");
+      return response.json() as Promise<{ authorization_url: string }>;
+    },
+    onSuccess: ({ authorization_url }) => { window.location.assign(authorization_url); },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  const gmailDisconnectMutation = useMutation({
+    mutationFn: async () => {
+      if (organizationId == null) throw new Error("No active organization is available.");
+      const token = await accessToken();
+      const response = await fetch("/api/integrations/gmail/disconnect", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ organization_id: organizationId }),
+      });
+      if (!response.ok) throw await readApiError(response, "Could not disconnect Gmail.");
+      return response.json() as Promise<{ ok: true; connected: false; revoked: boolean }>;
+    },
+    onSuccess: async ({ revoked }) => {
+      setGmailDisconnectOpen(false);
+      await queryClient.invalidateQueries({ queryKey: ["gmail-status", organizationId] });
+      toast.success(revoked ? "Gmail disconnected." : "Gmail disconnected locally. Google revocation could not be confirmed.");
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  const gmailScanMutation = useMutation({
+    mutationFn: async () => {
+      if (organizationId == null) throw new Error("No active organization is available.");
+      const token = await accessToken();
+      const response = await fetch("/api/integrations/gmail/scan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ organization_id: organizationId, days: gmailScanDays }),
+      });
+      if (!response.ok) throw await readApiError(response, "Could not scan Gmail.");
+      return response.json() as Promise<GmailScanSummary>;
+    },
+    onSuccess: async (summary) => {
+      setGmailScanSummary(summary);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["gmail-status", organizationId] }),
+        queryClient.invalidateQueries({ queryKey: ["contractor-match-queue", organizationId] }),
+      ]);
+      toast.success(`Gmail scan complete: ${summary.processed_receipts} receipt${summary.processed_receipts === 1 ? "" : "s"} processed.`);
+    },
+    onError: (error: Error) => toast.error(error.message),
   });
 
   const quickBooksSyncStatus = useQuery<QuickBooksSyncStatus>({
@@ -417,6 +543,8 @@ export default function Settings() {
   const connectBankMutation = useMutation({
     mutationFn: async () => {
       if (organizationId == null) throw new Error("Add an organization before connecting a bank.");
+      setPlaidSyncStage("connecting");
+      setPlaidSyncMessage("Opening secure bank connection...");
       const token = await accessToken();
       const tokenResponse = await fetch("/api/plaid/link-token", {
         method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
@@ -428,6 +556,8 @@ export default function Settings() {
       await openPlaidLink({
         token: link_token,
         onSuccess: async (publicToken, metadata) => {
+          setPlaidSyncStage("syncing");
+          setPlaidSyncMessage("Bank connected. Importing transactions from your bank...");
           const exchange = await fetch("/api/plaid/exchange-public-token", {
             method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
             body: JSON.stringify({ public_token: publicToken, metadata, org_id: organizationId }),
@@ -439,22 +569,40 @@ export default function Settings() {
             body: JSON.stringify({ org_id: organizationId, item_id: result.item_id }),
           });
           if (!sync.ok) throw await readApiError(sync, "Bank connected, but its first sync failed.");
+          const syncResult = await sync.json() as { added?: number; modified?: number; removed?: number };
+          const categorized = await finishPlaidSynchronization(syncResult);
           await Promise.all([
             queryClient.invalidateQueries({ queryKey: ["settings-bank-connections", organizationId] }),
             queryClient.invalidateQueries({ queryKey: ["settings-bank-balances", organizationId] }),
-            queryClient.invalidateQueries({ queryKey: ["normalized-connection-status", organizationId] }),
           ]);
-          toast.success("Bank connected and synchronized.");
+          setPlaidSyncStage("complete");
+          setPlaidSyncMessage(`${syncResult.added ?? 0} new transaction${(syncResult.added ?? 0) === 1 ? "" : "s"} imported. ${categorized} categorized.`);
+          toast.success(`Bank connected and synchronized. ${syncResult.added ?? 0} new transaction${(syncResult.added ?? 0) === 1 ? "" : "s"} imported. ${categorized} categorized.`);
         },
-        onExit: (error) => { if (error?.error_message) toast.error(error.error_message); },
+        onExit: (error) => {
+          if (error?.error_message) {
+            setPlaidSyncStage("error");
+            setPlaidSyncMessage(error.error_message);
+            toast.error(error.error_message);
+          } else {
+            setPlaidSyncStage("idle");
+            setPlaidSyncMessage("");
+          }
+        },
       });
     },
-    onError: (error: Error) => toast.error(error.message),
+    onError: (error: Error) => {
+      setPlaidSyncStage("error");
+      setPlaidSyncMessage(error.message);
+      toast.error(error.message);
+    },
   });
 
   const syncBankMutation = useMutation({
     mutationFn: async (provider: ConnectionProviderStatus) => {
       if (organizationId == null) throw new Error("No active organization is available.");
+      setPlaidSyncStage("syncing");
+      setPlaidSyncMessage(`Importing transactions from ${provider.name}...`);
       const itemId = Number(provider.id.replace("plaid:", ""));
       const token = await accessToken();
       const response = await fetch("/api/plaid/sync", {
@@ -465,13 +613,20 @@ export default function Settings() {
       return response.json() as Promise<{ added: number; modified: number; removed: number }>;
     },
     onSuccess: async (result) => {
+      const categorized = await finishPlaidSynchronization(result);
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["settings-bank-connections", organizationId] }),
         queryClient.invalidateQueries({ queryKey: ["settings-bank-balances", organizationId] }),
       ]);
-      toast.success(`Bank synchronized. ${result.added + result.modified} transaction changes imported.`);
+      setPlaidSyncStage("complete");
+      setPlaidSyncMessage(`${result.added} new and ${result.modified} updated transaction${result.added + result.modified === 1 ? "" : "s"} imported. ${categorized} categorized.`);
+      toast.success(`Bank synchronized. ${result.added + result.modified} transaction changes imported. ${categorized} categorized.`);
     },
-    onError: (error: Error) => toast.error(error.message),
+    onError: (error: Error) => {
+      setPlaidSyncStage("error");
+      setPlaidSyncMessage(error.message);
+      toast.error(error.message);
+    },
   });
 
   const disconnectBankMutation = useMutation({
@@ -623,12 +778,35 @@ export default function Settings() {
   }, []);
 
   return (
-    <div className="w-full animate-in fade-in slide-in-from-bottom-4 duration-500">
+    <div className="w-full max-w-none animate-in space-y-6 pb-16 fade-in slide-in-from-bottom-4 duration-500">
+
+      <header className="space-y-4">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-primary">Workspace settings</p>
+          <h1 className="mt-1 text-2xl font-bold tracking-tight sm:text-3xl">Settings</h1>
+          <p className="mt-2 max-w-2xl text-sm text-muted-foreground">Manage your business profile, financial connections, preferences, and account access.</p>
+        </div>
+        <nav aria-label="Settings sections" className="grid grid-cols-2 gap-2 lg:grid-cols-4">
+          {[
+            { href: "#profile-business", label: "Profile & business", description: activeOrganization?.name ?? "Organization", icon: Building2 },
+            { href: "#connections", label: "Connections", description: `${plaidProviders.length + (quickBooksStatus.data?.connected ? 1 : 0) + (jobberStatus.data?.connected ? 1 : 0) + (gmailStatus.data?.connected ? 1 : 0)} connected`, icon: Link2 },
+            { href: "#financial-preferences", label: "Financial", description: "Margins and rules", icon: ShieldCheck },
+            { href: "#account-preferences", label: "Account", description: "Preferences and plan", icon: ChevronRight },
+          ].map((item) => {
+            const Icon = item.icon;
+            return <a key={item.href} href={item.href} className="group rounded-xl border border-border/60 bg-card/70 p-3 transition-colors hover:border-primary/40 hover:bg-card sm:p-4">
+              <div className="flex items-center gap-2"><Icon className="h-4 w-4 text-primary" /><span className="text-sm font-semibold">{item.label}</span></div>
+              <p className="mt-1 truncate text-xs text-muted-foreground">{item.description}</p>
+            </a>;
+          })}
+        </nav>
+      </header>
 
       {/* ── Profile ── */}
       <button
+        id="profile-business"
         onClick={() => navigate("/user/profile")}
-        className="w-full flex items-center gap-4 py-4 hover:opacity-70 transition-opacity text-left"
+        className="flex w-full scroll-mt-6 items-center gap-4 rounded-2xl border border-border/60 bg-card p-4 text-left transition-colors hover:border-primary/35 hover:bg-card/90 sm:p-5"
       >
         {imgUrl ? (
           <img
@@ -644,12 +822,15 @@ export default function Settings() {
         <div className="flex-1 min-w-0">
           <p className="text-lg font-semibold truncate">{fullName}</p>
           <p className="text-sm text-muted-foreground truncate">{email}</p>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <span className="rounded-full bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary">{activeOrganization?.name ?? "No active organization"}</span>
+            <span className="text-xs text-muted-foreground">Open profile and business details</span>
+          </div>
         </div>
+        <ChevronRight className="h-5 w-5 shrink-0 text-muted-foreground" />
       </button>
 
-      <Separator className="bg-border/30" />
-
-      <section className="py-5" aria-labelledby="contractor-target-title">
+      <section id="financial-preferences" className="scroll-mt-6" aria-labelledby="contractor-target-title">
         <div className="mb-4">
           <h2 id="contractor-target-title" className="text-sm font-semibold">Job profitability target</h2>
           <p className="mt-1 text-sm text-muted-foreground">
@@ -677,21 +858,37 @@ export default function Settings() {
         </div>
       </section>
 
-      <Separator className="bg-border/30" />
-
-      <section className="py-5" aria-labelledby="accounting-integrations-title">
+      <section id="connections" className="scroll-mt-6 space-y-4" aria-labelledby="accounting-integrations-title">
         <div className="mb-4">
-          <h2 id="accounting-integrations-title" className="text-sm font-semibold">Accounting integrations</h2>
+          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-primary">Data sources</p>
+          <h2 id="accounting-integrations-title" className="mt-1 text-xl font-semibold">Connections</h2>
           <p className="mt-1 text-sm text-muted-foreground">
-            Connect your accounting platform to keep financial data in sync.
+            Manage where BookSmart receives accounting, banking, and operational information.
           </p>
         </div>
 
         <div className="rounded-xl border border-border/60 bg-card p-4 sm:p-5">
           <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex min-w-0 items-start gap-3">
-              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
-                <Link2 className="h-5 w-5" />
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-red-500/10 text-red-600" aria-label="Gmail"><Mail className="h-5 w-5" /></div>
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2"><h3 className="font-semibold">Gmail receipts</h3>{gmailStatus.data?.connected && <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-2 py-0.5 text-xs font-medium text-emerald-700 dark:text-emerald-400"><CheckCircle2 className="h-3.5 w-3.5" /> Connected</span>}</div>
+                <p className="mt-1 text-sm text-muted-foreground">{gmailStatus.data?.connected ? `Connected to ${gmailStatus.data.connection?.google_account_email ?? "Gmail"}. Receipt emails are supporting evidence only.` : "Find receipts and invoices using read-only Gmail access. Gmail never creates accounting transactions."}</p>
+                {gmailStatus.data?.connected && gmailStatus.data.connection?.last_scan_at && <p className="mt-1 text-xs text-muted-foreground">Last scan {new Date(gmailStatus.data.connection.last_scan_at).toLocaleString()}</p>}
+                {gmailScanSummary && <div className="mt-2"><p className="text-xs text-muted-foreground">Reviewed {gmailScanSummary.emails_reviewed} emails · found {gmailScanSummary.possible_receipts} possible receipts · processed {gmailScanSummary.processed_receipts} · matched {gmailScanSummary.matched} · needs review {gmailScanSummary.needs_review} · unmatched {gmailScanSummary.unmatched} · skipped {gmailScanSummary.duplicates_skipped} duplicates{gmailScanSummary.failures ? ` · ${gmailScanSummary.failures} could not be processed` : ""}. No accounting transactions were changed.</p>{(gmailScanSummary.processed_receipts > 0 || gmailScanSummary.duplicates_skipped > 0) && <Button className="mt-2 h-auto p-0 text-xs" variant="link" onClick={() => navigate("/user/tasks#receipt-review")}>Review receipt evidence</Button>}</div>}
+                {gmailStatus.data && (!gmailStatus.data.enabled || !gmailStatus.data.configured) && <p className="mt-2 text-xs text-amber-700 dark:text-amber-400">Google setup is not configured yet. BookSmart remains unchanged.</p>}
+                {gmailStatus.isError && <p className="mt-2 text-xs text-destructive">Gmail status is temporarily unavailable. Existing connections were not changed.</p>}
+              </div>
+            </div>
+            {gmailStatus.isLoading ? <Button variant="outline" disabled><Loader2 className="animate-spin" /> Checking status</Button> : gmailStatus.data?.connected ? <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:justify-end"><select aria-label="Gmail scan period" className="h-9 rounded-md border border-input bg-background px-3 text-sm" value={gmailScanDays} disabled={gmailScanMutation.isPending} onChange={(event) => setGmailScanDays(Number(event.target.value) as 30 | 60 | 90)}><option value={30}>Last 30 days</option><option value={60}>Last 60 days</option><option value={90}>Last 90 days</option></select><Button variant="outline" disabled={gmailScanMutation.isPending || gmailDisconnectMutation.isPending} onClick={() => gmailScanMutation.mutate()}>{gmailScanMutation.isPending ? <Loader2 className="animate-spin" /> : <RefreshCw />} {gmailScanMutation.isPending ? "Scanning Gmail…" : "Scan for receipts"}</Button><Button variant="outline" onClick={() => navigate("/user/tasks#receipt-review")}><Eye /> Review receipts</Button><Button variant="outline" className="text-destructive hover:text-destructive" disabled={gmailDisconnectMutation.isPending || gmailScanMutation.isPending} onClick={() => setGmailDisconnectOpen(true)}>{gmailDisconnectMutation.isPending ? <Loader2 className="animate-spin" /> : <Unplug />} Disconnect</Button></div> : <Button disabled={!organizationId || !gmailStatus.data?.enabled || !gmailStatus.data?.configured || gmailConnectMutation.isPending} onClick={() => gmailConnectMutation.mutate()}>{gmailConnectMutation.isPending ? <Loader2 className="animate-spin" /> : <Link2 />} Connect Gmail</Button>}
+          </div>
+        </div>
+
+        <div className="rounded-xl border border-border/60 bg-card p-4 sm:p-5">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex min-w-0 items-start gap-3">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-[#2ca01c]/10 text-[#2ca01c]" aria-label="QuickBooks">
+                <SiQuickbooks className="h-6 w-6" />
               </div>
               <div className="min-w-0">
                 <div className="flex flex-wrap items-center gap-2">
@@ -775,25 +972,20 @@ export default function Settings() {
       </section>
 
         <section className="pb-5" aria-labelledby="jobber-integration-title">
-          <div className="rounded-xl border border-border/60 bg-card p-4 sm:p-5">
-            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="rounded-xl border border-border/60 bg-card p-4">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+              <div className="flex min-w-0 items-start gap-3">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-[#7db00e] text-xl font-bold text-white" aria-label="Jobber">J</div>
               <div className="min-w-0">
                 <div className="flex flex-wrap items-center gap-2">
                   <h2 id="jobber-integration-title" className="font-semibold">Jobber</h2>
-                  <span className="rounded-full bg-sky-500/10 px-2 py-0.5 text-xs font-medium text-sky-700 dark:text-sky-400">
-                    Operational integration
-                  </span>
+                  {jobberStatus.data?.connected && <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-xs font-medium text-emerald-700 dark:text-emerald-400">Connected</span>}
                 </div>
                 <p className="mt-1 text-sm text-muted-foreground">
                   {jobberStatus.data?.connected
                     ? `Connected to ${jobberStatus.data.connection?.jobber_account_name || "your Jobber test account"}.`
                     : "Connect operational clients and work records. Jobber data never enters accounting reports."}
                 </p>
-                {jobberStatus.data?.connected && (
-                  <p className="mt-1 text-xs text-emerald-700 dark:text-emerald-400">
-                    Connected · Secure synchronization
-                  </p>
-                )}
                 {jobberStatus.data?.health.message && (
                   <p className={`mt-2 text-sm ${jobberStatus.data.health.state === "reauthorization_required" ? "text-amber-700 dark:text-amber-400" : "text-muted-foreground"}`}>
                     {jobberStatus.data.health.message}
@@ -803,29 +995,22 @@ export default function Settings() {
                   <p className="mt-1 text-xs text-muted-foreground">Last synced {new Date(jobberStatus.data.connection.last_successful_sync_at).toLocaleString()} · {Object.values(jobberSyncStatus.data?.counts ?? {}).reduce((sum, count) => sum + count.active, 0)} active records</p>
                 )}
                 {jobberStatus.data?.connection?.api_version_warning && <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">{jobberStatus.data.connection.api_version_warning}</p>}
-                {activeOrganization && (
-                  <p className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">
-                    <Building2 className="h-3.5 w-3.5" /> BookSmart organization: {activeOrganization.name}
-                  </p>
-                )}
-              </div>
+              </div></div>
               {jobberStatus.data?.connected ? (
-                <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
-                  <Button variant="secondary" disabled className="w-full sm:w-auto">
-                    <CheckCircle2 /> Jobber Connected
-                  </Button>
-                  <Button className="w-full sm:w-auto" disabled={jobberSyncMutation.isPending} onClick={() => jobberSyncMutation.mutate("incremental")}>
+                <div className="flex w-full flex-wrap gap-2 lg:w-auto lg:justify-end">
+                  <Button size="sm" disabled={jobberSyncMutation.isPending} onClick={() => jobberSyncMutation.mutate("incremental")}>
                     {jobberSyncMutation.isPending ? <Loader2 className="animate-spin" /> : <RefreshCw />} Sync now
                   </Button>
-                  <Button variant="outline" className="w-full sm:w-auto" disabled={jobberSyncMutation.isPending} onClick={() => jobberSyncMutation.mutate("full")}>
+                  <Button size="sm" variant="outline" disabled={jobberSyncMutation.isPending} onClick={() => jobberSyncMutation.mutate("full")}>
                     Full refresh
                   </Button>
-                  <Button variant="outline" className="w-full sm:w-auto" onClick={() => navigate("/user/jobber-records")}>
+                  <Button size="sm" variant="outline" onClick={() => navigate("/user/jobber-records")}>
                     View records
                   </Button>
                   <Button
+                    size="sm"
                     variant="outline"
-                    className="w-full text-destructive sm:w-auto"
+                    className="text-destructive hover:text-destructive"
                     disabled={jobberDisconnectMutation.isPending}
                     onClick={() => setJobberDisconnectOpen(true)}
                   >
@@ -847,15 +1032,15 @@ export default function Settings() {
               )}
             </div>
             {jobberStatus.data?.connected && jobberSyncStatus.data && (
-              <div className="mt-4 grid gap-2 border-t border-border/60 pt-4 sm:grid-cols-2 lg:grid-cols-3">
+              <div className="mt-3 grid grid-cols-2 gap-px overflow-hidden rounded-lg border border-border/60 bg-border/60 sm:grid-cols-3 lg:grid-cols-6">
                 {(["clients", "jobs", "scheduled_items", "quotes", "invoices", "payments"] as const).map((kind) => {
                   const counts = jobberSyncStatus.data?.counts[kind] ?? { active: 0, archived: 0 };
                   const state = jobberSyncStatus.data?.states.find((item) => item.object_type === kind);
                   return (
-                    <div key={kind} className="rounded-lg border border-border/60 bg-background/40 p-3">
-                      <p className="text-xs font-medium capitalize">{kind.replace("_", " ")}</p>
-                      <p className="mt-1 text-xs text-muted-foreground">{counts.active} active · {counts.archived} archived</p>
-                      <p className="mt-1 text-xs text-muted-foreground">{state ? `${state.sync_mode} · ${state.records_changed} changed · ${state.pages_processed} pages` : "Not synced yet"}</p>
+                    <div key={kind} className="bg-card px-3 py-2.5">
+                      <p className="text-[11px] capitalize text-muted-foreground">{kind.replace("_", " ")}</p>
+                      <p className="mt-0.5 text-sm font-semibold tabular-nums">{counts.active}<span className="ml-1 text-[11px] font-normal text-muted-foreground">active</span></p>
+                      {counts.archived > 0 && <p className="text-[10px] text-muted-foreground">{counts.archived} archived</p>}
                       {state?.last_error && <p className="mt-1 text-xs text-destructive">{state.last_error}</p>}
                     </div>
                   );
@@ -863,27 +1048,24 @@ export default function Settings() {
               </div>
             )}
             {jobberStatus.data?.connected && (
-              <div className="mt-4 border-t border-border/60 pt-4">
-                <div className="rounded-lg border border-violet-500/25 bg-violet-500/5 p-4">
-                  <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-                    <div className="max-w-3xl">
+              <div className="mt-3">
+                <div className="rounded-lg border border-violet-500/20 bg-violet-500/5 px-3 py-3">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
                         <ShieldCheck className="h-4 w-4 text-violet-600 dark:text-violet-400" />
-                        <p className="text-sm font-semibold">CPA sharing consent</p>
-                        <span className="rounded-full bg-violet-500/10 px-2 py-0.5 text-[11px] font-medium text-violet-700 dark:text-violet-300">Preview only</span>
+                        <p className="text-sm font-medium">CPA review preview</p>
+                        <span className="rounded-full bg-violet-500/10 px-2 py-0.5 text-[10px] font-medium text-violet-700 dark:text-violet-300">Nothing shared</span>
                       </div>
-                      <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                        Allow BookSmart to evaluate whether material Jobber work may need future CPA attention. Nothing is currently shared, and Jobber amounts never become recognized accounting revenue.
-                      </p>
-                      <p className="mt-2 text-xs text-muted-foreground">Requires at least $5,000 explicitly uninvoiced, an explicit completion date, and 14 full days unresolved.</p>
+                      <p className="mt-1 text-xs text-muted-foreground">Flag qualifying uninvoiced Jobber work for your private review.</p>
                     </div>
                     {jobberCpaSharing.isLoading ? (
                       <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
                     ) : jobberCpaSharing.isError ? (
                       <Button size="sm" variant="outline" onClick={() => void jobberCpaSharing.refetch()}>Retry preferences</Button>
                     ) : (
-                      <div className="flex shrink-0 items-center gap-3 rounded-lg border border-border/60 bg-background/50 px-3 py-2">
-                        <span className="text-xs font-medium">{jobberCpaSharing.data?.enabled ? "Consent on" : "Consent off"}</span>
+                      <div className="flex shrink-0 items-center gap-2">
+                        <span className="text-xs font-medium">{jobberCpaSharing.data?.enabled ? "On" : "Off"}</span>
                         <Switch
                           aria-label="Allow future CPA sharing of qualifying Jobber alerts"
                           checked={jobberCpaSharing.data?.enabled === true}
@@ -894,9 +1076,8 @@ export default function Settings() {
                     )}
                   </div>
 
-                  <div className="mt-4 flex flex-col gap-3 border-t border-violet-500/20 pt-4 sm:flex-row sm:items-center sm:justify-between">
-                    <p className="text-xs text-muted-foreground">Review qualifying Jobber items from My CPA. Results remain owner-only and are not shared.</p>
-                    <Button asChild size="sm" variant="outline"><a href="/user/my-cpa">Review in My CPA</a></Button>
+                  <div className="mt-2 flex justify-end">
+                    <Button asChild size="sm" variant="ghost"><a href="/user/my-cpa">Review</a></Button>
                   </div>
                 </div>
               </div>
@@ -993,6 +1174,43 @@ export default function Settings() {
           </div>
         </section>
 
+        {plaidSyncStage !== "idle" && (
+          <div className="fixed left-1/2 top-4 z-[9999] w-[calc(100%-2rem)] max-w-xl -translate-x-1/2">
+            <div className={`rounded-xl border bg-background/95 p-4 shadow-lg backdrop-blur ${
+              plaidSyncStage === "complete" ? "border-emerald-500/30"
+                : plaidSyncStage === "error" ? "border-destructive/30"
+                  : "border-primary/30"
+            }`}>
+              <div className="flex items-start gap-3">
+                {["connecting", "syncing", "categorizing", "refreshing"].includes(plaidSyncStage) && (
+                  <Loader2 className="mt-0.5 h-5 w-5 shrink-0 animate-spin text-primary" />
+                )}
+                {plaidSyncStage === "complete" && <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-emerald-500" />}
+                {plaidSyncStage === "error" && <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-destructive" />}
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-semibold">
+                    {plaidSyncStage === "connecting" && "Connecting your bank"}
+                    {plaidSyncStage === "syncing" && "Importing bank transactions"}
+                    {plaidSyncStage === "categorizing" && "Categorizing transactions"}
+                    {plaidSyncStage === "refreshing" && "Updating BookSmart"}
+                    {plaidSyncStage === "complete" && "Bank import complete"}
+                    {plaidSyncStage === "error" && "Bank import failed"}
+                  </p>
+                  <p className="mt-1 text-xs text-muted-foreground">{plaidSyncMessage}</p>
+                  {["connecting", "syncing", "categorizing", "refreshing"].includes(plaidSyncStage) && (
+                    <>
+                      <div className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-muted">
+                        <div className="h-full w-1/2 animate-pulse rounded-full bg-primary" />
+                      </div>
+                      <p className="mt-2 text-[11px] text-muted-foreground">Please keep this page open while BookSmart processes your bank data.</p>
+                    </>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
         <section id="connected-banks" className="pb-5" aria-labelledby="connected-banks-title">
           <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
             <div>
@@ -1023,37 +1241,61 @@ export default function Settings() {
               {plaidProviders.map((provider) => {
                 const accounts = (plaidBalances.data?.accounts ?? []).filter((account) => account.institution_name === provider.name || plaidProviders.length === 1);
                 const healthy = provider.status === "healthy";
-                return <div key={provider.id} className="rounded-xl border border-border/60 bg-card p-4 sm:p-5">
+                return <div key={provider.id} className="overflow-hidden rounded-xl border border-border/60 bg-card">
+                  <div className="p-4 sm:p-5">
                   <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-                    <div className="flex min-w-0 gap-3"><div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-sky-500/10"><Landmark className="h-5 w-5 text-sky-400" /></div><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><h3 className="font-semibold">{provider.name}</h3><span className={`rounded-full px-2 py-0.5 text-xs font-medium ${healthy ? "bg-emerald-500/10 text-emerald-400" : "bg-amber-500/10 text-amber-400"}`}>{healthy ? "Connected" : "Needs attention"}</span></div><p className="mt-1 text-xs text-muted-foreground">{provider.lastDataRefresh ? `Last synchronized ${new Date(provider.lastDataRefresh).toLocaleString()}` : "Not synchronized yet"}</p>{provider.error && <p className="mt-1 text-xs text-destructive">{provider.error}</p>}{provider.stale && !provider.error && <p className="mt-1 text-xs text-amber-400">This connection has not refreshed recently.</p>}</div></div>
-                    <div className="flex flex-wrap gap-2 sm:justify-end"><Button size="sm" variant="secondary" disabled={syncBankMutation.isPending} onClick={() => syncBankMutation.mutate(provider)}>{syncBankMutation.isPending ? <Loader2 className="animate-spin" /> : <RefreshCw />}Sync now</Button><Button size="sm" variant="outline" className="text-destructive" onClick={() => setBankDisconnectTarget(provider)}><Unplug />Disconnect</Button></div>
+                    <div className="flex min-w-0 gap-3"><div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-sky-500/10" aria-label={provider.name}>{provider.name.toLowerCase().includes("chase") ? <SiChase className="h-6 w-6 text-[#117aca]" /> : <Landmark className="h-5 w-5 text-sky-400" />}</div><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><h3 className="font-semibold">{provider.name}</h3><span className={`rounded-full px-2 py-0.5 text-xs font-medium ${healthy ? "bg-emerald-500/10 text-emerald-400" : "bg-amber-500/10 text-amber-400"}`}>{healthy ? "Connected" : "Needs attention"}</span></div><p className="mt-1 text-xs text-muted-foreground">{provider.lastDataRefresh ? `Last synchronized ${new Date(provider.lastDataRefresh).toLocaleString()}` : "Not synchronized yet"}</p>{provider.error && <p className="mt-1 text-xs text-destructive">{provider.error}</p>}{provider.stale && !provider.error && <p className="mt-1 text-xs text-amber-400">This connection has not refreshed recently.</p>}</div></div>
+                    <div className="flex flex-wrap gap-2 sm:justify-end"><Button size="sm" variant="secondary" disabled={syncBankMutation.isPending} onClick={() => syncBankMutation.mutate(provider)}>{syncBankMutation.isPending ? <Loader2 className="animate-spin" /> : <RefreshCw />}Sync now</Button><Button size="sm" variant="ghost" className="text-destructive hover:text-destructive" onClick={() => setBankDisconnectTarget(provider)}><Unplug />Disconnect</Button></div>
                   </div>
-                  {plaidBalances.isLoading ? <div className="mt-4 flex items-center gap-2 border-t border-border/60 pt-4 text-xs text-muted-foreground"><Loader2 className="h-3.5 w-3.5 animate-spin" />Loading accounts</div> : accounts.length > 0 ? <div className="mt-4 grid gap-2 border-t border-border/60 pt-4 sm:grid-cols-2 lg:grid-cols-3">{accounts.map((account) => <div key={account.account_id} className="rounded-lg border border-border/60 bg-background/40 p-3"><p className="truncate text-sm font-medium">{account.name}{account.mask ? ` •••• ${account.mask}` : ""}</p><p className="mt-1 text-xs capitalize text-muted-foreground">{account.subtype ?? account.type ?? "Bank account"}</p>{account.current != null && <p className="mt-2 text-sm font-semibold">{new Intl.NumberFormat("en-US", { style: "currency", currency: account.currency || "USD" }).format(account.current)}</p>}</div>)}</div> : plaidBalances.isError ? <p className="mt-4 border-t border-border/60 pt-4 text-xs text-muted-foreground">Account balances could not be refreshed. The bank connection is still listed above.</p> : null}
+                  </div>
+                  {plaidBalances.isLoading ? <div className="flex items-center gap-2 border-t border-border/60 bg-background/25 px-4 py-4 text-xs text-muted-foreground sm:px-5"><Loader2 className="h-3.5 w-3.5 animate-spin" />Loading accounts</div> : accounts.length > 0 ? <div className="grid gap-px border-t border-border/60 bg-border/60 sm:grid-cols-2 lg:grid-cols-3">{accounts.map((account) => {
+                    const formatter = new Intl.NumberFormat("en-US", { style: "currency", currency: account.currency || "USD" });
+                    return <div key={account.account_id} className="bg-card px-4 py-4 sm:px-5"><p className="truncate text-sm font-medium">{account.name}{account.mask ? ` •••• ${account.mask}` : ""}</p><p className="mt-1 text-xs capitalize text-muted-foreground">{account.subtype ?? account.type ?? "Bank account"}</p><div className="mt-3 flex flex-wrap gap-x-5 gap-y-2"><div><p className="text-[11px] text-muted-foreground">Current</p><p className="text-sm font-semibold tabular-nums">{account.current == null ? "Unavailable" : formatter.format(account.current)}</p></div>{account.available != null && <div><p className="text-[11px] text-muted-foreground">Available</p><p className="text-sm font-semibold tabular-nums">{formatter.format(account.available)}</p></div>}</div></div>;
+                  })}</div> : plaidBalances.isError ? <p className="border-t border-border/60 px-4 py-4 text-xs text-muted-foreground sm:px-5">Account balances could not be refreshed. The bank connection is still listed above.</p> : null}
                 </div>;
               })}
             </div>
           )}
         </section>
 
-      <Separator className="bg-border/30" />
-
-      {/* ── Settings list ── */}
-      <div className="divide-y divide-border/30">
-        <Row label="Notifications" onClick={soon} />
-        <ToggleRow label="Auto Review Results" checked={autoReview} onCheckedChange={setAutoReview} />
-        <ToggleRow label="Pro Tips"            checked={proTips}    onCheckedChange={setProTips} />
-        <ToggleRow label="Dark Mode"           checked={isDarkMode} onCheckedChange={toggleDark} />
-        <Row label="Category Rules"       onClick={() => navigate("/user/rules-management")} />
-        <Row label="Documents Repository" onClick={() => navigate("/user/reports")} />
-        <Row label="Sponsored Offers"     onClick={soon} />
-        <Row label="Organizations"        onClick={() => navigate("/user/organizations")} />
-        <Row label="Financial Planning Inputs" onClick={() => navigate("/user/financial-inputs")} />
-        <Row label="Cards"                onClick={soon} />
-        <Row label="Subscription"         onClick={() => navigate("/user/subscription")} />
-        <Row label="Purchase Tokens"      onClick={() => navigate("/user/token")} />
-        <Row label="Delete Account"       onClick={soon} />
-        <Row label="Logout"               onClick={signOut} destructive />
-      </div>
+      <section id="account-preferences" className="scroll-mt-6" aria-labelledby="account-preferences-title">
+        <div className="mb-4">
+          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-primary">Workspace</p>
+          <h2 id="account-preferences-title" className="mt-1 text-xl font-semibold">Preferences and account</h2>
+          <p className="mt-1 text-sm text-muted-foreground">Customize BookSmart and manage business tools, plan, and access.</p>
+        </div>
+        <div className="grid items-stretch gap-4 lg:grid-cols-3">
+          <div className="h-full overflow-hidden rounded-xl border border-border/60 bg-card">
+            <div className="border-b border-border/50 px-4 py-3"><h3 className="text-sm font-semibold">Experience</h3><p className="mt-0.5 text-xs text-muted-foreground">Alerts and display preferences</p></div>
+            <div className="divide-y divide-border/40 px-4">
+              <Row label="Notifications" onClick={soon} />
+              <ToggleRow label="Auto Review Results" checked={autoReview} onCheckedChange={setAutoReview} />
+              <ToggleRow label="Pro Tips" checked={proTips} onCheckedChange={setProTips} />
+              <ToggleRow label="Dark Mode" checked={isDarkMode} onCheckedChange={toggleDark} />
+            </div>
+          </div>
+          <div className="h-full overflow-hidden rounded-xl border border-border/60 bg-card">
+            <div className="border-b border-border/50 px-4 py-3"><h3 className="text-sm font-semibold">Business tools</h3><p className="mt-0.5 text-xs text-muted-foreground">Rules, documents, and planning</p></div>
+            <div className="divide-y divide-border/40 px-4">
+              <Row label="Category Rules" onClick={() => navigate("/user/rules-management")} />
+              <Row label="Documents Repository" onClick={() => navigate("/user/reports")} />
+              <Row label="Organizations" onClick={() => navigate("/user/organizations")} />
+              <Row label="Financial Planning Inputs" onClick={() => navigate("/user/financial-inputs")} />
+            </div>
+          </div>
+          <div className="h-full overflow-hidden rounded-xl border border-border/60 bg-card">
+            <div className="border-b border-border/50 px-4 py-3"><h3 className="text-sm font-semibold">Plan and access</h3><p className="mt-0.5 text-xs text-muted-foreground">Subscription, tokens, and security</p></div>
+            <div className="divide-y divide-border/40 px-4">
+              <Row label="Subscription" onClick={() => navigate("/user/subscription")} />
+              <Row label="Purchase Tokens" onClick={() => navigate("/user/token")} />
+              <Row label="Sponsored Offers" onClick={soon} />
+              <Row label="Cards" onClick={soon} />
+              <Row label="Delete Account" onClick={soon} destructive />
+              <Row label="Logout" onClick={signOut} destructive />
+            </div>
+          </div>
+        </div>
+      </section>
 
       <AlertDialog open={disconnectOpen} onOpenChange={setDisconnectOpen}>
         <AlertDialogContent>
@@ -1073,6 +1315,28 @@ export default function Settings() {
             >
               {disconnectMutation.isPending && <Loader2 className="animate-spin" />}
               Disconnect
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={gmailDisconnectOpen} onOpenChange={(open) => { if (!gmailDisconnectMutation.isPending) setGmailDisconnectOpen(open); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Disconnect Gmail?</AlertDialogTitle>
+            <AlertDialogDescription>
+              BookSmart will revoke Gmail access and remove the stored OAuth credentials for this organization. Previously found receipt evidence and accounting transactions will not be deleted or changed.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={gmailDisconnectMutation.isPending}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground"
+              disabled={gmailDisconnectMutation.isPending}
+              onClick={(event) => { event.preventDefault(); gmailDisconnectMutation.mutate(); }}
+            >
+              {gmailDisconnectMutation.isPending && <Loader2 className="animate-spin" />}
+              Disconnect Gmail
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

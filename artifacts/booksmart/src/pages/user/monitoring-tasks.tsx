@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "wouter";
 import {
@@ -81,8 +81,12 @@ export default function MonitoringTasks() {
   const { data: organization, isLoading: orgLoading } =
     useMonitoringOrganization();
   const orgId = organization?.id ?? null;
+  const initialParams = new URLSearchParams(window.location.search);
+  const requestedTaskId = Number(initialParams.get("task_id"));
+  const requestedAssignmentId = Number(initialParams.get("assignment_id"));
+  const requestedTransactionId = Number(initialParams.get("transaction_id"));
   const [filter, setFilter] = useState<(typeof statuses)[number]>("active");
-  const [expandedTask, setExpandedTask] = useState<number | null>(null);
+  const [expandedTask, setExpandedTask] = useState<number | null>(Number.isSafeInteger(requestedTaskId) && requestedTaskId > 0 ? requestedTaskId : null);
   const [createOpen, setCreateOpen] = useState(false);
   const [newTask, setNewTask] = useState({
     title: "",
@@ -98,6 +102,14 @@ export default function MonitoringTasks() {
     queryFn: () => loadMonitoring(orgId!),
     retry: false,
   });
+  useEffect(() => {
+    if (!monitoring.data || !Number.isSafeInteger(requestedTaskId) || requestedTaskId <= 0) return;
+    const task = monitoring.data.tasks.find(item => item.id === requestedTaskId);
+    if (!task) return;
+    setFilter(task.status === "completed" ? "completed" : task.status === "dismissed" ? "dismissed" : "active");
+    setExpandedTask(task.id);
+    window.setTimeout(() => document.getElementById(`financial-task-${task.id}`)?.scrollIntoView({ behavior: "smooth", block: "center" }), 0);
+  }, [monitoring.data, requestedTaskId]);
   const history = useQuery({
     queryKey: ["monitoring-task-history", orgId, expandedTask],
     enabled: orgId !== null && expandedTask !== null,
@@ -283,7 +295,7 @@ export default function MonitoringTasks() {
         </div>
       </div>
 
-      <ContractorMatchReview organizationId={orgId} />
+      <ContractorMatchReview organizationId={orgId} highlightAssignmentId={Number.isSafeInteger(requestedAssignmentId) && requestedAssignmentId > 0 ? requestedAssignmentId : null} highlightTransactionId={Number.isSafeInteger(requestedTransactionId) && requestedTransactionId > 0 ? requestedTransactionId : null} />
 
       {tasks.length === 0 ? (
         <Card>
@@ -332,7 +344,7 @@ export default function MonitoringTasks() {
                           ? "border-amber-400/30 bg-amber-400/15 text-amber-300"
                           : "border-emerald-400/30 bg-emerald-500/15 text-emerald-300";
                       return (
-                        <div key={task.id}>
+                        <div key={task.id} id={`financial-task-${task.id}`} className={requestedTaskId === task.id ? "ring-2 ring-primary/50 ring-inset" : undefined}>
                           <div className="grid grid-cols-[40px_minmax(0,1fr)_auto_32px] items-center gap-2.5 px-3 py-3.5 sm:grid-cols-[44px_minmax(0,1fr)_auto_36px] sm:gap-3 sm:px-4 sm:py-4">
                             <div
                               className={`flex h-10 w-10 items-center justify-center rounded-full ${tone}`}

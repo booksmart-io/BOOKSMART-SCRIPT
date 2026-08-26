@@ -2,12 +2,10 @@ import { Router } from "express";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { requireAuth } from "../middlewares/require-auth";
 import {
-  CONTRACTOR_RECEIPT_PROMPT,
   CONTRACTOR_RECEIPT_SCHEMA_VERSION,
-  contractorReceiptJsonSchema,
-  normalizeContractorReceipt,
   receiptToFinancialRecord,
 } from "../lib/contractor-receipt";
+import { extractReceiptFile, ReceiptExtractionUpstreamError } from "../lib/receipt-extraction-service";
 import { matchContractorFinancialRecord } from "../lib/contractor-job-matcher";
 import { matchReceiptToTransaction } from "../lib/contractor-receipt-transaction-matcher";
 
@@ -15,22 +13,12 @@ const router = Router();
 const SUPABASE_URL =
   process.env.SUPABASE_URL ?? "https://pvppwmkswnluidlwnnck.supabase.co";
 const MAX_BYTES = 10 * 1024 * 1024;
+const MAX_SOURCE_ID_CHARS = 1_000;
 const adminClient = (): SupabaseClient => {
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!key) throw new Error("Contractor receipt extraction is unavailable.");
   return createClient(SUPABASE_URL, key, { auth: { persistSession: false } });
 };
-
-function providerText(payload: any) {
-  return (
-    payload?.output_text ??
-    payload?.output
-      ?.flatMap((item: any) => item.content ?? [])
-      .map((item: any) => item.text ?? "")
-      .join("") ??
-    ""
-  );
-}
 
 async function requireOrganizationOwner(
   admin: SupabaseClient,
@@ -86,12 +74,11 @@ router.get(
         admin
           .from("contractor_source_links")
           .select(
-            "left_record_id,right_provider,right_record_id,confidence,score,match_reasons,requires_confirmation",
+            "left_record_id,right_provider,right_record_id,confidence,score,match_reasons,requires_confirmation,status",
           )
           .eq("organization_id", organizationId)
           .eq("left_provider", "receipt")
           .eq("right_record_type", "transaction")
-          .eq("status", "suggested")
           .order("score", { ascending: false }),
         admin
           .from("contractor_receipt_extractions")
@@ -150,14 +137,19 @@ router.get(
       );
       const bestLinkBySource = new Map<string, (typeof links)[number]>();
       for (const link of links)
-        if (!bestLinkBySource.has(link.left_record_id))
+        if (link.status === "suggested" && !bestLinkBySource.has(link.left_record_id))
           bestLinkBySource.set(link.left_record_id, link);
+      const confirmedLinkBySource = new Map<string, (typeof links)[number]>();
+      for (const link of links)
+        if (link.status === "confirmed" && !confirmedLinkBySource.has(link.left_record_id))
+          confirmedLinkBySource.set(link.left_record_id, link);
       const matchBySource = new Map(
         matches.map((match) => [match.source_record_id, match]),
       );
       res.json({
         receipts: (receiptsResult.data ?? []).map((receipt) => {
           const match = matchBySource.get(receipt.source_id);
+          const confirmedLink = confirmedLinkBySource.get(receipt.source_id);
           return {
             ...receipt,
             status:
@@ -165,7 +157,13 @@ router.get(
                 ? "unmatched"
                 : match?.status === "suggested"
                   ? "awaiting_review"
-                  : "processed",
+                  : confirmedLink
+                    ? "processed"
+                    : receipt.source_id.startsWith("gmail:")
+                    ? "unmatched"
+                    : "processed",
+            source: receipt.source_id.startsWith("gmail:") ? "gmail" : "upload",
+            linked_transaction: confirmedLink ? transactionById.get(confirmedLink.right_record_id) ?? null : null,
             removable: match?.status !== "confirmed",
             confirmed: match?.status === "confirmed",
           };
@@ -214,6 +212,65 @@ router.get(
   },
 );
 
+router.get(
+  "/organizations/:organizationId/contractor-receipts/transaction-options",
+  requireAuth,
+  async (req, res) => {
+    const organizationId = Number(req.params.organizationId);
+    if (!Number.isSafeInteger(organizationId) || organizationId <= 0) { res.status(400).json({ error: "invalid_request" }); return; }
+    try {
+      const admin = adminClient();
+      if (!await requireOrganizationOwner(admin, organizationId, req.supabaseUserId!)) { res.status(403).json({ error: "forbidden" }); return; }
+      const { data, error } = await admin.from("transactions")
+        .select("id,title,description,amount,date_time,plaid_transaction_id,quickbooks_external_id")
+        .eq("org_id", organizationId).eq("pending", false)
+        .order("date_time", { ascending: false }).limit(100);
+      if (error) throw error;
+      res.json({ transactions: data ?? [] });
+    } catch (error) {
+      res.status(503).json({ error: "transaction_options_unavailable", message: error instanceof Error ? error.message : "Approved transactions are unavailable." });
+    }
+  },
+);
+
+router.post(
+  "/organizations/:organizationId/contractor-receipts/link-transaction",
+  requireAuth,
+  async (req, res) => {
+    const organizationId = Number(req.params.organizationId);
+    const transactionId = Number(req.body?.transactionId);
+    const sourceId = String(req.body?.sourceId ?? "").trim().slice(0, MAX_SOURCE_ID_CHARS);
+    if (!Number.isSafeInteger(organizationId) || organizationId <= 0 || !Number.isSafeInteger(transactionId) || transactionId <= 0 || !sourceId) {
+      res.status(400).json({ error: "invalid_request" }); return;
+    }
+    try {
+      const admin = adminClient();
+      if (!await requireOrganizationOwner(admin, organizationId, req.supabaseUserId!)) { res.status(403).json({ error: "forbidden" }); return; }
+      const [{ data: receipt, error: receiptError }, { data: transaction, error: transactionError }] = await Promise.all([
+        admin.from("contractor_receipt_extractions").select("source_id").eq("organization_id", organizationId).eq("source_id", sourceId).maybeSingle(),
+        admin.from("transactions").select("id,plaid_transaction_id,quickbooks_external_id,pending").eq("org_id", organizationId).eq("id", transactionId).maybeSingle(),
+      ]);
+      if (receiptError) throw receiptError;
+      if (transactionError) throw transactionError;
+      if (!receipt || !transaction || transaction.pending) { res.status(422).json({ error: "link_rejected", message: "Choose an existing approved transaction from this organization." }); return; }
+      const provider = transaction.plaid_transaction_id ? "plaid" : transaction.quickbooks_external_id ? "quickbooks" : "booksmart";
+      const now = new Date().toISOString();
+      const { error: rejectError } = await admin.from("contractor_source_links").update({ status: "rejected", requires_confirmation: false, updated_at: now })
+        .eq("organization_id", organizationId).eq("left_provider", "receipt").eq("left_record_id", sourceId).eq("right_record_type", "transaction").eq("status", "suggested");
+      if (rejectError) throw rejectError;
+      const { error: linkError } = await admin.from("contractor_source_links").upsert({
+        organization_id: organizationId, left_provider: "receipt", left_record_type: "contractor_receipt_extraction", left_record_id: sourceId,
+        right_provider: provider, right_record_type: "transaction", right_record_id: String(transaction.id), confidence: "high", score: 100,
+        match_reasons: ["user_confirmed"], requires_confirmation: false, status: "confirmed", calculation_version: "manual-receipt-link-v1", updated_at: now,
+      }, { onConflict: "organization_id,left_provider,left_record_type,left_record_id,right_provider,right_record_type,right_record_id" });
+      if (linkError) throw linkError;
+      res.json({ linked: true, accountingEffect: "none", transactionId: transaction.id });
+    } catch (error) {
+      res.status(503).json({ error: "receipt_link_unavailable", message: error instanceof Error ? error.message : "The receipt could not be linked." });
+    }
+  },
+);
+
 router.delete(
   "/organizations/:organizationId/contractor-receipts/:sourceId",
   requireAuth,
@@ -221,7 +278,7 @@ router.delete(
     const organizationId = Number(req.params.organizationId);
     const sourceId = String(req.params.sourceId ?? "")
       .trim()
-      .slice(0, 300);
+      .slice(0, MAX_SOURCE_ID_CHARS);
     if (
       !Number.isSafeInteger(organizationId) ||
       organizationId <= 0 ||
@@ -317,7 +374,7 @@ router.post(
     const organizationId = Number(req.params.organizationId);
     const sourceId = String(req.body?.sourceId ?? "")
       .trim()
-      .slice(0, 300);
+      .slice(0, MAX_SOURCE_ID_CHARS);
     if (
       !Number.isSafeInteger(organizationId) ||
       organizationId <= 0 ||
@@ -403,7 +460,7 @@ router.post(
       req.body?.sourceId ?? (documentId ? `document:${documentId}` : ""),
     )
       .trim()
-      .slice(0, 300);
+      .slice(0, MAX_SOURCE_ID_CHARS);
     const mimeType = String(req.body?.mimeType ?? "");
     const filename = String(req.body?.filename ?? "contractor-receipt").slice(
       0,
@@ -443,8 +500,6 @@ router.post(
     }
 
     try {
-      const apiKey = process.env.OPENAI_API_KEY?.trim();
-      if (!apiKey) throw new Error("Receipt extraction is not configured.");
       const admin = adminClient();
       const { data: user, error: userError } = await admin
         .from("users")
@@ -485,58 +540,7 @@ router.post(
         }
       }
 
-      const fileContent =
-        mimeType === "application/pdf"
-          ? {
-              type: "input_file",
-              filename,
-              file_data: `data:${mimeType};base64,${fileData}`,
-            }
-          : {
-              type: "input_image",
-              image_url: `data:${mimeType};base64,${fileData}`,
-              detail: "high",
-            };
-      const upstream = await fetch("https://api.openai.com/v1/responses", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${apiKey}`,
-        },
-        body: JSON.stringify({
-          model: "gpt-4.1-mini",
-          temperature: 0,
-          max_output_tokens: 4096,
-          input: [
-            {
-              role: "system",
-              content: [
-                {
-                  type: "input_text",
-                  text: "Extract contractor receipt facts. Return only strict schema-valid data.",
-                },
-              ],
-            },
-            {
-              role: "user",
-              content: [
-                fileContent,
-                { type: "input_text", text: CONTRACTOR_RECEIPT_PROMPT },
-              ],
-            },
-          ],
-          text: {
-            format: { type: "json_schema", ...contractorReceiptJsonSchema },
-          },
-        }),
-      });
-      if (!upstream.ok) {
-        res.status(502).json({ error: "receipt_extraction_failed" });
-        return;
-      }
-      const receipt = normalizeContractorReceipt(
-        JSON.parse(providerText(await upstream.json())),
-      );
+      const receipt = await extractReceiptFile({ filename, mimeType, base64Data: fileData });
       const { data: extraction, error: extractionError } = await admin
         .from("contractor_receipt_extractions")
         .upsert(
@@ -680,7 +684,7 @@ router.post(
       });
     } catch (error) {
       res
-        .status(503)
+        .status(error instanceof ReceiptExtractionUpstreamError ? 502 : 503)
         .json({
           error: "contractor_receipt_unavailable",
           message:
@@ -700,7 +704,7 @@ router.post(
     const transactionId = Number(req.body?.transactionId);
     const sourceId = String(req.body?.sourceId ?? "")
       .trim()
-      .slice(0, 300);
+      .slice(0, MAX_SOURCE_ID_CHARS);
     const jobberJobId = String(req.body?.jobberJobId ?? "")
       .trim()
       .slice(0, 300);

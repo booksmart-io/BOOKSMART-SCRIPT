@@ -35,6 +35,7 @@ import contractorJobCostsRouter from "./contractor-job-costs";
 import contractorReceiptsRouter from "./contractor-receipts";
 import contractorDiagnosticsRouter from "./contractor-diagnostics";
 import contractorGmailRouter from "./contractor-gmail";
+import notificationsRouter from "./notifications";
 
 const router: IRouter = Router();
 
@@ -74,5 +75,6 @@ router.use(contractorJobCostsRouter);
 router.use(contractorReceiptsRouter);
 router.use(contractorDiagnosticsRouter);
 router.use(contractorGmailRouter);
+router.use(notificationsRouter);
 
 export default router;
