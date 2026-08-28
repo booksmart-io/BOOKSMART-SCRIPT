@@ -29,8 +29,11 @@ export type ContractorFinancialIntelligence = {
   };
   cashPosition: { currentBalance: TrustedMetric; availableBalance: TrustedMetric };
   accountsReceivable: { totalOutstanding: TrustedMetric; overdueAmount: TrustedMetric; overdueInvoiceCount: number;
-    averageInvoiceAgeDays: TrustedMetric; largestCustomerBalances: Array<{ customerId: string; customerName: string | null; outstanding: number; overdue: number }> };
+    averageInvoiceAgeDays: TrustedMetric; overdueInvoices: Array<{ id: string; number: string | null; title: string | null; balance: number; dueDate: string | null }>;
+    largestCustomerBalances: Array<{ customerId: string; customerName: string | null; outstanding: number; overdue: number }> };
   jobs: ContractorJobSnapshot[];
+  confirmedJobCosts: Array<{ transactionId: string; transactionTitle: string | null; amount: number; confirmedAt: string | null;
+    jobberJobId: string; jobNumber: string | null; jobTitle: string | null; receiptApproved: boolean; receiptSourceId: string | null }>;
   expenseCategoryChanges: Array<{ key: string; label: string; current: number; previous: number; changePercent: number | null }>;
   unusualTransactions: Array<{ transactionId: string; title: string | null; amount: number; date: string; reasons: string[]; provenance: ProvenanceReference[] }>;
   unmatchedTransactions: number; unmatchedReceipts: number; bookkeepingIssues: Array<{ type: string; count: number }>;
@@ -40,7 +43,8 @@ export type ContractorFinancialIntelligence = {
 type CanonicalSummary = { revenue: number; accountingExpenses: number; netIncome: number; netCashMovement?: number; warnings?: unknown[]; completeness?: { approvedTransactionCount?: number; uncategorizedTransactionCount?: number };
   visuals?: { spendingBreakdown?: Array<{ key: string; label: string; value: number }> } };
 type JobberRecord = { external_id: string; related_client_id?: string | null; record_number?: string | null; status?: string | null; title?: string | null; amount?: number | string | null; source_created_at?: string | null; payload?: Record<string, any> | null };
-type CostAssignment = { jobber_job_id: string; amount: number | string; confidence: string; source_record_id: string };
+type CostAssignment = { jobber_job_id: string; amount: number | string; confidence: string; source_record_id: string; created_at?: string | null };
+type ReceiptTransactionLink = { left_record_id: string; right_record_id: string; status: string };
 type TrustedTransactionInput = { id: number | string; amount: number | string; date_time: string; title?: string | null; pending?: boolean | null };
 
 const metric = (value: number | null, confidence: IntelligenceConfidence, sources: IntelligenceSource[], missingInputs: string[] = []): TrustedMetric =>
@@ -51,6 +55,7 @@ export function buildContractorFinancialIntelligence(input: {
   organizationId: number; start: Date; end: Date; canonical: CanonicalSummary;
   jobberJobs?: JobberRecord[]; jobberInvoices?: JobberRecord[]; jobberPayments?: JobberRecord[]; jobberClients?: JobberRecord[];
   assignments?: CostAssignment[]; signals?: unknown[]; targetGrossMargin?: number | null;
+  receiptTransactionLinks?: ReceiptTransactionLink[];
   targetSource?: "organization" | "industry" | null; sourceFreshness?: Record<string, string | null>;
   connectedSources?: IntelligenceSource[]; unmatchedTransactions?: number; unmatchedReceipts?: number;
   previousCanonical?: CanonicalSummary | null;
@@ -80,6 +85,19 @@ export function buildContractorFinancialIntelligence(input: {
     .filter(Number.isFinite).map(timestamp => Math.max(0, Math.floor((input.end.getTime() - timestamp) / 86_400_000)));
   const assignmentsByJob = new Map<string, CostAssignment[]>();
   for (const assignment of input.assignments ?? []) assignmentsByJob.set(assignment.jobber_job_id, [...(assignmentsByJob.get(assignment.jobber_job_id) ?? []), assignment]);
+  const jobById = new Map((input.jobberJobs ?? []).map(job => [job.external_id, job]));
+  const transactionById = new Map((input.transactions ?? []).map(transaction => [String(transaction.id), transaction]));
+  const receiptByTransactionId = new Map((input.receiptTransactionLinks ?? []).filter(link => link.status === "confirmed")
+    .map(link => [String(link.right_record_id), String(link.left_record_id)]));
+  const confirmedJobCosts = (input.assignments ?? []).filter(row => row.confidence === "confirmed").map(row => {
+    const transaction = transactionById.get(String(row.source_record_id));
+    const job = jobById.get(row.jobber_job_id);
+    return { transactionId: String(row.source_record_id), transactionTitle: transaction?.title ?? null,
+      amount: money(row.amount), confirmedAt: row.created_at ?? null, jobberJobId: row.jobber_job_id,
+      jobNumber: job?.record_number ?? null, jobTitle: job?.title ?? null,
+      receiptApproved: receiptByTransactionId.has(String(row.source_record_id)),
+      receiptSourceId: receiptByTransactionId.get(String(row.source_record_id)) ?? null };
+  }).sort((left, right) => String(right.confirmedAt ?? "").localeCompare(String(left.confirmedAt ?? "")));
 
   const jobs = (input.jobberJobs ?? []).map<ContractorJobSnapshot>(job => {
     const payload = job.payload ?? {};
@@ -161,10 +179,12 @@ export function buildContractorFinancialIntelligence(input: {
       totalOutstanding: metric(sources.includes("jobber") ? outstandingInvoices.reduce((sum, row) => sum + money(row.payload?.amounts?.invoiceBalance ?? row.amount), 0) : null, sources.includes("jobber") ? "high" : "unavailable", sources.includes("jobber") ? ["jobber"] : [], sources.includes("jobber") ? [] : ["jobber_or_quickbooks_invoices"]),
       overdueAmount: metric(sources.includes("jobber") ? overdueInvoices.reduce((sum, row) => sum + money(row.payload?.amounts?.invoiceBalance ?? row.amount), 0) : null, sources.includes("jobber") ? "high" : "unavailable", sources.includes("jobber") ? ["jobber"] : [], sources.includes("jobber") ? [] : ["jobber_or_quickbooks_invoices"]),
       overdueInvoiceCount: overdueInvoices.length,
+      overdueInvoices: overdueInvoices.map(row => ({ id: row.external_id, number: row.record_number ?? null, title: row.title ?? null,
+        balance: money(row.payload?.amounts?.invoiceBalance ?? row.amount), dueDate: row.payload?.dueDate ?? null })),
       averageInvoiceAgeDays: invoiceAges.length ? metric(invoiceAges.reduce((sum, value) => sum + value, 0) / invoiceAges.length, "high", ["jobber"]) : metric(null, "unavailable", [], ["outstanding_invoice_dates"]),
       largestCustomerBalances: [...balancesByClient.entries()].map(([customerId, values]) => ({ customerId, customerName: clientNames.get(customerId) ?? null, ...values }))
         .sort((left, right) => right.outstanding - left.outstanding).slice(0, 5),
-    }, jobs: jobs.sort((left, right) => right.attentionScore - left.attentionScore), expenseCategoryChanges, unusualTransactions,
+    }, jobs: jobs.sort((left, right) => right.attentionScore - left.attentionScore), confirmedJobCosts, expenseCategoryChanges, unusualTransactions,
     unmatchedTransactions: input.unmatchedTransactions ?? 0, unmatchedReceipts: input.unmatchedReceipts ?? 0,
     bookkeepingIssues: [{ type: "uncategorized_transactions", count: input.canonical.completeness?.uncategorizedTransactionCount ?? 0 },
       { type: "unmatched_transactions", count: input.unmatchedTransactions ?? 0 }, { type: "unmatched_receipts", count: input.unmatchedReceipts ?? 0 }].filter(issue => issue.count > 0),

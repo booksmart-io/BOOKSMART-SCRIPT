@@ -38,7 +38,7 @@ import {
   hasCanonicalFinancialHistory,
   planningSetupMessage,
 } from "@/lib/home-readiness";
-import { ContractorHomeSummary } from "@/components/monitoring/contractor-home-summary";
+import { ContractorHomeSummary, RecentAccountActivity } from "@/components/monitoring/contractor-home-summary";
 
 type PlanningReadiness = {
   available: boolean;
@@ -366,6 +366,29 @@ export default function MonitoringHome() {
         organizationId={orgId}
         start={currentStart}
         end={currentEnd}
+        healthScoreSlot={(
+          <Card className="h-full">
+            <CardHeader>
+              <CardTitle>Business Health Score</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {hasFinancialHistory ? (
+                <>
+                  <HealthGauge score={current.health.score} />
+                  <div className="space-y-2 border-t pt-3 text-sm">
+                    <StatusLine color="bg-rose-500" label={`${activeSignals.filter((item) => ["high", "critical"].includes(item.severity)).length} financial issues`} />
+                    <StatusLine color="bg-amber-400" label={`${activeTasks.length} active tasks`} />
+                    <StatusLine color="bg-yellow-400" label={`${current.unclassifiedTransactionCount} uncategorized items`} />
+                    <div className="flex gap-2 text-emerald-300"><ShieldCheck className="h-5 w-5" /><span>Canonical financial summary</span></div>
+                  </div>
+                  <Button asChild className="w-full"><Link href="/user/tasks">Fix the biggest issues</Link></Button>
+                </>
+              ) : (
+                <div className="rounded-lg border p-5"><p className="font-medium">More data needed</p><p className="mt-1 text-sm text-muted-foreground">BookSmart will calculate one shared, explainable health score after approved financial activity is available.</p></div>
+              )}
+            </CardContent>
+          </Card>
+        )}
       />
       <section className="space-y-3">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
@@ -529,7 +552,9 @@ export default function MonitoringHome() {
           </CardContent>
         </Card>
       </div>
-      <Card>
+      <div className="grid items-stretch gap-4 xl:grid-cols-3">
+      <RecentAccountActivity />
+      <Card className="flex h-full min-h-0 flex-col xl:h-[30rem]">
         <CardHeader>
           <div className="flex items-center justify-between gap-3">
             <CardTitle>Tasks needing action</CardTitle>
@@ -538,7 +563,7 @@ export default function MonitoringHome() {
             </Button>
           </div>
         </CardHeader>
-        <CardContent className="space-y-3">
+        <CardContent className="min-h-0 flex-1 space-y-3 overflow-y-auto">
           {monitoringLoading ? (
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
               <Loader2 className="h-4 w-4 animate-spin" />
@@ -593,8 +618,7 @@ export default function MonitoringHome() {
           )}
         </CardContent>
       </Card>
-      <div className="grid gap-6 lg:grid-cols-[1.5fr_1fr]">
-        <Card>
+        <Card className="flex h-full min-h-0 flex-col xl:h-[30rem]">
           <CardHeader>
             <div className="flex items-center justify-between gap-3">
               <CardTitle>
@@ -607,7 +631,7 @@ export default function MonitoringHome() {
               </Button>
             </div>
           </CardHeader>
-          <CardContent className="space-y-3">
+          <CardContent className="min-h-0 flex-1 space-y-3 overflow-y-auto">
             {monitoringLoading ? (
               <div className="flex items-center gap-2 rounded-lg border p-4 text-sm text-muted-foreground">
                 <Loader2 className="h-4 w-4 animate-spin" />
@@ -672,47 +696,6 @@ export default function MonitoringHome() {
                   )}
                 </div>
               ))
-            )}
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader>
-            <CardTitle>Business Health Score</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            {hasFinancialHistory ? (
-              <>
-                <HealthGauge score={current.health.score} />
-                <div className="space-y-2 border-t pt-3 text-sm">
-                  <StatusLine
-                    color="bg-rose-500"
-                    label={`${activeSignals.filter((item) => ["high", "critical"].includes(item.severity)).length} financial issues`}
-                  />
-                  <StatusLine
-                    color="bg-amber-400"
-                    label={`${activeTasks.length} active tasks`}
-                  />
-                  <StatusLine
-                    color="bg-yellow-400"
-                    label={`${current.unclassifiedTransactionCount} uncategorized items`}
-                  />
-                  <div className="flex gap-2 text-emerald-300">
-                    <ShieldCheck className="h-5 w-5" />
-                    <span>Canonical financial summary</span>
-                  </div>
-                </div>
-                <Button asChild className="w-full">
-                  <Link href="/user/tasks">Fix the biggest issues</Link>
-                </Button>
-              </>
-            ) : (
-              <div className="rounded-lg border p-5">
-                <p className="font-medium">More data needed</p>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  BookSmart will calculate one shared, explainable health score
-                  after approved financial activity is available.
-                </p>
-              </div>
             )}
           </CardContent>
         </Card>

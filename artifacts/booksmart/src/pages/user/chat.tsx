@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { useLocation } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Card } from "@/components/ui/card";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { ArrowLeft, Search, Send, Loader2, MessageSquare, Paperclip, Download, X, FileText, FileSpreadsheet } from "lucide-react";
@@ -45,6 +45,7 @@ interface UserProfile {
   last_name: string | null;
   email: string;
   role: string;
+  img_url: string | null;
 }
 
 interface PendingFile {
@@ -92,14 +93,15 @@ function AttachmentIcon({ mime, className }: { mime: string; className?: string 
 
 // ── Message bubble ─────────────────────────────────────────────────────────
 
-function MessageBubble({ msg, isMe, peerInitial, myInitial }: {
-  msg: Message; isMe: boolean; peerInitial: string; myInitial: string;
+function MessageBubble({ msg, isMe, peerInitial, myInitial, peerImage, myImage }: {
+  msg: Message; isMe: boolean; peerInitial: string; myInitial: string; peerImage?: string | null; myImage?: string | null;
 }) {
   const attachment = msg.type !== "text" ? parseAttachment(msg.content) : null;
 
   return (
     <div className={`flex min-w-0 max-w-[90%] gap-2 sm:max-w-[80%] ${isMe ? "ml-auto flex-row-reverse" : ""}`}>
       <Avatar className="h-7 w-7 mt-auto shrink-0">
+        {(isMe ? myImage : peerImage) && <AvatarImage src={(isMe ? myImage : peerImage)!} alt="" className="object-cover" />}
         <AvatarFallback className={`text-xs font-bold ${isMe ? "bg-primary text-primary-foreground" : "bg-primary/10 text-primary"}`}>
           {isMe ? myInitial : peerInitial}
         </AvatarFallback>
@@ -172,7 +174,7 @@ export default function Chat() {
   const [pendingFile, setPendingFile] = useState<PendingFile | null>(null);
   const [uploading, setUploading] = useState(false);
 
-  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
   const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -198,7 +200,7 @@ export default function Chat() {
   useEffect(() => {
     if (!numericId || chats.length === 0) return;
     const otherIds = [...new Set(chats.map(c => c.sender_id === numericId ? c.receiver_id : c.sender_id))];
-    supabase.from("users").select("id,first_name,last_name,email,role").in("id", otherIds)
+    supabase.from("users").select("id,first_name,last_name,email,role,img_url").in("id", otherIds)
       .then(({ data }) => {
         if (!data) return;
         const map: Record<number, UserProfile> = {};
@@ -233,6 +235,16 @@ export default function Chat() {
     navigate(profile?.role === "cpa" ? "/cpa/chat" : "/user/chat", { replace: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [contactId, numericId, chatsLoading]);
+
+  // Desktop chat should open as a workspace, not an unselected placeholder.
+  // Keep the list-first behavior on smaller screens.
+  useEffect(() => {
+    if (chatsLoading || contactId || activeChatId || chats.length === 0) return;
+    if (window.matchMedia("(min-width: 1024px)").matches) {
+      setActiveChatId(chats[0]!.id);
+      setMobileListOpen(false);
+    }
+  }, [activeChatId, chats, chatsLoading, contactId]);
 
   // ── Load messages ─────────────────────────────────────────────────────────
 
@@ -297,7 +309,12 @@ export default function Chat() {
   // ── Auto-scroll ───────────────────────────────────────────────────────────
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    const container = messagesContainerRef.current;
+    if (!container) return;
+    const frame = window.requestAnimationFrame(() => {
+      container.scrollTop = container.scrollHeight;
+    });
+    return () => window.cancelAnimationFrame(frame);
   }, [messages]);
 
   // ── File picker ───────────────────────────────────────────────────────────
@@ -412,10 +429,14 @@ export default function Chat() {
   // ── Render ────────────────────────────────────────────────────────────────
 
   return (
-    <div className="flex h-full min-h-0 min-w-0 gap-4 animate-in fade-in slide-in-from-bottom-4 duration-500">
+    <div className="flex min-h-[32rem] min-w-0 gap-4 animate-in fade-in slide-in-from-bottom-4 duration-500 lg:h-[calc(100dvh-8rem)] lg:min-h-0">
       {/* ── Sidebar ── */}
-      <Card className={`${mobileListOpen ? "flex" : "hidden"} min-h-0 w-full flex-col border-border/50 lg:flex lg:w-[288px] lg:flex-shrink-0`}>
-        <div className="p-4 border-b border-border/30">
+      <Card className={`${mobileListOpen ? "flex" : "hidden"} min-h-0 w-full flex-col overflow-hidden border-border/50 lg:flex lg:w-80 lg:flex-shrink-0`}>
+        <div className="border-b border-border/30 p-4">
+          <div className="mb-3">
+            <h1 className="text-lg font-semibold">Conversations</h1>
+            <p className="text-xs text-muted-foreground">Messages with your CPA and BookSmart contacts</p>
+          </div>
           <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
             <Input placeholder="Search messages..." className="pl-9 h-9 bg-secondary/20"
@@ -429,20 +450,21 @@ export default function Chat() {
               <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
             </div>
           ) : filteredChats.length === 0 ? (
-            <div className="p-6 text-center text-sm text-muted-foreground">No conversations yet.</div>
+            <div className="flex min-h-56 flex-col items-center justify-center px-6 text-center"><MessageSquare className="mb-3 h-9 w-9 text-muted-foreground/40" /><p className="font-medium">{search ? "No matching conversations" : "No conversations yet"}</p><p className="mt-1 text-xs text-muted-foreground">{search ? "Try a different name." : "Start from My CPA or the CPA Network."}</p></div>
           ) : (
             filteredChats.map(chat => {
               const otherId = chat.sender_id === numericId ? chat.receiver_id : chat.sender_id;
               const other = userMap[otherId];
               const isActive = chat.id === activeChatId;
               return (
-                <div key={chat.id} onClick={() => {
+                <button type="button" key={chat.id} onClick={() => {
                   setActiveChatId(chat.id);
                   setMobileListOpen(false);
                 }}
-                  className={`p-4 border-b border-border/20 cursor-pointer hover:bg-secondary/10 transition-colors ${isActive ? "bg-secondary/20" : ""}`}>
+                  className={`w-full border-b border-border/20 p-4 text-left transition-colors hover:bg-secondary/10 ${isActive ? "border-l-2 border-l-primary bg-primary/10" : "border-l-2 border-l-transparent"}`}>
                   <div className="flex items-center gap-3">
                     <Avatar className="h-10 w-10 shrink-0">
+                      {other?.img_url && <AvatarImage src={other.img_url} alt={`${fullName(other)} profile picture`} className="object-cover" />}
                       <AvatarFallback className="bg-primary/10 text-primary font-bold">
                         {other ? initials(other) : "?"}
                       </AvatarFallback>
@@ -457,7 +479,7 @@ export default function Chat() {
                       <p className="text-xs text-muted-foreground truncate">{chat.last_message || "No messages yet"}</p>
                     </div>
                   </div>
-                </div>
+                </button>
               );
             })
           )}
@@ -467,9 +489,9 @@ export default function Chat() {
       {/* ── Main Chat Area ── */}
       <Card className={`${mobileListOpen ? "hidden" : "flex"} min-h-0 min-w-0 flex-1 flex-col overflow-hidden border-border/50 lg:flex`}>
         {!activeChat ? (
-          <div className="flex-1 flex flex-col items-center justify-center gap-3 text-muted-foreground">
-            <MessageSquare className="h-12 w-12 opacity-20" />
-            <p className="text-sm">Select a conversation to start chatting</p>
+          <div className="flex flex-1 flex-col items-center justify-center gap-3 px-6 text-center text-muted-foreground">
+            <div className="flex h-14 w-14 items-center justify-center rounded-full border border-primary/20 bg-primary/10 text-primary"><MessageSquare className="h-7 w-7" /></div>
+            <div><p className="font-medium text-foreground">Select a conversation</p><p className="mt-1 text-sm">Choose a contact from the list to view messages and send files.</p></div>
           </div>
         ) : (
           <>
@@ -485,6 +507,7 @@ export default function Chat() {
                 <ArrowLeft className="h-5 w-5" />
               </Button>
               <Avatar className="h-10 w-10">
+                {activePeer?.img_url && <AvatarImage src={activePeer.img_url} alt={`${fullName(activePeer)} profile picture`} className="object-cover" />}
                 <AvatarFallback className="bg-primary/10 text-primary font-bold">{peerInitial}</AvatarFallback>
               </Avatar>
               <div className="min-w-0">
@@ -496,7 +519,7 @@ export default function Chat() {
             </div>
 
             {/* Messages */}
-            <div className="min-h-0 flex-1 overflow-y-auto p-3 space-y-3 bg-background/50 sm:p-4">
+            <div ref={messagesContainerRef} className="min-h-0 flex-1 overflow-y-auto p-3 space-y-3 bg-background/50 sm:p-4">
               {msgsLoading ? (
                 <div className="flex items-center justify-center h-24">
                   <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
@@ -508,10 +531,9 @@ export default function Chat() {
               ) : (
                 messages.map(msg => (
                   <MessageBubble key={msg.id} msg={msg} isMe={msg.sender_id === numericId}
-                    peerInitial={peerInitial} myInitial={myInitial} />
+                    peerInitial={peerInitial} myInitial={myInitial} peerImage={activePeer?.img_url} myImage={profile?.img_url} />
                 ))
               )}
-              <div ref={messagesEndRef} />
             </div>
 
             {/* Pending file preview */}

@@ -2,9 +2,12 @@ import { useState, useRef, useEffect } from "react";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Bot, User, Sparkles, AlertCircle } from "lucide-react";
+import { User, Sparkles, AlertCircle } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { supabase } from "@/lib/supabase";
+import { FormattedAiMessage } from "@/components/ai/formatted-ai-message";
+import { useAuth } from "@/hooks/use-auth";
+import { useActiveOrganizationId } from "@/lib/active-organization";
 
 type Message = {
   role: "user" | "assistant";
@@ -34,6 +37,8 @@ function formatAssistantResponse(content: unknown): string {
 }
 
 export default function AiChat() {
+  const { profile } = useAuth();
+  const [activeOrganizationId] = useActiveOrganizationId(profile?.numericId ?? null);
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState<Message[]>([
     {
@@ -72,6 +77,7 @@ export default function AiChat() {
         },
         body: JSON.stringify({
           model: "openai/gpt-4o-mini",
+          organization_id: activeOrganizationId,
           messages: [
             { role: "system", content: SYSTEM_PROMPT },
             ...updated.map((m) => ({ role: m.role, content: m.content })),
@@ -126,6 +132,19 @@ export default function AiChat() {
         </div>
 
         <div className="min-h-0 flex-1 overflow-y-auto p-3 space-y-4 sm:p-4 sm:space-y-6">
+          {messages.length === 1 && (
+            <div className="flex flex-col items-center px-4 pt-2 text-center">
+              <img
+                src="/booksmart-ai-mascot.png"
+                alt="BookSmart AI mascot"
+                className="h-32 w-32 object-contain drop-shadow-lg sm:h-40 sm:w-40"
+              />
+              <p className="mt-1 text-sm font-semibold">Meet your BookSmart AI assistant</p>
+              <p className="mt-1 max-w-md text-xs text-muted-foreground sm:text-sm">
+                Ask about your active business, transactions, deductions, reports, or tax preparation.
+              </p>
+            </div>
+          )}
           {messages.map((msg, i) => (
             <div
               key={i}
@@ -141,7 +160,7 @@ export default function AiChat() {
                 {msg.role === "user" ? (
                   <User className="h-4 w-4" />
                 ) : (
-                  <Bot className="h-4 w-4" />
+                  <img src="/booksmart-ai-mascot.png" alt="" className="h-full w-full rounded-full object-cover object-top" />
                 )}
               </div>
               <div
@@ -151,15 +170,15 @@ export default function AiChat() {
                     : "bg-card border border-border/50 shadow-sm rounded-tl-sm"
                 }`}
               >
-                {msg.content}
+                {msg.role === "assistant" ? <FormattedAiMessage content={msg.content} /> : msg.content}
               </div>
             </div>
           ))}
 
           {loading && (
             <div className="flex gap-4">
-              <div className="h-8 w-8 rounded-full bg-primary text-primary-foreground flex items-center justify-center shrink-0">
-                <Bot className="h-4 w-4" />
+              <div className="h-8 w-8 shrink-0 animate-bounce overflow-hidden rounded-full bg-primary/10">
+                <img src="/booksmart-ai-mascot.png" alt="BookSmart AI is thinking" className="h-full w-full object-cover object-top" />
               </div>
               <div className="p-4 rounded-2xl bg-card border border-border/50 shadow-sm rounded-tl-sm flex items-center gap-2">
                 <div className="h-2 w-2 bg-primary/50 rounded-full animate-bounce" />

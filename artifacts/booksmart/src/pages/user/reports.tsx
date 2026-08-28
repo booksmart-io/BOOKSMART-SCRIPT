@@ -2944,13 +2944,23 @@ const [plaidSyncMessage, setPlaidSyncMessage] = useState("");
       ["tx_count", orgId],
     ];
     keys.forEach((k) => queryClient.invalidateQueries({ queryKey: k }));
+    queryClient.invalidateQueries({ queryKey: ["contractor-insights", orgId] });
+    queryClient.invalidateQueries({ queryKey: ["monitoring-projection", orgId] });
   }
 
   function refreshMonitoring(eventType: FinancialDataChangeEvent) {
     if (!orgId) return;
-    void notifyFinancialDataChanged(orgId, eventType).catch((error) => {
-      console.warn("[monitoring/financial-data-changed]", error instanceof Error ? error.message : error);
-    });
+    queryClient.invalidateQueries({ queryKey: ["contractor-insights", orgId] });
+    queryClient.invalidateQueries({ queryKey: ["monitoring-projection", orgId] });
+    void notifyFinancialDataChanged(orgId, eventType)
+      .then(() => Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["contractor-insights", orgId] }),
+        queryClient.invalidateQueries({ queryKey: ["monitoring-projection", orgId] }),
+        queryClient.invalidateQueries({ queryKey: ["contractor-money-intelligence", orgId] }),
+      ]))
+      .catch((error) => {
+        console.warn("[monitoring/financial-data-changed]", error instanceof Error ? error.message : error);
+      });
   }
 
   async function handleBulkCategorize() {
@@ -3011,6 +3021,8 @@ const [plaidSyncMessage, setPlaidSyncMessage] = useState("");
             queryKey: ["tx_all_balance", orgId],
           });
           queryClient.invalidateQueries({ queryKey: ["tx_all_full", orgId] });
+          queryClient.invalidateQueries({ queryKey: ["contractor-insights", orgId] });
+          queryClient.invalidateQueries({ queryKey: ["monitoring-projection", orgId] });
         },
       )
       .subscribe();
@@ -3084,6 +3096,9 @@ const [plaidSyncMessage, setPlaidSyncMessage] = useState("");
       keysToInvalidate.forEach((k) =>
         queryClient.invalidateQueries({ queryKey: k }),
       );
+      queryClient.invalidateQueries({ queryKey: ["contractor-insights", orgId] });
+      queryClient.invalidateQueries({ queryKey: ["monitoring-projection", orgId] });
+      queryClient.invalidateQueries({ queryKey: ["contractor-money-intelligence", orgId] });
       setSmartCleanOpen(false);
       setSmartCleanPreview(null);
       toast({

@@ -10,6 +10,8 @@ import { useTheme } from "@/components/theme-provider";
 import { useUnreadCount } from "@/hooks/use-unread-count";
 import { SubscriptionUpgradePrompt } from "@/components/subscription-upgrade-prompt";
 import { AccountNotificationBell } from "@/components/layout/account-notification-bell";
+import { GlobalChatWidget } from "@/components/layout/global-chat-widget";
+import { GlobalAiAssistant } from "@/components/layout/global-ai-assistant";
 import { supabase } from "@/lib/supabase";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -413,6 +415,8 @@ export function DashboardLayout({ children, role }: DashboardLayoutProps) {
           location !== "/user/subscription" && (
             <SubscriptionUpgradePrompt userId={profile?.numericId ?? null} />
           )}
+        <GlobalChatWidget role={role} location={location} unreadCount={unreadCount} />
+        <GlobalAiAssistant role={role} location={location} />
       </div>
     </SidebarProvider>
   );

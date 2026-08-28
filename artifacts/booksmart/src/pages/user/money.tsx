@@ -56,7 +56,7 @@ export default function Money() {
       <SpendingBreakdown groups={visuals.spendingBreakdown} total={canonical.accountingExpenses} />
       <Card><CardHeader className="p-5 pb-3"><CardTitle>Accounting Summary</CardTitle><CardDescription>Canonical financial-summary v2</CardDescription></CardHeader><CardContent className="space-y-4 p-5 pt-0"><div className="grid grid-cols-2 gap-4"><Metric label="Revenue" value={canonical.revenue} color="text-emerald-400" /><Metric label="Accounting expenses" value={canonical.accountingExpenses} color="text-rose-400" /><Metric label="Net income" value={canonical.netIncome} color={canonical.netIncome >= 0 ? "text-emerald-400" : "text-rose-400"} signed /><div><p className="text-xs text-muted-foreground">Approved records</p><p className="mt-1 text-lg font-bold sm:text-2xl">{canonical.completeness.approvedTransactionCount}</p></div></div>{!canonical.completeness.complete && <p className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-muted-foreground">Some inputs need review. Canonical warnings: {canonical.warnings.join(", ").replaceAll("_", " ")}.</p>}<Button asChild variant="outline" className="w-full"><Link href="/user/reports">View detailed financial reports<ArrowRight className="ml-2 h-4 w-4" /></Link></Button></CardContent></Card>
     </div>
-    <Card className="overflow-hidden">
+    <Card id="cash-flow" className="scroll-mt-6 overflow-hidden">
       <CardHeader className="border-b border-border/50 bg-background/15">
         <div className="flex items-center justify-between gap-3">
           <div><CardTitle>Cash Flow</CardTitle><CardDescription>Canonical approved activity · {canonical.source === "uploaded_statement" ? "confirmed statements" : "transactions"}</CardDescription></div>

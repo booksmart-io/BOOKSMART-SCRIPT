@@ -91,6 +91,17 @@ router.get(
       if (matchesResult.error) throw matchesResult.error;
       if (linksResult.error) throw linksResult.error;
       if (receiptsResult.error) throw receiptsResult.error;
+      const gmailMessageIds = [...new Set((receiptsResult.data ?? []).map(row => {
+        const match = /^gmail:([^:]+):(?:attachment:[^:]+|body)$/.exec(String(row.source_id));
+        return match?.[1] ?? null;
+      }).filter((value): value is string => Boolean(value)))];
+      const gmailMessagesResult = gmailMessageIds.length
+        ? await admin.from("contractor_gmail_financial_messages").select("gmail_message_id,gmail_thread_id")
+            .eq("organization_id", organizationId).in("gmail_message_id", gmailMessageIds)
+        : { data: [], error: null };
+      if (gmailMessagesResult.error) throw gmailMessagesResult.error;
+      const gmailThreadByMessageId = new Map((gmailMessagesResult.data ?? [])
+        .map(row => [String(row.gmail_message_id), String(row.gmail_thread_id || row.gmail_message_id)]));
       const matches = matchesResult.data ?? [];
       const links = linksResult.data ?? [];
       const jobIds = [
@@ -150,6 +161,8 @@ router.get(
         receipts: (receiptsResult.data ?? []).map((receipt) => {
           const match = matchBySource.get(receipt.source_id);
           const confirmedLink = confirmedLinkBySource.get(receipt.source_id);
+          const gmailSource = /^gmail:([^:]+):(?:attachment:[^:]+|body)$/.exec(String(receipt.source_id));
+          const gmailThreadId = gmailSource ? gmailThreadByMessageId.get(gmailSource[1]!) : null;
           return {
             ...receipt,
             status:
@@ -163,6 +176,7 @@ router.get(
                     ? "unmatched"
                     : "processed",
             source: receipt.source_id.startsWith("gmail:") ? "gmail" : "upload",
+            original_url: gmailThreadId ? `https://mail.google.com/mail/u/0/#all/${encodeURIComponent(gmailThreadId)}` : null,
             linked_transaction: confirmedLink ? transactionById.get(confirmedLink.right_record_id) ?? null : null,
             removable: match?.status !== "confirmed",
             confirmed: match?.status === "confirmed",

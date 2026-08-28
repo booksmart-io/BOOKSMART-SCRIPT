@@ -745,6 +745,7 @@ export default function Settings() {
   });
 
   useEffect(() => {
+    if (!import.meta.env.DEV) return;
     const params = new URLSearchParams(window.location.search);
     const result = params.get("quickbooks");
     if (!result) return;
@@ -762,7 +763,6 @@ export default function Settings() {
   }, [queryClient]);
 
   useEffect(() => {
-    if (!import.meta.env.DEV) return;
     const params = new URLSearchParams(window.location.search);
     const result = params.get("jobber");
     if (!result) return;

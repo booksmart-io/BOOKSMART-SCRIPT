@@ -217,6 +217,9 @@ export default function Organizations() {
           <h1 className="text-2xl font-bold tracking-tight">Organizations</h1>
           <p className="text-sm text-muted-foreground">Manage your businesses, LLCs, and freelance entities.</p>
         </div>
+        <Button className="w-full gap-2 sm:w-auto" onClick={openCreateDialog}>
+          <Plus className="h-4 w-4" /> Add Organization
+        </Button>
       </div>
 
       {orgsLoading ? (
@@ -292,18 +295,6 @@ export default function Organizations() {
           ))}
         </div>
       )}
-
-      {/* Floating add button */}
-      <div className="fixed bottom-4 right-4 z-40 sm:bottom-6 sm:right-6">
-        <Button
-          size="icon"
-          className="h-14 w-14 rounded-full shadow-lg shadow-primary/30"
-          onClick={openCreateDialog}
-          title="Add Organization"
-        >
-          <Plus className="h-6 w-6" />
-        </Button>
-      </div>
 
       {/* Add / Edit dialog */}
       <Dialog open={formOpen} onOpenChange={setFormOpen}>

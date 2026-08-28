@@ -84,7 +84,7 @@ router.get("/organizations/:organizationId/contractor-financial-intelligence", r
     if (!organization) { res.status(403).json({ error: "forbidden" }); return; }
 
     const [transactions, categories, subCategories, documents, ruleGroups, rules, jobberRecords,
-      jobberConnection, quickBooksConnection, plaidItems, balanceSnapshots, settings, assignments, matches, signals] = await Promise.all([
+      jobberConnection, quickBooksConnection, plaidItems, balanceSnapshots, settings, assignments, matches, receiptLinks, signals] = await Promise.all([
       admin.from("transactions").select("id,title,amount,type,date_time,description,deductible,category_id,sub_category_id,pending").eq("org_id", organizationId).gte("date_time", earliestTransactionStart.toISOString()).lte("date_time", period.end.toISOString()),
       admin.from("category").select("id,name"),
       admin.from("sub_category").select("id,name,category_id"),
@@ -96,13 +96,15 @@ router.get("/organizations/:organizationId/contractor-financial-intelligence", r
       admin.from("plaid_items").select("status,last_sync_status,last_synced_at").eq("org_id", organizationId).eq("status", "active"),
       admin.from("account_balance_snapshots").select("external_account_id,account_type,current_balance,available_balance,currency,balance_timestamp").eq("organization_id", organizationId).eq("provider", "plaid").order("balance_timestamp", { ascending: false }).limit(250),
       admin.from("contractor_financial_settings").select("target_gross_margin,target_margin_source").eq("organization_id", organizationId).maybeSingle(),
-      admin.from("contractor_job_cost_assignments").select("jobber_job_id,amount,confidence,source_record_id").eq("organization_id", organizationId),
+      admin.from("contractor_job_cost_assignments").select("jobber_job_id,amount,confidence,source_record_id,created_at").eq("organization_id", organizationId),
       admin.from("contractor_financial_matches").select("source_provider,source_record_type,status").eq("organization_id", organizationId),
+      admin.from("contractor_source_links").select("left_record_id,right_record_id,status").eq("organization_id", organizationId)
+        .eq("left_provider", "receipt").eq("right_record_type", "transaction").eq("status", "confirmed"),
       admin.from("business_signals").select("id,signal_key,category,severity,title,description,amount,status,requires_cpa_review,cpa_review_level,metadata").eq("organization_id", organizationId).eq("status", "active"),
     ]);
     const error = transactions.error ?? categories.error ?? subCategories.error ?? documents.error ?? ruleGroups.error ?? rules.error
       ?? jobberRecords.error ?? jobberConnection.error ?? quickBooksConnection.error ?? plaidItems.error ?? balanceSnapshots.error ?? settings.error
-      ?? assignments.error ?? matches.error ?? signals.error;
+      ?? assignments.error ?? matches.error ?? receiptLinks.error ?? signals.error;
     if (error) throw error;
 
     const canonical = buildCanonicalFinancialSummary({ organizationId, start: period.start, end: period.end,
@@ -138,7 +140,7 @@ router.get("/organizations/:organizationId/contractor-financial-intelligence", r
       connectedSources, jobberJobs: records.filter(row => row.object_type === "jobs"),
       jobberInvoices: records.filter(row => row.object_type === "invoices"), jobberPayments: records.filter(row => row.object_type === "payments"),
       jobberClients: records.filter(row => row.object_type === "clients"),
-      assignments: assignments.data ?? [], signals: signals.data ?? [], unmatchedTransactions, unmatchedReceipts,
+      assignments: assignments.data ?? [], receiptTransactionLinks: receiptLinks.data ?? [], signals: signals.data ?? [], unmatchedTransactions, unmatchedReceipts,
       targetGrossMargin: settings.data?.target_gross_margin == null ? null : Number(settings.data.target_gross_margin),
       targetSource: settings.data?.target_margin_source ?? null,
       transactions: (transactions.data ?? []).filter(row => {

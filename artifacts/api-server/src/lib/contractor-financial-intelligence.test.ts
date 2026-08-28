@@ -30,6 +30,19 @@ test("current tracked margin uses only explicitly assigned costs", () => {
   assert.equal(result.jobs[0].currentTrackedMargin.value, 0.6);
 });
 
+test("confirmed transaction job costs are exposed for Insights", () => {
+  const result = buildContractorFinancialIntelligence({ organizationId: 7, start: new Date("2026-08-01Z"), end: new Date("2026-08-31Z"),
+    canonical: { revenue: 10_000, accountingExpenses: 500, netIncome: 9_500 },
+    jobberJobs: [{ external_id: "job-1", record_number: "1042", title: "Kitchen remodel", payload: { invoicedTotal: 10_000 } }],
+    assignments: [{ jobber_job_id: "job-1", amount: 500, confidence: "confirmed", source_record_id: "tx-1", created_at: "2026-08-20T12:00:00Z" }],
+    receiptTransactionLinks: [{ left_record_id: "receipt-1", right_record_id: "tx-1", status: "confirmed" }],
+    transactions: [{ id: "tx-1", title: "Building supplies", amount: -500, date_time: "2026-08-20T10:00:00Z", pending: false }],
+  });
+  assert.deepEqual(result.confirmedJobCosts, [{ transactionId: "tx-1", transactionTitle: "Building supplies", amount: 500,
+    confirmedAt: "2026-08-20T12:00:00Z", jobberJobId: "job-1", jobNumber: "1042", jobTitle: "Kitchen remodel",
+    receiptApproved: true, receiptSourceId: "receipt-1" }]);
+});
+
 test("period comparisons and verified cash preserve confidence and source", () => {
   const result = buildContractorFinancialIntelligence({ organizationId: 7, start: new Date("2026-08-01Z"), end: new Date("2026-08-31Z"),
     canonical: { revenue: 12_000, accountingExpenses: 6_000, netIncome: 6_000 },

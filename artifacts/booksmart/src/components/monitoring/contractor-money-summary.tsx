@@ -140,7 +140,7 @@ export function ContractorMoneySummary({
         />
       </div>
       <div className="grid items-start gap-4 xl:grid-cols-2">
-        <Card className="h-full">
+        <Card id="job-financial-health" className="h-full scroll-mt-6">
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <BriefcaseBusiness className="h-5 w-5 text-primary" />
@@ -158,7 +158,7 @@ export function ContractorMoneySummary({
             )}
           </CardContent>
         </Card>
-        <Card className="h-full">
+        <Card id="receivables" className="h-full scroll-mt-6">
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <Users className="h-5 w-5 text-primary" />
@@ -199,7 +199,7 @@ export function ContractorMoneySummary({
         </Card>
       </div>
       <div className="grid items-start gap-4 xl:grid-cols-2">
-        <Card className="h-full">
+        <Card id="expense-movement" className="h-full scroll-mt-6">
           <CardHeader>
             <CardTitle>Expense movement</CardTitle>
             <CardDescription>
@@ -238,7 +238,7 @@ export function ContractorMoneySummary({
             )}
           </CardContent>
         </Card>
-        <Card className="h-full">
+        <Card id="unusual-transactions" className="h-full scroll-mt-6">
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <ReceiptText className="h-5 w-5 text-primary" />

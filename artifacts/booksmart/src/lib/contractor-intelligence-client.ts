@@ -17,8 +17,12 @@ export type ContractorIntelligence = {
     samePeriodLastYear: { revenueChangePercent: TrustedMetric; expenseChangePercent: TrustedMetric; netIncomeChangePercent: TrustedMetric } };
   cashPosition: { currentBalance: TrustedMetric; availableBalance: TrustedMetric };
   accountsReceivable: { totalOutstanding: TrustedMetric; overdueAmount: TrustedMetric; overdueInvoiceCount: number;
-    averageInvoiceAgeDays: TrustedMetric; largestCustomerBalances: Array<{ customerId: string; customerName: string | null; outstanding: number; overdue: number }> };
-  jobs: ContractorJobSummary[]; bookkeepingIssues: Array<{ type: string; count: number }>;
+    averageInvoiceAgeDays: TrustedMetric; overdueInvoices?: Array<{ id: string; number: string | null; title: string | null; balance: number; dueDate: string | null }>;
+    largestCustomerBalances: Array<{ customerId: string; customerName: string | null; outstanding: number; overdue: number }> };
+  jobs: ContractorJobSummary[];
+  confirmedJobCosts: Array<{ transactionId: string; transactionTitle: string | null; amount: number; confirmedAt: string | null;
+    jobberJobId: string; jobNumber: string | null; jobTitle: string | null; receiptApproved: boolean; receiptSourceId: string | null }>;
+  bookkeepingIssues: Array<{ type: string; count: number }>;
   expenseCategoryChanges: Array<{ key: string; label: string; current: number; previous: number; changePercent: number | null }>;
   unusualTransactions: Array<{ transactionId: string; title: string | null; amount: number; date: string; reasons: string[]; provenance: ProvenanceReference[] }>;
 };
