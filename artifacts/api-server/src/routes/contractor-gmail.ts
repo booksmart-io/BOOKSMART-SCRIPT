@@ -208,7 +208,11 @@ router.post("/integrations/gmail/disconnect", requireAuth, async (req, res) => {
     const { error: updateError } = await admin.from("gmail_connections").update({ access_token_encrypted: null, refresh_token_encrypted: null, access_token_expires_at: null, status: "disconnected", disconnected_at: new Date().toISOString(), updated_at: new Date().toISOString() }).eq("organization_id", organization.id);
     if (updateError) throw updateError;
     res.json({ ok: true, connected: false, revoked });
-  } catch { res.status(503).json({ error: "gmail_disconnect_failed", message: "Could not disconnect Gmail." }); }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "";
+    const status = /organization|profile/i.test(message) ? 403 : 503;
+    res.status(status).json({ error: status === 403 ? "forbidden" : "gmail_disconnect_failed", message: "Could not disconnect Gmail." });
+  }
 });
 
 router.post("/integrations/gmail/scan", requireAuth, async (req, res) => {

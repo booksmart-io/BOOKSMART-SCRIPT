@@ -198,7 +198,7 @@ router.patch("/monitoring/tasks/:id/manage", requireAuth, async (req, res) => {
     let assignedUserId: number | null = assignmentRole === "owner" ? owner.userId : null;
     let engagementId: number | null = null;
     if (assignmentRole === "cpa") {
-      const { data: engagement, error: engagementError } = await admin.from("orders").select("id,cpa_id")
+      const { data: engagement, error: engagementError } = await admin.from("orders").select("id,cpa_id").eq("client_authorized", true)
         .eq("user_id", owner.userId).in("status", [...CPA_MONITORING_ENGAGEMENT_STATUSES])
         .order("created_at", { ascending: false }).limit(1).maybeSingle();
       if (engagementError) throw engagementError;

@@ -532,7 +532,9 @@ router.post("/integrations/quickbooks/disconnect", requireAuth, async (req, res)
     res.json({ ok: true, connected: false, revoked, warning: revocationWarning });
   } catch (error) {
     req.log?.error({ err: error }, "QuickBooks disconnect failed");
-    res.status(500).json({ error: "quickbooks_disconnect_failed", message: "Could not disconnect QuickBooks" });
+    const message = error instanceof Error ? error.message : "";
+    const status = /organization|profile/i.test(message) ? 403 : 500;
+    res.status(status).json({ error: status === 403 ? "forbidden" : "quickbooks_disconnect_failed", message: "Could not disconnect QuickBooks" });
   }
 });
 

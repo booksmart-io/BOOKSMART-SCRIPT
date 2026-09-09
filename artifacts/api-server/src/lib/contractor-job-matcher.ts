@@ -76,7 +76,7 @@ export function matchContractorFinancialRecord(
   if (!best || best.score < 15 || ambiguous) {
     return { matchedJobId: null, confidence: "unmatched", score: best?.score ?? 0,
       matchReasons: ambiguous ? ["ambiguous_best_match"] : [], sourceIds: [record.sourceId],
-      requiresConfirmation: false, calculationVersion: CONTRACTOR_JOB_MATCH_VERSION };
+      requiresConfirmation: ambiguous, calculationVersion: CONTRACTOR_JOB_MATCH_VERSION };
   }
 
   const deterministic = best.reasons.includes("exact_jobber_job_id");

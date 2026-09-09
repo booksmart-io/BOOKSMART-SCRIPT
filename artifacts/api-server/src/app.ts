@@ -6,6 +6,7 @@ import stripeWebhookRouter from "./routes/stripe-webhook";
 import { logger } from "./lib/logger";
 import { apiTiming } from "./middlewares/api-timing";
 import { apiCompression } from "./middlewares/api-compression";
+import { securityAuditMiddleware } from "./middlewares/security-audit";
 
 const app: Express = express();
 
@@ -34,6 +35,7 @@ app.use(apiTiming);
 app.use("/api", stripeWebhookRouter);
 app.use(express.json({ limit: "15mb" }));
 app.use(express.urlencoded({ extended: true, limit: "15mb" }));
+app.use(securityAuditMiddleware);
 
 app.use("/api", router);
 

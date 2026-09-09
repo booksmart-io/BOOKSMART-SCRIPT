@@ -239,9 +239,14 @@ function ClientDetailPanel({ client, orders, onBack }: {
     }
 
     try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const token = sessionData.session?.access_token;
+      if (!token) throw new Error("Not authenticated.");
       for (const doc of downloadable) {
         const params = new URLSearchParams({ url: doc.file_url!, filename: doc.name });
-        const response = await fetch(`/api/document-download?${params.toString()}`);
+        const response = await fetch(`/api/document-download?${params.toString()}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
         if (!response.ok) throw new Error(`Could not download ${doc.name}`);
         const objectUrl = URL.createObjectURL(await response.blob());
         const anchor = document.createElement("a");

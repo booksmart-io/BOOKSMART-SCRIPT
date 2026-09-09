@@ -383,7 +383,11 @@ router.get("/integrations/jobber/records", requireAuth, async (req, res) => {
     res.json({ records: data ?? [], page, page_size: pageSize, total: count ?? 0, object_type: objectType });
   } catch (error) {
     req.log?.error({ err: error }, "Jobber records load failed");
-    res.status(500).json({ error: "jobber_records_load_failed", message: "Could not load Jobber records" });
+    const message = error instanceof Error ? error.message : "";
+    const status = message.includes("Organization not found") || message.includes("User profile not found") ? 404
+      : message.includes("Invalid organization_id") ? 400 : 500;
+    res.status(status).json({ error: status === 404 ? "jobber_records_not_found" : status === 400 ? "invalid_request" : "jobber_records_load_failed",
+      message: status === 404 ? "Organization or Jobber records were not found" : status === 400 ? "Invalid organization" : "Could not load Jobber records" });
   }
 });
 
@@ -467,7 +471,7 @@ router.get("/integrations/jobber/cpa-escalation-preview", requireAuth, async (re
     const [{ data: connection, error: connectionError }, { data: setting, error: settingError }, { data: engagements, error: engagementError }] = await Promise.all([
       admin.from("jobber_connections").select("id,last_successful_sync_at").eq("organization_id", organization.id).eq("status", "active").maybeSingle(),
       admin.from("jobber_cpa_sharing_settings").select("enabled").eq("organization_id", organization.id).maybeSingle(),
-      admin.from("orders").select("id,cpa_id,status").eq("user_id", organization.owner_id).in("status", [...CPA_MONITORING_ENGAGEMENT_STATUSES]),
+      admin.from("orders").select("id,cpa_id,status").eq("client_authorized", true).eq("user_id", organization.owner_id).in("status", [...CPA_MONITORING_ENGAGEMENT_STATUSES]),
     ]);
     if (connectionError || settingError || engagementError) throw connectionError ?? settingError ?? engagementError;
     if (!connection) { res.status(404).json({ error: "jobber_connection_not_found" }); return; }
@@ -514,7 +518,7 @@ router.post("/integrations/jobber/cpa-escalations", requireAuth, async (req, res
     const [{ data: connection, error: connectionError }, { data: setting, error: settingError }, { data: engagements, error: engagementError }] = await Promise.all([
       admin.from("jobber_connections").select("id").eq("organization_id", organization.id).eq("status", "active").maybeSingle(),
       admin.from("jobber_cpa_sharing_settings").select("enabled").eq("organization_id", organization.id).maybeSingle(),
-      admin.from("orders").select("id,cpa_id,status").eq("user_id", organization.owner_id)
+      admin.from("orders").select("id,cpa_id,status").eq("client_authorized", true).eq("user_id", organization.owner_id)
         .in("status", [...CPA_MONITORING_ENGAGEMENT_STATUSES]).order("id", { ascending: false }),
     ]);
     if (connectionError || settingError || engagementError) throw connectionError ?? settingError ?? engagementError;
@@ -691,7 +695,9 @@ router.post("/integrations/jobber/disconnect", requireAuth, async (req, res) => 
     res.json({ ok: true, connected: false, revoked, warning, deleted: purgeResult });
   } catch (error) {
     req.log?.error({ err: error }, "Jobber disconnect failed");
-    res.status(500).json({ error: "jobber_disconnect_failed", message: "Could not disconnect Jobber" });
+    const message = error instanceof Error ? error.message : "";
+    const status = /organization|profile/i.test(message) ? 403 : 500;
+    res.status(status).json({ error: status === 403 ? "forbidden" : "jobber_disconnect_failed", message: "Could not disconnect Jobber" });
   }
 });
 

@@ -6,13 +6,25 @@
     "preinstall": "node -e \"const fs=require('fs'); ['package-lock.json','yarn.lock'].forEach(f=>fs.existsSync(f)&&fs.unlinkSync(f)); if(!(process.env.npm_config_user_agent||'').startsWith('pnpm/')) { console.error('Use pnpm instead'); process.exit(1); }\"",
     "build": "pnpm run typecheck && pnpm -r --if-present run build",
     "typecheck:libs": "tsc --build",
-    "typecheck": "pnpm run typecheck:libs && pnpm -r --filter \"./artifacts/**\" --filter \"./scripts\" --if-present run typecheck"
+    "typecheck": "pnpm run typecheck:libs && pnpm -r --filter \"./artifacts/**\" --filter \"./scripts\" --if-present run typecheck",
+    "test:scenarios:validate": "tsx e2e/validators/validate-scenarios.ts",
+    "test:contractor-intelligence:validate": "tsx e2e/contractor-intelligence/validate-exact-scenarios.ts",
+    "test:contractor-intelligence": "tsx --test e2e/contractor-intelligence/*.test.ts",
+    "test:scenarios": "tsx --test e2e/validators/*.test.ts",
+    "typecheck:e2e": "tsc --noEmit --types node --module NodeNext --moduleResolution NodeNext --target ES2022 e2e/scenarios/types.ts e2e/scenarios/registry.ts e2e/scenarios/01_healthy_hvac/scenario.ts e2e/scenarios/02_busy_but_broke_plumbing/scenario.ts e2e/scenarios/03_margin_leak_electric/scenario.ts e2e/scenarios/04_unbilled_landscaping/scenario.ts e2e/scenarios/05_collections_problem_roofing/scenario.ts e2e/scenarios/06_home_depot_heavy_contractor/scenario.ts e2e/scenarios/07_owner_spending_mess/scenario.ts e2e/scenarios/08_no_quickbooks_contractor/scenario.ts e2e/scenarios/09_quickbooks_only_business/scenario.ts e2e/scenarios/10_seasonal_cash_pressure/scenario.ts e2e/scenarios/11_customer_concentration/scenario.ts e2e/scenarios/12_data_integration_problem/scenario.ts e2e/scenarios/13_upcoming_cash_shortfall/scenario.ts e2e/validators/scenario-validator.ts e2e/validators/validate-scenarios.ts",
+    "test:e2e": "playwright test",
+    "test:security": "playwright test -c playwright.security.config.ts",
+    "test:onboarding": "playwright test -c playwright.onboarding.config.ts",
+    "test:e2e:scenario": "playwright test --grep"
   },
   "private": true,
   "devDependencies": {
+    "@playwright/test": "^1.62.1",
     "@rollup/rollup-win32-x64-msvc": "4.62.2",
+    "@types/node": "^25.3.3",
     "lightningcss-win32-x64-msvc": "1.32.0",
     "prettier": "^3.8.4",
+    "tsx": "^4.21.0",
     "typescript": "~5.9.3"
   }
 }

@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from "express";
 import { createClient } from "@supabase/supabase-js";
+import { isAdminRole } from "../lib/cpa-access";
 
 const SUPABASE_URL = "https://pvppwmkswnluidlwnnck.supabase.co";
 
@@ -33,7 +34,7 @@ export async function requireAdmin(
       .eq("auth_id", authUserId)
       .maybeSingle();
 
-    if (!userRow || userRow.role !== "admin") {
+    if (!isAdminRole(userRow)) {
       res.status(403).json({ error: "forbidden", message: "Admin access required" });
       return;
     }

@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { decryptToken, encryptToken } from "./quickbooks-oauth";
+import { fetchWithProviderRetry } from "./provider-retry";
 
 type AdminClient = SupabaseClient<any, any, any>;
 
@@ -104,21 +105,37 @@ export function extractQuickBooksQueryEntities(body: unknown, entityType: string
   return Array.isArray(entities) ? entities.filter((value): value is Record<string, unknown> => !!value && typeof value === "object") : [];
 }
 
+export function quickBooksPageQuery(entityType: string, startPosition: number, pageSize = 1000): string {
+  if (!/^[A-Za-z][A-Za-z0-9_]*$/.test(entityType) || !Number.isSafeInteger(startPosition) || startPosition < 1 ||
+      !Number.isSafeInteger(pageSize) || pageSize < 1 || pageSize > 1000) throw new Error("Invalid QuickBooks page request");
+  return `select * from ${entityType} startposition ${startPosition} maxresults ${pageSize}`;
+}
+
+export function hasAnotherQuickBooksPage(rowCount: number, pageSize: number): boolean {
+  return rowCount === pageSize;
+}
+
 async function queryQuickBooks(accessToken: string, realmId: string, entityType: string) {
   const qb = quickBooksConfig();
-  const query = `select * from ${entityType} maxresults 1000`;
-  const url = new URL(`${qb.apiBase}/v3/company/${encodeURIComponent(realmId)}/query`);
-  url.searchParams.set("query", query);
-  url.searchParams.set("minorversion", "75");
-  const response = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" } });
-  const body = await response.json().catch(() => ({})) as Record<string, unknown> & {
-    Fault?: { Error?: Array<{ Message?: string; Detail?: string }> };
-  };
-  if (!response.ok) {
-    const fault = body.Fault?.Error?.[0];
-    throw new Error(fault?.Detail || fault?.Message || `QuickBooks ${entityType} query failed`);
+  const pageSize = 1000;
+  const all: Record<string, unknown>[] = [];
+  for (let startPosition = 1, pages = 0; ; startPosition += pageSize) {
+    if (++pages > 10_000) throw new Error(`QuickBooks ${entityType} pagination limit exceeded`);
+    const url = new URL(`${qb.apiBase}/v3/company/${encodeURIComponent(realmId)}/query`);
+    url.searchParams.set("query", quickBooksPageQuery(entityType, startPosition, pageSize));
+    url.searchParams.set("minorversion", "75");
+    const response = await fetchWithProviderRetry(url, { headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" } });
+    const body = await response.json().catch(() => ({})) as Record<string, unknown> & {
+      Fault?: { Error?: Array<{ Message?: string; Detail?: string }> };
+    };
+    if (!response.ok) {
+      const fault = body.Fault?.Error?.[0];
+      throw new Error(fault?.Detail || fault?.Message || `QuickBooks ${entityType} query failed`);
+    }
+    const page = extractQuickBooksQueryEntities(body, entityType);
+    all.push(...page);
+    if (!hasAnotherQuickBooksPage(page.length, pageSize)) return all;
   }
-  return extractQuickBooksQueryEntities(body, entityType);
 }
 
 function refName(value: unknown): string | null {

@@ -186,6 +186,57 @@ function ToggleRow({
 export default function Settings() {
   const { profile, signOut } = useAuth();
   const numericId = profile?.numericId ?? null;
+  const [exporting, setExporting] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleteEmail, setDeleteEmail] = useState("");
+  const [deletePhrase, setDeletePhrase] = useState("");
+  const exportAccount = async () => {
+    if (exporting) return;
+    setExporting(true);
+    try {
+      const { data } = await supabase.auth.getSession();
+      if (!data.session) throw new Error("Please sign in again to export your data.");
+      const response = await fetch("/api/account/export", { method: "POST", headers: { Authorization: `Bearer ${data.session.access_token}` } });
+      if (!response.ok) {
+        if (response.status === 413) throw new Error("Your account is too large for an immediate export. Please contact support.");
+        if (response.status === 429) throw new Error("An export is already running. Please try again shortly.");
+        if (response.status === 409) throw new Error("Your data changed during export. Pause imports and edits, then try again.");
+        throw new Error("We couldn't complete your export. Please try again. No partial download was created.");
+      }
+      const url = URL.createObjectURL(await response.blob());
+      const link = document.createElement("a"); link.href = url;
+      link.download = `booksmart-account-export-${new Date().toISOString().slice(0, 10)}.json.gz`;
+      document.body.appendChild(link); link.click(); link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+      toast.success("Your account export has downloaded.");
+    } catch (error) { toast.error(error instanceof Error ? error.message : "Export failed."); }
+    finally { setExporting(false); }
+  };
+  const deleteAccountMutation = useMutation({
+    mutationFn: async () => {
+      const { data } = await supabase.auth.getSession();
+      if (!data.session) throw new Error("Please sign in again to delete your account.");
+      const response = await fetch("/api/account", { method: "DELETE", headers: {
+        Authorization: `Bearer ${data.session.access_token}`, "Content-Type": "application/json",
+      }, body: JSON.stringify({ email: deleteEmail, confirmation: deletePhrase }) });
+      const result = await response.json().catch(() => ({})) as { error?: string; providerRevocationWarnings?: string[] };
+      if (!response.ok) {
+        if (result.error === "recent_authentication_required") throw new Error("For security, sign out and sign in again before deleting your account.");
+        if (result.error === "billing_cleanup_failed") throw new Error("Your subscription could not be cancelled, so the account was not deleted. Please try again or contact support.");
+        if (result.error === "confirmation_mismatch" || result.error === "confirmation_required") throw new Error("Enter your account email and DELETE exactly as shown.");
+        if (result.error === "account_cleanup_incomplete" || result.error === "identity_cleanup_incomplete") throw new Error("Deletion started but could not finish. Your account has been locked. Please contact support to complete cleanup.");
+        throw new Error("We couldn't delete the account. No partial confirmation was issued. Please try again.");
+      }
+      return result;
+    },
+    onSuccess: async (result) => {
+      await supabase.auth.signOut({ scope: "local" });
+      setDeleteOpen(false);
+      if (result.providerRevocationWarnings?.length) sessionStorage.setItem("booksmart_account_deletion_warning", "Some providers could not confirm revocation; BookSmart credentials and data were removed.");
+      window.location.assign("/login?account=deleted");
+    },
+    onError: (error) => toast.error(error instanceof Error ? error.message : "Account deletion failed."),
+  });
   const [activeOrgId] = useActiveOrganizationId(numericId);
   const queryClient = useQueryClient();
   const [, navigate] = useLocation();
@@ -1290,12 +1341,43 @@ export default function Settings() {
               <Row label="Purchase Tokens" onClick={() => navigate("/user/token")} />
               <Row label="Sponsored Offers" onClick={soon} />
               <Row label="Cards" onClick={soon} />
-              <Row label="Delete Account" onClick={soon} destructive />
+              <Row label={exporting ? "Preparing account export…" : "Download account data"} onClick={exportAccount} />
+              <p className="py-3 text-xs text-muted-foreground">Includes all businesses you own and your stored files in a compressed data file. Export while imports and edits are paused.</p>
+              <Row label="Delete Account" onClick={() => setDeleteOpen(true)} destructive />
               <Row label="Logout" onClick={signOut} destructive />
             </div>
           </div>
         </div>
       </section>
+
+      <AlertDialog open={deleteOpen} onOpenChange={(open) => { if (!deleteAccountMutation.isPending) { setDeleteOpen(open); if (!open) { setDeleteEmail(""); setDeletePhrase(""); } } }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete your BookSmart account permanently?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This cancels billing, disconnects integrations, and permanently removes every business you own, financial records, documents, email evidence, insights, tasks, and your login. Download your account data first if you need a copy. This cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="space-y-4 py-2">
+            <label className="block space-y-2 text-sm">
+              <span>Enter your account email: <strong>{email}</strong></span>
+              <input className="w-full rounded-md border border-border bg-background px-3 py-2" autoComplete="off" value={deleteEmail} onChange={(event) => setDeleteEmail(event.target.value)} />
+            </label>
+            <label className="block space-y-2 text-sm">
+              <span>Type <strong>DELETE</strong> to confirm</span>
+              <input className="w-full rounded-md border border-border bg-background px-3 py-2" autoComplete="off" value={deletePhrase} onChange={(event) => setDeletePhrase(event.target.value)} />
+            </label>
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleteAccountMutation.isPending}>Keep account</AlertDialogCancel>
+            <AlertDialogAction className="bg-destructive text-destructive-foreground" disabled={deleteAccountMutation.isPending || deleteEmail.trim().toLowerCase() !== email.trim().toLowerCase() || deletePhrase !== "DELETE"}
+              onClick={(event) => { event.preventDefault(); deleteAccountMutation.mutate(); }}>
+              {deleteAccountMutation.isPending && <Loader2 className="animate-spin" />}
+              Delete permanently
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <AlertDialog open={disconnectOpen} onOpenChange={setDisconnectOpen}>
         <AlertDialogContent>

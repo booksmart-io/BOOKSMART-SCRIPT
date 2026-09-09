@@ -32,7 +32,7 @@ router.get("/cpa/clients/:clientId/financial-summary", requireAuth, requireAppro
   try {
     const admin = adminClient();
     const [{ data: engagement, error: engagementError }, { data: organizations, error: organizationError }] = await Promise.all([
-      admin.from("orders").select("id").eq("cpa_id", req.cpaUserId!).eq("user_id", clientId)
+      admin.from("orders").select("id").eq("client_authorized", true).eq("cpa_id", req.cpaUserId!).eq("user_id", clientId)
         .in("status", [...CPA_MONITORING_ENGAGEMENT_STATUSES]).limit(1).maybeSingle(),
       admin.from("organizations").select("*").eq("owner_id", clientId).order("id"),
     ]);
@@ -101,7 +101,7 @@ router.get("/cpa/clients/:clientId/planning-summary", requireAuth, requireApprov
   try {
     const admin = adminClient();
     const [{ data: engagement, error: engagementError }, { data: organizations, error: organizationError }] = await Promise.all([
-      admin.from("orders").select("id").eq("cpa_id", req.cpaUserId!).eq("user_id", clientId).in("status", [...CPA_MONITORING_ENGAGEMENT_STATUSES]).limit(1).maybeSingle(),
+      admin.from("orders").select("id").eq("client_authorized", true).eq("cpa_id", req.cpaUserId!).eq("user_id", clientId).in("status", [...CPA_MONITORING_ENGAGEMENT_STATUSES]).limit(1).maybeSingle(),
       admin.from("organizations").select("id,name").eq("owner_id", clientId).order("id"),
     ]);
     if (engagementError || organizationError) throw engagementError ?? organizationError;

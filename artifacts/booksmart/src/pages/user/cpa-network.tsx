@@ -260,6 +260,7 @@ function HireDialog({ cpa, userNumericId, onClose }: { cpa: CpaUser; userNumeric
           </div>
         </div>
         <DialogFooter>
+          <p className="text-xs text-muted-foreground">Submitting authorizes this CPA to view your business financial information after accepting the request. You can revoke access from Orders.</p>
           <Button variant="outline" onClick={onClose} disabled={hire.isPending}>Cancel</Button>
           <Button onClick={() => hire.mutate()} disabled={hire.isPending || !service}>
             {hire.isPending ? <><Loader2 className="h-4 w-4 animate-spin mr-2" />Submitting…</> : "Submit Request"}

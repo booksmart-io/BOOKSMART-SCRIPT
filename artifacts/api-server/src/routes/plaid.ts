@@ -3,6 +3,8 @@ import { scheduleMonitoringEvaluation } from "../lib/monitoring-runner";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { requireAuth } from "../middlewares/require-auth";
 import { getUserTier, PLAN_LIMITS, enforceConnectedAccountLimit } from "../lib/plan-limits";
+import { decryptPlaidToken, encryptPlaidToken, plaidTokenNeedsEncryption } from "../lib/plaid-token-security";
+import { fetchWithProviderRetry } from "../lib/provider-retry";
 
 const router = Router();
 
@@ -75,6 +77,18 @@ function adminClient(): SupabaseAdmin {
   return createClient(SUPABASE_URL, key);
 }
 
+async function usablePlaidToken(admin: SupabaseAdmin, item: { id: number; access_token: string }): Promise<string> {
+  const token = decryptPlaidToken(item.access_token);
+  if (plaidTokenNeedsEncryption(item.access_token)) {
+    const { error } = await admin
+      .from("plaid_items")
+      .update({ access_token: encryptPlaidToken(token), updated_at: new Date().toISOString() })
+      .eq("id", item.id);
+    if (error) throw error;
+  }
+  return token;
+}
+
 function plaidBaseUrl(): string {
   const env = (process.env.PLAID_ENV ?? "sandbox").toLowerCase();
   if (env === "production") return "https://production.plaid.com";
@@ -113,11 +127,11 @@ async function plaidFetch<T>(path: string, body: Record<string, unknown>): Promi
   const secret = process.env.PLAID_SECRET;
   if (!clientId || !secret) throw new Error("Missing PLAID_CLIENT_ID or PLAID_SECRET");
 
-  const response = await fetch(`${plaidBaseUrl()}${path}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ client_id: clientId, secret, ...body }),
-  });
+  const request = { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ client_id: clientId, secret, ...body }) };
+  const response = path === "/transactions/sync"
+    ? await fetchWithProviderRetry(`${plaidBaseUrl()}${path}`, request)
+    : await fetch(`${plaidBaseUrl()}${path}`, request);
   const json = await response.json().catch(() => ({})) as PlaidErrorResponse;
   if (!response.ok) {
     const message = [
@@ -221,7 +235,8 @@ router.post("/plaid/link-token", requireAuth, async (req, res) => {
   } catch (err) {
     const message = errorMessage(err, "Plaid Link token failed");
     console.error("[plaid/link-token]", message, err);
-    res.status(500).json({ error: "plaid_link_token_failed", message });
+    const status = message.includes("not found") || message.startsWith("Invalid") ? 404 : 500;
+    res.status(status).json({ error: "plaid_link_token_failed", message });
   }
 });
 
@@ -254,7 +269,7 @@ router.post("/plaid/exchange-public-token", requireAuth, async (req, res) => {
         user_id: userRow.id,
         org_id: orgRow.id,
         plaid_item_id: exchange.item_id,
-        access_token: exchange.access_token,
+        access_token: encryptPlaidToken(exchange.access_token),
         institution_id: institution.institution_id ?? null,
         institution_name: institution.name ?? null,
         status: "active",
@@ -278,7 +293,7 @@ router.post("/plaid/exchange-public-token", requireAuth, async (req, res) => {
       })).filter((account) => account.plaid_account_id);
       const { error: accountsError } = await admin
         .from("plaid_accounts")
-        .upsert(accountRows, { onConflict: "plaid_account_id" });
+        .upsert(accountRows, { onConflict: "plaid_item_id,plaid_account_id" });
       if (accountsError) throw accountsError;
     }
 
@@ -286,7 +301,8 @@ router.post("/plaid/exchange-public-token", requireAuth, async (req, res) => {
   } catch (err) {
     const message = errorMessage(err, "Plaid exchange failed");
     console.error("[plaid/exchange-public-token]", message, err);
-    res.status(500).json({ error: "plaid_exchange_failed", message });
+    const status = message.includes("not found") || message.startsWith("Invalid") ? 404 : 500;
+    res.status(status).json({ error: "plaid_exchange_failed", message });
   }
 });
 
@@ -330,6 +346,7 @@ router.post("/plaid/sync", requireAuth, async (req, res) => {
       try {
         let cursor = item.transactions_cursor as string | null;
         let hasMore = true;
+        const accessToken = await usablePlaidToken(admin, item);
 
         while (hasMore) {
           const sync = await plaidFetch<{
@@ -339,7 +356,7 @@ router.post("/plaid/sync", requireAuth, async (req, res) => {
             next_cursor: string;
             has_more: boolean;
           }>("/transactions/sync", {
-            access_token: item.access_token,
+            access_token: accessToken,
             cursor: cursor || undefined,
             count: 500,
           });
@@ -365,7 +382,7 @@ router.post("/plaid/sync", requireAuth, async (req, res) => {
           if (rows.length > 0) {
             const { error: txError } = await admin
               .from("transactions")
-              .upsert(rows, { onConflict: "plaid_transaction_id" });
+              .upsert(rows, { onConflict: "org_id,plaid_transaction_id" });
             if (txError) throw txError;
           }
 
@@ -436,7 +453,7 @@ router.get("/plaid/balances", requireAuth, async (req, res) => {
     if (error) throw error;
     const accounts: Array<Record<string, unknown>> = [];
     for (const item of items ?? []) {
-      const result = await plaidFetch<{ accounts?: PlaidBalanceAccount[] }>("/accounts/balance/get", { access_token: item.access_token });
+      const result = await plaidFetch<{ accounts?: PlaidBalanceAccount[] }>("/accounts/balance/get", { access_token: await usablePlaidToken(admin, item) });
       for (const account of result.accounts ?? []) accounts.push({
         account_id: account.account_id, name: account.name ?? account.official_name ?? "Account",
         official_name: account.official_name ?? null, mask: account.mask ?? null, type: account.type ?? null,
@@ -527,7 +544,7 @@ router.delete("/plaid/items/:itemId", requireAuth, async (req, res) => {
 
     let plaidRemoveWarning: string | null = null;
     try {
-      await plaidFetch<{ request_id?: string }>("/item/remove", { access_token: item.access_token });
+      await plaidFetch<{ request_id?: string }>("/item/remove", { access_token: await usablePlaidToken(admin, item) });
     } catch (err) {
       plaidRemoveWarning = errorMessage(err, "Plaid item removal failed");
       console.warn("[plaid/delete-item] Plaid removal warning:", plaidRemoveWarning);
@@ -566,7 +583,8 @@ router.delete("/plaid/items/:itemId", requireAuth, async (req, res) => {
   } catch (err) {
     const message = errorMessage(err, "Plaid account delete failed");
     console.error("[plaid/delete-item]", message, err);
-    res.status(500).json({ error: "plaid_delete_failed", message });
+    const status = /organization|profile|item not found/i.test(message) ? 404 : 500;
+    res.status(status).json({ error: status === 404 ? "plaid_item_not_found" : "plaid_delete_failed", message: status === 404 ? "Connected bank not found." : message });
   }
 });
 

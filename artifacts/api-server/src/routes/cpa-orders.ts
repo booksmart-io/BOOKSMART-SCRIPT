@@ -34,6 +34,7 @@ router.patch("/cpa/orders/:orderId", async (req, res) => {
       .select("id,cpa_id,status,amount")
       .eq("id", orderId)
       .eq("cpa_id", req.cpaUserId!)
+      .eq("client_authorized", true)
       .maybeSingle();
     if (findError) throw findError;
     if (!order) {
@@ -52,12 +53,15 @@ router.patch("/cpa/orders/:orderId", async (req, res) => {
     const { data: updated, error: updateError } = await admin
       .from("orders")
       .update(changes)
+      .eq("status", currentStatus)
       .eq("id", orderId)
       .eq("cpa_id", req.cpaUserId!)
+      .eq("client_authorized", true)
       .select("id,status,amount")
-      .single();
+      .maybeSingle();
     if (updateError) throw updateError;
 
+    if (!updated) { res.status(409).json({ error: "order_changed", message: "Order access or status changed. Refresh and try again." }); return; }
     res.json({ order: updated });
   } catch (error) {
     res.status(502).json({ error: "cpa_order_update_error", message: String(error) });

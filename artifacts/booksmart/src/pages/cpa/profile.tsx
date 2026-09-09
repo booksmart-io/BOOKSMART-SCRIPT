@@ -195,10 +195,7 @@ export default function CpaProfile() {
       const validationError = validateStep(2) ?? validateStep(1) ?? validateStep(0);
       if (validationError) throw new Error(validationError);
 
-      const status = cpaRow?.verification_status === "approved" ? "approved" : "pending";
       const payload = {
-        email: email.trim(),
-        role: "cpa",
         first_name: firstName.trim(),
         middle_name: middleName.trim() || null,
         last_name: lastName.trim(),
@@ -212,7 +209,6 @@ export default function CpaProfile() {
         certification_proof_url: certificationProofUrl.trim() || null,
         license_copy_url: licenseCopyUrl.trim() || null,
         terms_agreed: termsAgreed,
-        verification_status: status,
         updated_at: new Date().toISOString(),
       };
 
@@ -270,7 +266,7 @@ export default function CpaProfile() {
                 <Field label="Middle Name" value={middleName} onChange={setMiddleName} hideLabel />
                 <Field label="Last Name *" value={lastName} onChange={setLastName} hideLabel />
               </div>
-              <Field label="Email *" value={email} onChange={setEmail} type="email" hideLabel />
+              <Field label="Email *" value={email} onChange={setEmail} type="email" hideLabel readOnly />
               <PhoneField label="Phone Number" value={phone} onChange={setPhone} />
 
               <div className="flex justify-end">
@@ -376,6 +372,7 @@ function Field({
   placeholder,
   type = "text",
   hideLabel = false,
+  readOnly = false,
   min,
 }: {
   label: string;
@@ -384,6 +381,7 @@ function Field({
   placeholder?: string;
   type?: string;
   hideLabel?: boolean;
+  readOnly?: boolean;
   min?: number;
 }) {
   const id = label.toLowerCase().replace(/[^a-z0-9]+/g, "-");
@@ -395,6 +393,7 @@ function Field({
         type={type}
         min={min}
         value={value}
+        readOnly={readOnly}
         placeholder={placeholder ?? label}
         onChange={(event) => onChange(event.target.value)}
         className="h-12 min-w-0 bg-card text-base"

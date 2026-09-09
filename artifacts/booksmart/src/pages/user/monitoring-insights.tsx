@@ -11,6 +11,7 @@ import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
 import { ContractorInsightsSummary } from "@/components/monitoring/contractor-insights-summary";
+import { InsightEvidenceMap } from "@/components/monitoring/insight-evidence-map";
 
 const insightTabs = ["all", "growth", "expenses", "cash_flow", "bookkeeping", "tax", "risks"] as const;
 type InsightTab = (typeof insightTabs)[number];
@@ -105,14 +106,15 @@ export default function MonitoringInsights() {
         const start = percent === -100 ? 0 : value / (1 + percent / 100 || 1);
         const points = [0, .18, .35, .52, .7, .86, 1].map(step => start + (value - start) * step);
         const isBookkeeping = signal.category === "bookkeeping";
+        const isDuplicateExpense = signal.signal_key.startsWith("duplicate-expense:");
         const isJobber = signal.calculation_version === "jobber-operational-v1";
         const jobberQuote = signal.signal_key.startsWith("jobber:quote-follow-up:");
         const jobberCount = ["jobber:upcoming-workload", "jobber:unscheduled-active-jobs", "jobber:job-volume-trend"].includes(signal.signal_key);
-        const metricValue = isJobber ? (jobberQuote ? `${value} days` : jobberCount ? value : currency.format(value)) : (isBookkeeping ? value : currency.format(value));
+        const metricValue = isJobber ? (jobberQuote ? `${value} days` : jobberCount ? value : currency.format(value)) : (isBookkeeping && !isDuplicateExpense ? value : currency.format(value));
         const metricLabel = isJobber
           ? jobberQuote ? "awaiting customer response" : signal.signal_key === "jobber:upcoming-workload" ? "visits in the next 7 days" : signal.signal_key === "jobber:unscheduled-active-jobs" ? "unscheduled active jobs" : signal.signal_key === "jobber:job-volume-trend" ? "jobs created in the latest 30 days" : signal.signal_key.startsWith("jobber:completed-uninvoiced:") ? "uninvoiced operational amount" : "outstanding operational balance"
           : "vs previous period";
-        return <Card key={signal.id} className={`overflow-hidden ${visual.border}`}>
+        return <Card key={signal.id} className={`overflow-hidden ${visual.border}`} data-testid="insight-card" data-signal-key={signal.signal_key}>
           <CardContent className="p-3.5 sm:p-4">
             <div className="flex items-start gap-3">
               <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full ${visual.bg}`}><visual.Icon className="h-4.5 w-4.5" style={{ color: visual.color }} /></div>
@@ -125,7 +127,7 @@ export default function MonitoringInsights() {
             </div>
             {signal.cta_route && signal.percentage != null && <div className="mt-3 flex justify-end"><Button asChild size="sm" variant="ghost"><Link href={signal.cta_route}>{signal.cta_label ?? "Review"}<ArrowRight className="ml-1 h-4 w-4" /></Link></Button></div>}
             <div className="mt-3 flex flex-col gap-3 border-t pt-3 sm:flex-row sm:items-center sm:justify-between"><div className="text-xs text-muted-foreground"><p className="capitalize">Category: {signal.category.replaceAll("_", " ")} · CPA review: {signal.cpa_review_level}</p>{signal.recommended_action && <p className="mt-1 text-foreground">Recommended: {signal.recommended_action}</p>}</div><div className="flex gap-2">{signal.requires_cpa_review && <Button asChild size="sm" variant="outline"><Link href="/user/my-cpa">My CPA</Link></Button>}{status === "active" ? <><Button size="sm" variant="outline" disabled={transition.isPending} onClick={() => transition.mutate({ signal, action: "dismiss" })}>Dismiss</Button><Button size="sm" disabled={transition.isPending} onClick={() => transition.mutate({ signal, action: "resolve" })}>Resolve</Button></> : <Button size="sm" variant="outline" disabled={transition.isPending} onClick={() => transition.mutate({ signal, action: "reopen" })}>Reopen</Button>}</div></div>
-            <details className="mt-3 border-t pt-3 text-xs text-muted-foreground"><summary className="cursor-pointer font-medium text-foreground">How we calculated this</summary><div className="mt-2 grid gap-1 sm:grid-cols-2"><span>Current period: {signal.period_start && signal.period_end ? `${new Date(signal.period_start).toLocaleDateString()} – ${new Date(signal.period_end).toLocaleDateString()}` : "Not applicable"}</span><span>Comparison: {signal.comparison_start && signal.comparison_end ? `${new Date(signal.comparison_start).toLocaleDateString()} – ${new Date(signal.comparison_end).toLocaleDateString()}` : "No comparison period"}</span><span>Source records: {signal.source_ids?.length ?? 0}</span><span>Method: {signal.calculation_version}</span><span>Confidence: {signal.confidence == null ? "Not scored" : `${Math.round(signal.confidence * 100)}%`}</span><span>Excluded: {signal.exclusions?.length ? signal.exclusions.join(", ").replaceAll("_", " ") : "None"}</span></div></details>
+            <details className="mt-3 border-t pt-3 text-xs text-muted-foreground"><summary className="cursor-pointer font-medium text-foreground" data-testid="open-evidence-map">How BookSmart connected this</summary><div className="mt-2 grid gap-1 sm:grid-cols-2"><span>Current period: {signal.period_start && signal.period_end ? `${new Date(signal.period_start).toLocaleDateString()} – ${new Date(signal.period_end).toLocaleDateString()}` : "Not applicable"}</span><span>Comparison: {signal.comparison_start && signal.comparison_end ? `${new Date(signal.comparison_start).toLocaleDateString()} – ${new Date(signal.comparison_end).toLocaleDateString()}` : "No comparison period"}</span><span>Source records: {signal.source_ids?.length ?? 0}</span><span>Method: {signal.calculation_version}</span></div><InsightEvidenceMap evidence={signal.metadata?.evidence ?? []} calculation={signal.metadata?.calculation ?? null} confidence={signal.confidence} exclusions={signal.exclusions ?? []} recommendation={signal.recommended_action} /></details>
           </CardContent>
         </Card>;
       })}

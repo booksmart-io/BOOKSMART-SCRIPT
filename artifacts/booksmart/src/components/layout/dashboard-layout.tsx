@@ -78,6 +78,7 @@ export function DashboardLayout({ children, role }: DashboardLayoutProps) {
         { title: "Money",               url: "/user/money",              icon: DollarSign },
         { title: "Tasks",               url: "/user/tasks",              icon: ClipboardList },
         { title: "My CPA",              url: "/user/my-cpa",             icon: Briefcase },
+        { title: "Orders",              url: "/user/orders",             icon: ShoppingBag },
         { title: "Insights",            url: "/user/insights",           icon: Lightbulb },
         { title: "AI Strategy",         url: "/user/ai-strategy",   icon: Gem },
         { title: "Document Repository", url: "/user/tax",           icon: Scissors },

@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { createClient } from "@supabase/supabase-js";
 import { requireAuth } from "../middlewares/require-auth";
+import { normalizeOwnedStoragePath } from "../lib/storage-security";
 
 const router = Router();
 
@@ -23,10 +24,8 @@ router.post("/document-signed-url", requireAuth, async (req, res) => {
   const userId = req.supabaseUserId!;
   // Keep percent-encoding intact (do NOT decode) so createSignedUrl receives a
   // valid URL-safe path. Spaces encoded as %20 are decoded by Supabase server.
-  const normalizedPath = filePath.replace(/^\/+/, "");
-  // Folder owner check: decode just the first segment (UUID has no special chars)
-  const folderOwner = decodeURIComponent(normalizedPath.split("/")[0]);
-  if (folderOwner !== userId) {
+  const normalizedPath = normalizeOwnedStoragePath(filePath, userId);
+  if (!normalizedPath) {
     res.status(403).json({ error: "forbidden" });
     return;
   }

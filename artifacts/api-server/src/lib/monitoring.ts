@@ -59,6 +59,7 @@ export type MonitoringSummary = {
   categorySpending?: Array<{ key: string; label: string; current: number; previous: number; sourceIds: number[] }>;
   largeApprovedTransactions?: Array<{ id: number; title: string; amount: number }>;
   pendingDocumentReview?: { count: number; sourceIds: number[] };
+  duplicateExpenseGroups?: Array<{ amount: number; title: string; sourceIds: number[] }>;
 };
 
 export type SignalCandidate = {
@@ -83,6 +84,23 @@ export type SignalCandidate = {
   directUrl?: string | null;
   sourceRecordType?: string;
   calculationVersion?: string;
+  evidence?: MonitoringEvidenceReference[];
+  calculation?: MonitoringCalculation;
+};
+
+export type MonitoringEvidenceReference = {
+  provider: "booksmart" | "quickbooks" | "jobber" | "gmail" | "plaid" | "receipt" | "payroll" | "contract";
+  recordType: string;
+  recordId: string;
+  label: string;
+  state?: "confirmed" | "estimated" | "missing" | "stale" | "conflicting";
+  route?: string | null;
+  reason?: string;
+};
+
+export type MonitoringCalculation = {
+  summary: string;
+  operands: Array<{ label: string; value: number; format: "currency" | "number" | "percent"; operation?: "add" | "subtract" | "compare" }>;
 };
 
 const pctChange = (current: number, previous: number) => previous === 0
@@ -174,6 +192,16 @@ export function evaluateTrustedSummary(summary: MonitoringSummary): SignalCandid
       currentValue: summary.unclassifiedTransactionCount, comparisonValue: null, percentage: null,
       recommendedAction: "Categorize the outstanding transactions.", ctaLabel: "Review", ctaRoute: "/user/reports",
       requiresCpaReview: false, cpaReviewLevel: "none",
+    });
+  }
+  for (const duplicate of summary.duplicateExpenseGroups ?? []) {
+    signals.push({
+      signalKey: `duplicate-expense:${duplicate.sourceIds.join("-")}`, signalType: "bookkeeping", category: "bookkeeping", severity: "medium",
+      title: `Possible duplicate expense: ${duplicate.title}`,
+      description: `${duplicate.sourceIds.length} approved expenses share the same date, amount, merchant, and description. Review before removing anything.`,
+      currentValue: duplicate.amount, comparisonValue: null, percentage: null, sourceIds: duplicate.sourceIds,
+      recommendedAction: "Confirm whether these records represent one purchase imported more than once.", ctaLabel: "Review transactions", ctaRoute: "/user/reports",
+      requiresCpaReview: false, cpaReviewLevel: "none", confidence: 1,
     });
   }
   if (summary.netCashMovement < 0) {

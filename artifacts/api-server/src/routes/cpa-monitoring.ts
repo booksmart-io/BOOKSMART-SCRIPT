@@ -17,7 +17,7 @@ router.get("/cpa/monitoring/tasks", requireAuth, requireApprovedCpa, async (req,
   try {
     const admin = adminClient();
     const { data: engagements, error: engagementError } = await admin.from("orders")
-      .select("user_id").eq("cpa_id", req.cpaUserId!).in("status", [...CPA_MONITORING_ENGAGEMENT_STATUSES]);
+      .select("user_id").eq("client_authorized", true).eq("cpa_id", req.cpaUserId!).in("status", [...CPA_MONITORING_ENGAGEMENT_STATUSES]);
     if (engagementError) throw engagementError;
     const userIds = [...new Set((engagements ?? []).map(row => Number(row.user_id)).filter(Number.isSafeInteger))];
     if (!userIds.length) { res.json({ tasks: [], generated_at: new Date().toISOString() }); return; }
@@ -83,7 +83,7 @@ router.post("/cpa/monitoring/tasks/:id/events", requireAuth, requireApprovedCpa,
       .select("owner_id").eq("id", task.organization_id).maybeSingle();
     if (orgError) throw orgError;
     if (!organization) { res.status(404).json({ error: "task_not_found" }); return; }
-    const { data: engagement, error: engagementError } = await admin.from("orders").select("id")
+    const { data: engagement, error: engagementError } = await admin.from("orders").select("id").eq("client_authorized", true)
       .eq("cpa_id", req.cpaUserId!).eq("user_id", organization.owner_id)
       .in("status", [...CPA_MONITORING_ENGAGEMENT_STATUSES]).limit(1).maybeSingle();
     if (engagementError) throw engagementError;

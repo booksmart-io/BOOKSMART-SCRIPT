@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { createClient } from "@supabase/supabase-js";
 import { requireAuth } from "../middlewares/require-auth";
+import { normalizeOwnedStoragePath } from "../lib/storage-security";
 
 const router = Router();
 const SUPABASE_URL = "https://pvppwmkswnluidlwnnck.supabase.co";
@@ -12,14 +13,15 @@ router.delete("/document-delete", requireAuth, async (req, res) => {
     return;
   }
 
-  const storagePath = (req.query["storagePath"] as string) ?? "";
-  if (!storagePath) {
+  const requestedPath = (req.query["storagePath"] as string) ?? "";
+  if (!requestedPath) {
     res.status(400).json({ error: "missing_storage_path" });
     return;
   }
 
   const userId = req.supabaseUserId!;
-  if (!storagePath.startsWith(userId + "/")) {
+  const storagePath = normalizeOwnedStoragePath(requestedPath, userId);
+  if (!storagePath) {
     res.status(403).json({ error: "forbidden", message: "File does not belong to you" });
     return;
   }

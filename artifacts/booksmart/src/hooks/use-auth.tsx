@@ -35,6 +35,14 @@ const AuthContext = createContext<AuthContextType>({
   requiresLegalConsent: false,
 });
 
+async function auditSession(accessToken: string, event: "signed_in" | "signed_out") {
+  try {
+    await fetch("/api/security-audit/session", { method: "POST", keepalive: event === "signed_out", headers: {
+      Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json",
+    }, body: JSON.stringify({ event }) });
+  } catch { /* Authentication remains usable if audit transport is temporarily unavailable. */ }
+}
+
 export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const [session, setSession] = useState<Session | null>(null);
   const [user, setUser] = useState<User | null>(null);
@@ -86,6 +94,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       // TOKEN_REFRESHED only rotates the access token — the underlying
       // users row is unchanged, so re-fetching it just reintroduces the race.
       if (event === "SIGNED_IN" || event === "USER_UPDATED") {
+        if (event === "SIGNED_IN") void auditSession(session.access_token, "signed_in");
         fetchProfile(session.user.id);
       }
     });
@@ -156,37 +165,8 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
         console.warn("fetchProfile: users table lookup failed:", appUserError.message, appUserError.code);
       }
 
-      if (authEmail) {
-        const { data: emailUsers, error: emailLookupError } = await supabase
-          .from("users")
-          .select("id, auth_id, email, role, first_name, middle_name, last_name, phone_number, token_balance, img_url, verification_status")
-          .ilike("email", authEmail)
-          .order("id", { ascending: true })
-          .limit(2);
-
-        if (!emailLookupError && emailUsers?.length) {
-          const existingUser = emailUsers.find((row) => !row.auth_id || row.auth_id === authUuid) ?? emailUsers[0];
-
-          if (!existingUser.auth_id) {
-            const { error: linkError } = await supabase
-              .from("users")
-              .update({ auth_id: authUuid })
-              .eq("id", existingUser.id)
-              .is("auth_id", null);
-
-            if (linkError) {
-              console.warn("fetchProfile: auth_id backfill by email failed:", linkError.message, linkError.code);
-            }
-          }
-
-          setAppUserProfile(authUuid, existingUser as Parameters<typeof setAppUserProfile>[1]);
-          return;
-        }
-
-        if (emailLookupError) {
-          console.warn("fetchProfile: users email lookup failed:", emailLookupError.message, emailLookupError.code);
-        }
-      }
+      // Email-based account linking is performed only by /api/auth/ensure-profile.
+      // Never adopt a profile or backfill its identity from a browser email lookup.
 
       // 2. Try profiles table (alternative schema)
       const { data: profileRow, error: profileError } = await supabase
@@ -275,6 +255,8 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   };
 
   const signOut = async () => {
+    const { data } = await supabase.auth.getSession();
+    if (data.session?.access_token) await auditSession(data.session.access_token, "signed_out");
     await supabase.auth.signOut();
   };
 

@@ -3,7 +3,9 @@ import test from "node:test";
 import { createOAuthState, decryptToken, encryptToken, hashOAuthState, verifyOAuthState } from "./quickbooks-oauth";
 import {
   extractQuickBooksQueryEntities,
+  hasAnotherQuickBooksPage,
   normalizeQuickBooksStagedEntity,
+  quickBooksPageQuery,
   shouldRefreshQuickBooksToken,
 } from "./quickbooks-client";
 
@@ -18,12 +20,21 @@ test("QuickBooks OAuth state is signed, scoped, and rejects tampering", () => {
   assert.equal(hashOAuthState(state).length, 64);
 });
 
+test("QuickBooks OAuth state rejects missing, expired, and invalid organization context", () => {
+  process.env.QUICKBOOKS_STATE_SECRET = "test-state-secret";
+  assert.throws(() => verifyOAuthState(""), /Invalid OAuth state/);
+  assert.throws(() => verifyOAuthState(createOAuthState("user-123", 42, -1)), /expired/);
+  assert.throws(() => verifyOAuthState(createOAuthState("user-123", 0)), /payload/);
+});
+
 test("QuickBooks tokens are authenticated-encrypted", () => {
   process.env.QUICKBOOKS_TOKEN_ENCRYPTION_KEY = "test-encryption-secret";
   const encrypted = encryptToken("sensitive-token");
   assert.notEqual(encrypted, "sensitive-token");
+  assert.equal(encrypted.includes("sensitive-token"), false);
   assert.equal(decryptToken(encrypted), "sensitive-token");
-  assert.throws(() => decryptToken(`${encrypted.slice(0, -1)}x`));
+  const replacement = encrypted.endsWith("x") ? "y" : "x";
+  assert.throws(() => decryptToken(`${encrypted.slice(0, -1)}${replacement}`));
 });
 
 test("QuickBooks access tokens refresh only near expiry", () => {
@@ -49,4 +60,12 @@ test("QuickBooks query responses and staged entities normalize without touching 
     source_updated_at: null,
     staged_at: "ignored",
   });
+});
+
+test("QuickBooks pagination requests every page at the 1,000-record boundary", () => {
+  assert.equal(quickBooksPageQuery("Invoice", 1), "select * from Invoice startposition 1 maxresults 1000");
+  assert.equal(quickBooksPageQuery("Invoice", 1001), "select * from Invoice startposition 1001 maxresults 1000");
+  assert.equal(hasAnotherQuickBooksPage(1000, 1000), true);
+  assert.equal(hasAnotherQuickBooksPage(999, 1000), false);
+  assert.throws(() => quickBooksPageQuery("Invoice; delete", 1), /Invalid/);
 });

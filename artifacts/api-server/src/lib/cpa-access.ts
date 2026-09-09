@@ -4,6 +4,17 @@ export type CpaAccessRow = {
   verification_status: string | null;
 };
 
+export const APP_ROLES = ["user", "cpa", "admin"] as const;
+export type AppRole = (typeof APP_ROLES)[number];
+
+export function isKnownAppRole(value: unknown): value is AppRole {
+  return typeof value === "string" && APP_ROLES.includes(value as AppRole);
+}
+
+export function isAdminRole(row: { role?: string | null } | null | undefined): boolean {
+  return row?.role === "admin";
+}
+
 export const ORDER_STATUSES = ["pending", "active", "completed", "cancelled"] as const;
 export type OrderStatus = (typeof ORDER_STATUSES)[number];
 

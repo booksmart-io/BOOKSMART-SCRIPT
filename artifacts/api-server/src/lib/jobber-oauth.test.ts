@@ -38,6 +38,7 @@ test("Jobber PKCE uses an S256-compatible verifier and challenge", () => {
 test("Jobber secrets are authenticated and encrypted", () => {
   const encrypted = encryptJobberSecret("sensitive-token");
   assert.notEqual(encrypted, "sensitive-token");
+  assert.equal(encrypted.includes("sensitive-token"), false);
   assert.equal(decryptJobberSecret(encrypted), "sensitive-token");
   const tamperAt = Math.floor(encrypted.length / 2);
   const replacement = encrypted[tamperAt] === "x" ? "y" : "x";

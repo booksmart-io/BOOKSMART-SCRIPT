@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useLocation } from "wouter";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/hooks/use-auth";
 import { supabase } from "@/lib/supabase";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -28,6 +28,7 @@ type Order = {
   payment_status: string | null;
   created_at: string;
   amount: number | null;
+  client_authorized: boolean;
   cpa: { first_name: string | null; last_name: string | null } | null;
 };
 
@@ -55,6 +56,26 @@ function statusColors(status: string) {
 // ─── Detail Dialog ────────────────────────────────────────────────────────────
 
 function OrderDetail({ order, onClose, onChat }: { order: Order; onClose: () => void; onChat: () => void }) {
+  const queryClient = useQueryClient();
+  const [saving, setSaving] = useState(false);
+  const [accessError, setAccessError] = useState("");
+  async function setAccess(authorized: boolean) {
+    setSaving(true); setAccessError("");
+    try {
+      const { error } = await supabase.rpc("set_cpa_order_authorization", { p_order_id: order.id, p_authorized: authorized });
+      if (error) throw error;
+      const { data: sessionData } = await supabase.auth.getSession();
+      if (sessionData.session?.access_token) {
+        const audit = await fetch("/api/security-audit/cpa-access", { method: "POST", headers: {
+          Authorization: `Bearer ${sessionData.session.access_token}`, "Content-Type": "application/json",
+        }, body: JSON.stringify({ order_id: order.id, action: authorized ? "authorized" : "revoked" }) });
+        if (!audit.ok) console.warn("CPA access changed, but its security audit event could not be confirmed.");
+      }
+      await queryClient.invalidateQueries();
+      onClose();
+    } catch (error) { setAccessError(error instanceof Error ? error.message : "Could not update CPA access."); }
+    finally { setSaving(false); }
+  }
   const cpaName = [order.cpa?.first_name, order.cpa?.last_name].filter(Boolean).join(" ") || "—";
   return (
     <Dialog open onOpenChange={open => !open && onClose()}>
@@ -89,6 +110,15 @@ function OrderDetail({ order, onClose, onChat }: { order: Order; onClose: () => 
           )}
         </div>
 
+        <div className="space-y-2 border-t pt-3">
+          <p className="text-sm">{order.client_authorized ? "Financial access authorized for this order. Revoking removes authorization from all your orders with this CPA." : "Financial access is not authorized. Authorizing lets this CPA view your businesses' financial information while the engagement is active."}</p>
+          {accessError && <p role="alert" className="text-sm text-destructive">{accessError}</p>}
+          {(order.client_authorized || ["pending", "active", "in_progress", "in-progress"].includes(order.status)) && (
+            <Button disabled={saving} variant="outline" onClick={() => setAccess(!order.client_authorized)}>
+              {saving ? "Saving…" : order.client_authorized ? "Revoke CPA access" : "Authorize CPA access"}
+            </Button>
+          )}
+        </div>
         <div className="flex justify-between pt-2">
           {order.cpa_id ? (
             <Button variant="default" size="sm" className="gap-2" onClick={onChat}>
@@ -136,7 +166,7 @@ export default function Orders() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from("orders")
-        .select("id, user_id, cpa_id, title, services, description, status, payment_status, amount, created_at, cpa:users!cpa_id(first_name, last_name)")
+        .select("id, user_id, cpa_id, title, services, description, status, payment_status, amount, created_at, client_authorized, cpa:users!cpa_id(first_name, last_name)")
         .eq("user_id", numericId!)
         .order("created_at", { ascending: false });
       if (error) {

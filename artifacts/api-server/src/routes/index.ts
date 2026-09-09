@@ -36,6 +36,9 @@ import contractorReceiptsRouter from "./contractor-receipts";
 import contractorDiagnosticsRouter from "./contractor-diagnostics";
 import contractorGmailRouter from "./contractor-gmail";
 import notificationsRouter from "./notifications";
+import customerExportRouter from "./customer-export";
+import accountDeletionRouter from "./account-deletion";
+import securityAuditRouter from "./security-audit";
 
 const router: IRouter = Router();
 
@@ -76,5 +79,8 @@ router.use(contractorReceiptsRouter);
 router.use(contractorDiagnosticsRouter);
 router.use(contractorGmailRouter);
 router.use(notificationsRouter);
+router.use(customerExportRouter);
+router.use(accountDeletionRouter);
+router.use(securityAuditRouter);
 
 export default router;

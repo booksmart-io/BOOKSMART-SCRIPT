@@ -1,10 +1,12 @@
 import { Router } from "express";
+import { requireAuth } from "../middlewares/require-auth";
+import { ownedDocumentPathFromUrl } from "../lib/storage-security";
 
 const router = Router();
 
-const ALLOWED_HOST = "pvppwmkswnluidlwnnck.supabase.co";
+const SUPABASE_URL = process.env["SUPABASE_URL"] ?? "https://pvppwmkswnluidlwnnck.supabase.co";
 
-router.get("/document-download", async (req, res) => {
+router.get("/document-download", requireAuth, async (req, res) => {
   const rawUrl = (req.query["url"] as string) ?? "";
   const filename = (req.query["filename"] as string) ?? "download";
 
@@ -16,8 +18,9 @@ router.get("/document-download", async (req, res) => {
     return;
   }
 
-  if (parsed.hostname !== ALLOWED_HOST || !parsed.pathname.startsWith("/storage/")) {
-    res.status(400).json({ error: "disallowed_url" });
+  const storagePath = ownedDocumentPathFromUrl(parsed.toString(), req.supabaseUserId!, SUPABASE_URL);
+  if (!storagePath) {
+    res.status(403).json({ error: "forbidden" });
     return;
   }
 

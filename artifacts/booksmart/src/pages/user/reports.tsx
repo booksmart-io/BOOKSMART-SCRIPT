@@ -783,9 +783,12 @@ async function getSignedUrl(fileUrl: string): Promise<string> {
 /** Trigger a browser download through the backend proxy (reliable inside iframes) */
 async function proxyDownload(fileUrl: string, filename: string) {
   const signedUrl = await getSignedUrl(fileUrl);
+  const { data: sessionData } = await supabase.auth.getSession();
+  const token = sessionData.session?.access_token;
+  if (!token) throw new Error("Not authenticated.");
   const params = new URLSearchParams({ url: signedUrl, filename });
   const proxyUrl = `/api/document-download?${params.toString()}`;
-  const res = await fetch(proxyUrl);
+  const res = await fetch(proxyUrl, { headers: { Authorization: `Bearer ${token}` } });
   if (!res.ok)
     throw new Error(`Download failed: file not found (${res.status})`);
   const blob = await res.blob();

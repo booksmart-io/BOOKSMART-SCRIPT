@@ -27,10 +27,11 @@ test("weak customer-only matches require confirmation", () => {
   assert.equal(result.requiresConfirmation, true);
 });
 
-test("equal candidates remain unmatched instead of being silently assigned", () => {
+test("equal candidates remain unmatched and are routed for confirmation", () => {
   const result = matchContractorFinancialRecord({ source: "plaid", sourceId: "tx-2", amount: 500 }, [
     { id: "a", amount: 500 }, { id: "b", amount: 500 },
   ]);
   assert.equal(result.matchedJobId, null);
   assert.equal(result.confidence, "unmatched");
+  assert.equal(result.requiresConfirmation, true);
 });

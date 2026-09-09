@@ -3,6 +3,7 @@ import { Link, useLocation } from "wouter";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/hooks/use-auth";
 import { supabase } from "@/lib/supabase";
+import { spendTokensForUnlock } from "@/lib/token-unlocks";
 import { requestSubscriptionUpgrade } from "@/lib/subscription-upgrade-prompt";
 import { useToast } from "@/hooks/use-toast";
 import { calculateFinancialReport } from "@/lib/financial-engine";
@@ -588,9 +589,9 @@ difficulty must be "Easy", "Medium", or "Hard". savings is a USD number.`;
       const parsed = JSON.parse(jsonMatch[0]) as { strategies: AiStrategy[] };
       const strategies = parsed.strategies ?? [];
       const totalSavings = strategies.reduce((s, st) => s + (st.savings ?? 0), 0);
+      await spendTokensForUnlock("ai_tax_strategy_deep_dive");
       setInsightData({ strategies, totalSavings });
       setInsightUnlocked(true);
-      await supabase.from("users").update({ token_balance: Math.max(0, liveTokens - 150) }).eq("id", numericId!);
       qc.invalidateQueries({ queryKey: ["token_balance", numericId] });
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Unknown error";

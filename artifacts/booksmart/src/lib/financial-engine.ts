@@ -261,18 +261,18 @@ function findBalanceClass(text: string): BalanceClass | null {
   )
     return "cash";
   if (assetTag) return "other_assets";
+  if (includesAny(tagged, ["tax", "taxes payable"])) return "taxes_payable";
+  if (tagged.includes("deferred revenue")) return "deferred_revenue";
+  if (tagged.includes("accrued")) return "accrued_expenses";
   if (
     includesAny(tagged, ["accounts payable", "payable"]) ||
     /\bap\b/.test(tagged)
   )
     return "ap";
-  if (tagged.includes("accrued")) return "accrued_expenses";
-  if (includesAny(tagged, ["tax", "taxes payable"])) return "taxes_payable";
   if (
     includesAny(tagged, ["current debt", "short-term debt", "short term debt"])
   )
     return "current_debt";
-  if (tagged.includes("deferred revenue")) return "deferred_revenue";
   if (includesAny(tagged, ["long-term", "long term", "mortgage", "loan"]))
     return "long_term_liabilities";
   if (liabilityTag) return "other_current_liabilities";
@@ -414,14 +414,15 @@ export function classifyTransaction(
   )
     classification = "other_expense";
   else if (
-    includesAny(text, [
-      "[revenue]",
-      "revenue",
-      "sales income",
-      "service income",
-      "freelance income",
-      "income",
-    ])
+    text.includes("[revenue]") ||
+    (!balanceClass &&
+      includesAny(text, [
+        "revenue",
+        "sales income",
+        "service income",
+        "freelance income",
+        "income",
+      ]))
   )
     classification = tx.amount < 0 ? "returns" : "revenue";
   else if (includesAny(text, ["[opex]", "operating expense", "expense"]))
@@ -468,11 +469,11 @@ function balanceChange(tx: ClassifiedTransaction): number {
     "repayment",
     "principal payment",
     "paid down",
-    "sale",
-    "disposed",
   ]);
   if (tx.balanceClass === "fixed_assets")
-    return decreases ? -magnitude : magnitude;
+    return decreases || includesAny(tx.text, ["sale", "disposed"])
+      ? -magnitude
+      : magnitude;
   if (tx.balanceClass === "accumulated_depreciation") return magnitude;
   if (tx.balanceClass === "owner_draw" || tx.balanceClass === "dividend")
     return magnitude;
@@ -496,6 +497,19 @@ function balanceChange(tx: ClassifiedTransaction): number {
 function isNonCash(tx: ClassifiedTransaction) {
   if (!tx.balanceClass) return false;
   if (
+    includesAny(tx.text, [
+      "cash",
+      "paid",
+      "payment",
+      "received",
+      "collected",
+      "receipt",
+      "proceeds",
+      "repayment",
+    ])
+  )
+    return false;
+  if (
     [
       "ap",
       "credit_card",
@@ -508,14 +522,7 @@ function isNonCash(tx: ClassifiedTransaction) {
     return true;
   if (
     includesAny(tx.text, [
-      "cash",
-      "paid",
-      "payment",
-      "received",
-      "receipt",
       "purchase",
-      "proceeds",
-      "repayment",
     ])
   )
     return false;
@@ -538,6 +545,12 @@ function cashEffect(tx: ClassifiedTransaction) {
     tx.classification === "amortization"
   )
     return 0;
+  if (
+    tx.balanceClass === "ar" &&
+    tx.amount < 0 &&
+    includesAny(tx.text, ["decrease", "payment", "received", "receipt"])
+  )
+    return Math.abs(tx.amount);
   return tx.amount;
 }
 

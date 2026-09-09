@@ -38,6 +38,16 @@ test("trusted detail rules retain traceable sources", () => {
   assert.deepEqual(signals.find(signal => signal.signalKey === "documents-needing-review")?.sourceIds, [7, 8]);
 });
 
+test("duplicate expenses require the same date, amount, merchant, and description", () => {
+  const signals = evaluateTrustedSummary({ revenue: 5_000, accountingExpenses: 2_000, netIncome: 3_000, netCashMovement: 3_000,
+    unclassifiedTransactionCount: 0, healthScore: 70,
+    duplicateExpenseGroups: [{ amount: 775, title: "The Home Depot", sourceIds: [71, 72] }] });
+  const duplicate = signals.find(signal => signal.signalKey === "duplicate-expense:71-72");
+  assert.equal(duplicate?.currentValue, 775);
+  assert.deepEqual(duplicate?.sourceIds, [71, 72]);
+  assert.match(duplicate?.description ?? "", /same date, amount, merchant, and description/i);
+});
+
 test("task lifecycle rejects invalid shortcuts", () => {
   assert.equal(canTransitionTask("open", "completed"), true);
   assert.equal(canTransitionTask("completed", "in_progress"), false);

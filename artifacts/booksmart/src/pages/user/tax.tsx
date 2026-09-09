@@ -100,8 +100,18 @@ function extractStoragePath(fileUrl: string): string | null {
 async function getSignedUrl(fileUrl: string): Promise<string> {
   const path = extractStoragePath(fileUrl);
   if (!path) return fileUrl;
-  const { data } = await supabase.storage.from("documents").createSignedUrl(path, 3600);
-  return data?.signedUrl ?? fileUrl;
+  const { data: sessionData } = await supabase.auth.getSession();
+  const token = sessionData.session?.access_token;
+  if (!token) throw new Error("Not authenticated.");
+  const response = await fetch("/api/document-signed-url", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ path }),
+  });
+  if (!response.ok) throw new Error(response.status === 404 ? "Document not found." : "Document access denied.");
+  const body = await response.json() as { signedUrl?: string };
+  if (!body.signedUrl) throw new Error("Document access denied.");
+  return body.signedUrl;
 }
 
 // ── Types ────────────────────────────────────────────────────────────────────

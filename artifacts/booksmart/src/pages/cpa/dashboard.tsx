@@ -24,7 +24,7 @@ interface OrgRow   { id: number; owner_id: number; name: string | null }
 interface TxRow    { id: number; org_id: number; amount: number; title: string; date_time: string; deductible?: boolean | null }
 interface DocRow   { user_id: number }
 interface StratRow { user_id: number }
-interface PortfolioFinancialSummary { current_month: { revenue: number }; health: { score: number; status: string } | null }
+interface PortfolioFinancialSummary { current_month: { revenue: number }; health: { score: number; status: string } | null; recent_transactions?: TxRow[] }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -217,21 +217,9 @@ export default function CpaDashboard() {
   });
 
   // ── 8. Recent transactions across all client orgs (activity feed) ─────────
-  const { data: recentTxs = [] } = useQuery<TxRow[]>({
-    queryKey: ["cpa_dash_recent", orgIds],
-    enabled: orgIds.length > 0,
-    staleTime: 30_000,
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from("transactions")
-        .select("id, org_id, amount, title, date_time")
-        .in("org_id", orgIds)
-        .order("date_time", { ascending: false })
-        .limit(6);
-      if (error) throw error;
-      return trustedTransactions("transactions", data ?? []);
-    },
-  });
+  const recentTxs = useMemo(() => trustedTransactions("transactions",
+    portfolioFinancialQueries.flatMap(query => query.data?.recent_transactions ?? [])
+  ).sort((a, b) => b.date_time.localeCompare(a.date_time)).slice(0, 6), [portfolioFinancialQueries]);
 
   // ── Derived data ──────────────────────────────────────────────────────────
 

@@ -1,4 +1,5 @@
 import { authenticatedApi, apiErrorMessage } from "@/lib/authenticated-api";
+import type { InsightCalculation, InsightEvidenceReference } from "@/components/monitoring/insight-evidence-map";
 
 export type MonitoringSignal = {
   id: number; signal_key: string; title: string; description: string; severity: string; category: string;
@@ -7,6 +8,7 @@ export type MonitoringSignal = {
   requires_cpa_review: boolean; cpa_review_level: string; detected_at: string; updated_at: string;
   period_start: string | null; period_end: string | null; comparison_start: string | null; comparison_end: string | null;
   source_ids: Array<number | string>; exclusions: string[]; calculation_version: string; confidence: number | null;
+  metadata?: { provider?: string; direct_url?: string | null; source_record_type?: string | null; accounting_effect?: string; evidence?: InsightEvidenceReference[]; calculation?: InsightCalculation | null };
 };
 export type MonitoringTask = {
   id: number; title: string; description: string; category: string; priority: string;

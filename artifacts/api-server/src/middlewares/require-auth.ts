@@ -8,6 +8,7 @@ declare global {
   namespace Express {
     interface Request {
       supabaseUserId?: string;
+      supabaseSessionId?: string;
       authDurationMs?: number;
     }
   }
@@ -67,6 +68,8 @@ export async function requireAuth(
     }
 
     req.supabaseUserId = subject;
+    const sessionId = (data?.claims as { session_id?: unknown } | undefined)?.session_id;
+    req.supabaseSessionId = typeof sessionId === "string" && sessionId ? sessionId : undefined;
     next();
   } catch {
     res.status(503).json({ error: "auth_service_unavailable", message: "Could not verify token" });
